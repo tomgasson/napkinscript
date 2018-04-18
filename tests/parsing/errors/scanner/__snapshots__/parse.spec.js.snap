@@ -13,7 +13,7 @@ File \\"/napkinscript/tests/parsing/errors/scanner/oldDerefOp.js\\", line 1, cha
 2 │  let newX = x +. newVelocity *. secondPerFrame^;
 
 Hmm, not sure what I should do here with this character.
-If you're trying to deref an expression, use \`&foo\` instead.
+If you're trying to deref an expression, use \`foo.contents\` instead.
 
 
 File \\"/napkinscript/tests/parsing/errors/scanner/oldDerefOp.js\\", line 2, characters 45-46:
@@ -23,7 +23,7 @@ File \\"/napkinscript/tests/parsing/errors/scanner/oldDerefOp.js\\", line 2, cha
 [31m2[0m │  let newX = x +. newVelocity *. secondPerFrame[31m^[0m;
 
 Hmm, not sure what I should do here with this character.
-If you're trying to deref an expression, use \`&foo\` instead.
+If you're trying to deref an expression, use \`foo.contents\` instead.
 
 
 

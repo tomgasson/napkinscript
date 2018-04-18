@@ -486,6 +486,7 @@ module Grammar = struct
     | Attribute
     | TypeConstraint
     | Primitive
+    | AtomicTypExpr
 
   let toString = function
     | OpenDescription -> "an open description"
@@ -537,7 +538,7 @@ module Grammar = struct
     | Attribute -> "an attribute"
     | TypeConstraint -> "constraints on a type"
     | Primitive -> "an external primitive"
-
+    | AtomicTypExpr -> "a type"
 
   let isSignatureItemStart = function
     | Token.At
@@ -1034,6 +1035,15 @@ end = struct
     category: category;
   }
 
+  let defaultUnexpected token =
+    "I'm not sure what to parse here when looking at \"" ^ (Token.toString token) ^ "\"."
+
+  let debugBreadcrumbs bcs =
+    print_endline "current breadcrumbs:";
+    List.iter (fun (grammar, _) ->
+      print_endline (Grammar.toString grammar)) bcs;
+    print_endline "================="
+
   let toString t src =
     let open Lexing in
     let  startchar = t.startPos.pos_cnum - t.startPos.pos_bol in
@@ -1087,7 +1097,7 @@ end = struct
     | UnknownUchar uchar ->
       begin match uchar with
       | 94 (* ^ *) ->
-        "Hmm, not sure what I should do here with this character.\nIf you're trying to deref an expression, use `&foo` instead."
+        "Hmm, not sure what I should do here with this character.\nIf you're trying to deref an expression, use `foo.contents` instead."
       | _ ->
         "Hmm, I have no idea what this character means…"
       end
@@ -1102,6 +1112,13 @@ end = struct
     | Unexpected (t, breadcrumbs) ->
       let name = (Token.toString t) in
       begin match breadcrumbs with
+      | (AtomicTypExpr, _)::breadcrumbs ->
+          begin match breadcrumbs, t with
+          | (StringFieldDeclarations, _) :: _, (String _ | At | Rbrace | Comma | Eof) ->
+              "I'm missing a type here"
+          | _ ->
+            defaultUnexpected t
+          end
       | (ExprOperand, _)::breadcrumbs ->
           begin match breadcrumbs, t with
           | (ExprBlock, _) :: _, Rbrace ->
@@ -4285,6 +4302,7 @@ Solution: you need to pull out each field you want explicitly."
     loop p []
 
   and parseAtomicTypExpr ~attrs p =
+    Parser.leaveBreadcrumb p Grammar.AtomicTypExpr;
     let startPos = p.Parser.startPos in
     let typ = match p.Parser.token with
     | SingleQuote ->
@@ -4328,9 +4346,10 @@ Solution: you need to pull out each field you want explicitly."
     | Lbrace ->
       parseBsObjectType p
     | token ->
-      Parser.err p (Diagnostics.unexpected token p.breadcrumbs);
+      Parser.err ~startPos:p.prevEndPos p (Diagnostics.unexpected token p.breadcrumbs);
       Recover.defaultType()
     in
+    Parser.eatBreadcrumb p;
     typ
 
   and parseBsObjectType p =
@@ -4491,7 +4510,7 @@ Solution: you need to pull out each field you want explicitly."
    *  | uident.uident.lident     --> long module path
    *)
   and parseTypExpr ?(es6Arrow=true) ?(alias=true) p =
-    Parser.leaveBreadcrumb p Grammar.TypeExpression;
+    (* Parser.leaveBreadcrumb p Grammar.TypeExpression; *)
     let attrs = parseAttributes p in
     let typ = if es6Arrow && isEs6ArrowType p then
       parseEs6ArrowType ~attrs p
@@ -4510,7 +4529,7 @@ Solution: you need to pull out each field you want explicitly."
       | _ -> typ
     in
     let typ = if alias then parseTypeAlias p typ else typ in
-    Parser.eatBreadcrumb p;
+    (* Parser.eatBreadcrumb p; *)
     typ
 
   and parseTupleType p =
@@ -4578,7 +4597,7 @@ Solution: you need to pull out each field you want explicitly."
       Parser.err p (Diagnostics.unexpected token p.breadcrumbs);
       Location.mknoloc "_"
     in
-    Parser.expect Colon p;
+    Parser.expect ~grammar:Grammar.TypeExpression Colon p;
     let typ = parsePolyTypeExpr p in
     Parsetree.Otag (fieldName, attrs, typ)
 
@@ -4687,8 +4706,15 @@ Solution: you need to pull out each field you want explicitly."
                 p
             | attrs ->
               let first =
+                Parser.leaveBreadcrumb p Grammar.StringFieldDeclarations;
                 let field = parseStringFieldDeclaration p in
-                Parser.optional p Comma |> ignore;
+                (* parse comma after first *)
+                let () = match p.Parser.token with
+                | Rbrace | Eof -> ()
+                | Comma -> Parser.next p
+                | _ -> Parser.expect Comma p
+                in
+                Parser.eatBreadcrumb p;
                 begin match field with
                 | Parsetree.Otag (label, _, ct) -> Parsetree.Otag (label, attrs, ct)
                 | Oinherit ct -> Oinherit ct
@@ -5010,8 +5036,15 @@ Solution: you need to pull out each field you want explicitly."
             p
         | attrs ->
           let first =
+            Parser.leaveBreadcrumb p Grammar.StringFieldDeclarations;
             let field = parseStringFieldDeclaration p in
-            Parser.optional p Comma |> ignore;
+            (* parse comma after first *)
+            let () = match p.Parser.token with
+            | Rbrace | Eof -> ()
+            | Comma -> Parser.next p
+            | _ -> Parser.expect Comma p
+            in
+            Parser.eatBreadcrumb p;
             begin match field with
             | Parsetree.Otag (label, _, ct) -> Parsetree.Otag (label, attrs, ct)
             | Oinherit ct -> Oinherit ct
@@ -5028,8 +5061,7 @@ Solution: you need to pull out each field you want explicitly."
           Parser.expect Rbrace p;
           let loc = mkLoc startPos p.prevEndPos in
           let typ =
-            makeBsObjType ~loc ~closed:closedFlag fields
-            |> parseTypeAlias p
+            makeBsObjType ~loc ~closed:closedFlag fields |> parseTypeAlias p
           in
           (Some typ, Asttypes.Public, Parsetree.Ptype_abstract)
       | _ ->
