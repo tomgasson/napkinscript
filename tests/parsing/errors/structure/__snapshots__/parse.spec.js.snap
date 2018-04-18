@@ -74,3 +74,44 @@ This let-binding misses an expression
 
 ========================================================"
 `;
+
+exports[`letBindingPatternKeyword.js 1`] = `
+"=====Parsetree==========================================
+let [%napkinscript.patternhole ] = 1
+let [%napkinscript.patternhole ] = 2
+let [%napkinscript.patternhole ] = 3
+=====Errors=============================================
+
+File \\"/napkinscript/tests/parsing/errors/structure/letBindingPatternKeyword.js\\", line 1, characters 4-8:
+
+
+[31m1[0m │  let [31mopen[0m = 1
+2 │  let module = 2
+3 │  let to = 3
+
+open is a reserved keyword, Try \`open_\` or \`_open\` instead
+
+
+File \\"/napkinscript/tests/parsing/errors/structure/letBindingPatternKeyword.js\\", line 2, characters 4-10:
+
+
+1 │  let open = 1
+[31m2[0m │  let [31mmodule[0m = 2
+3 │  let to = 3
+
+module is a reserved keyword, Try \`module_\` or \`_module\` instead
+
+
+File \\"/napkinscript/tests/parsing/errors/structure/letBindingPatternKeyword.js\\", line 3, characters 4-6:
+
+
+1 │  let open = 1
+2 │  let module = 2
+[31m3[0m │  let [31mto[0m = 3
+
+to is a reserved keyword, Try \`to_\` or \`_to\` instead
+
+
+
+========================================================"
+`;

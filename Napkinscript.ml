@@ -1038,12 +1038,6 @@ end = struct
   let defaultUnexpected token =
     "I'm not sure what to parse here when looking at \"" ^ (Token.toString token) ^ "\"."
 
-  let debugBreadcrumbs bcs =
-    print_endline "current breadcrumbs:";
-    List.iter (fun (grammar, _) ->
-      print_endline (Grammar.toString grammar)) bcs;
-    print_endline "================="
-
   let toString t src =
     let open Lexing in
     let  startchar = t.startPos.pos_cnum - t.startPos.pos_bol in
@@ -1148,7 +1142,7 @@ end = struct
       | _ ->
         (* TODO: match on circumstance to verify Lident needed ? *)
         if Token.isKeyword t then
-          name ^ " is a reserved keyword, it cannot be used as an identifier."
+          name ^ " is a reserved keyword, Try `" ^ name ^ "_` or `_" ^ name ^ "` instead"
         else
         "I'm not sure what to parse here when looking at \"" ^ name ^ "\"."
       end
@@ -1750,6 +1744,13 @@ module Parser = struct
     in
     p.diagnostics <- d::p.diagnostics
 
+  let debugBreadcrumbs bcs =
+    print_endline "current breadcrumbs:";
+    List.iter (fun (grammar, _) ->
+      print_endline (Grammar.toString grammar)) bcs;
+    print_endline "================="
+
+
   let dropLastDiagnostic p =
     match p.diagnostics with
     | _::ds -> p.diagnostics <- ds
@@ -1864,7 +1865,18 @@ module NapkinScript = struct
     let defaultModuleExpr () = Ast_helper.Mod.structure []
     let defaultModuleType () = Ast_helper.Mty.signature []
 
-
+    (*
+     * Handle cases like:
+     *   let open = 1
+     * `open` is a keyword, the parser expects a pattern though.
+     * Current heuristic is to check whether the token is on the same line
+     * of the previous token. If that's the case there's probably a high chance
+     * the user intended the keyword as pattern. *)
+    let tryAdvancePattern p =
+      match p.Parser.token with
+      | t when Token.isKeyword t && p.prevEndPos.pos_lnum == p.startPos.pos_lnum ->
+        Parser.next p
+      | _ -> ()
 
     (* let recoverUident p = *)
       (* match p.Parser.token with *)
@@ -2530,9 +2542,6 @@ Solution: you need to pull out each field you want explicitly."
       | _ ->
         Ast_helper.Pat.construct ~loc:constr.loc ~attrs constr None
       end
-    (* is this safe in a let-context? let exception Foo
-     * probably, local exceptions in seq expressions are
-     * exception Foo *)
     | Exception ->
       Parser.next p;
       let pat = parsePattern ~alias:false ~or_:false p in
@@ -2550,6 +2559,7 @@ Solution: you need to pull out each field you want explicitly."
       Ast_helper.Pat.extension ~loc ~attrs extension
     | token ->
       Parser.err p (Diagnostics.unexpected token p.breadcrumbs);
+      Recover.tryAdvancePattern p;
       Recover.defaultPattern()
     in
     let pat = if alias then parseAliasPattern ~attrs pat p else pat in
