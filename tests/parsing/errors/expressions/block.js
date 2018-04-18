@@ -25,3 +25,8 @@ switch stack {
 	buffer->Buffer.add_string(indentation)
 	loop(
 }
+
+let pipeline = switch scheduler {
+| Some =>
+| None => ()
+}

@@ -1110,6 +1110,8 @@ end = struct
           begin match breadcrumbs, t with
           | (StringFieldDeclarations, _) :: _, (String _ | At | Rbrace | Comma | Eof) ->
               "I'm missing a type here"
+          | _, t when Grammar.isStructureItemStart t || t = Eof ->
+              "Missing a type here"
           | _ ->
             defaultUnexpected t
           end
