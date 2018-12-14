@@ -198,15 +198,6 @@ module Lex = struct
     mutable lnum: int; (* current line number *)
   }
 
-  (* A value of type position describes a point in a source file. pos_fname is the file name; pos_lnum is the line number; *)
-    (* pos_bol is the offset of the beginning of the line (number of characters between the beginning of the lexbuf and the beginning of the line); *)
-    (* pos_cnum is the offset of the position (number of characters between the beginning of the lexbuf and the position). *)
-    (* The difference between pos_cnum and pos_bol is the character offset within the line (i.e. the column number, assuming each character is one column wide). *)
-
-  (* let debug {ch;offset;lnum;rdOffset} = *)
-    (* let s = "ch: " ^ (string_of_int ch) ^ "| offset: " ^ (string_of_int offset) in *)
-    (* print_endline s *)
-
   let position lexbuf = Lexing.{
     pos_fname = lexbuf.filename;
     pos_lnum = lexbuf.lnum;
@@ -219,8 +210,6 @@ module Lex = struct
 
   let next lexbuf =
     if lexbuf.rdOffset < (Bytes.length lexbuf.src) then begin
-      let () = print_endline (string_of_int lexbuf.rdOffset) in
-      let () = print_endline (string_of_int lexbuf.offset) in
       lexbuf.offset <- lexbuf.rdOffset;
       let ch = Bytes.get lexbuf.src lexbuf.rdOffset in
       if ch = '\n' then begin
@@ -375,8 +364,6 @@ module LangParser = struct
     exception Expected of (Lexing.position * string)
 
     let expect p token =
-      print_endline "expecting: ";
-      print_endline (Token.toString token);
       if p.token = token then
         next p
       else
@@ -438,8 +425,7 @@ module LangParser = struct
     | String s -> Pconst_string(s, None)
     | Char c -> Pconst_char c
     | _ ->
-        print_endline "unknown constant";
-        raise (Parser.Expected (p.pos, "constant"))
+      raise (Parser.Expected (p.pos, "constant"))
     in
     Parser.next p;
     constant
@@ -472,7 +458,6 @@ module LangParser = struct
     let pat = match p.Parser.token with
     (* TODO inline or refactor into "maintainable"/"reusable code"? *)
     | Int _ | String _ | Char _ ->
-        print_endline "going to parse constant";
         let c = parseConstant p in
 
         begin match p.token with
@@ -500,7 +485,6 @@ module LangParser = struct
         (* let pat = parsePattern p in *)
         (* Ast_helper.Pat.exception pat *)
     | _ ->
-        print_endline "unknown here";
         raise (Parser.Expected (p.pos, "pattern"))
     in
 
