@@ -1,0 +1,8 @@
+{
+  "name": "valparaiso",
+  "version": "0.0.1",
+  "devDependencies": {
+    "@opam/merlin": "*",
+    "ocaml": "4.6.9"
+  }
+}
