@@ -162,6 +162,9 @@ module Token = struct
     | EqualGreater
     | External
     | Typ
+    | Private
+    | Mutable
+    | Constraint
 
   let precedence = function
     | Plus | Minus -> 4
@@ -220,6 +223,9 @@ module Token = struct
     | EqualGreater -> "=>"
     | External -> "external"
     | Typ -> "type"
+    | Private -> "private"
+    | Constraint -> "constraint"
+    | Mutable -> "mutable"
 
   let keywordTable =
     let keywords = [|
@@ -243,6 +249,9 @@ module Token = struct
       "when", When;
       "external", External;
       "type", Typ;
+      "private", Private;
+      "mutable", Mutable;
+      "constraint", Constraint;
     |] in
     let t = Hashtbl.create 50 in
     Array.iter (fun (k, v) ->
@@ -294,6 +303,12 @@ module Lex = struct
       lexbuf.ch <- -1
     end
 
+  let peek lexbuf =
+    if lexbuf.rdOffset < (Bytes.length lexbuf.src) then
+      int_of_char (Bytes.unsafe_get lexbuf.src lexbuf.rdOffset)
+    else
+      -1
+
   let make b filename =
     let lexbuf = {
       filename;
@@ -322,7 +337,7 @@ module Lex = struct
       CharacterCodes.isDigit lexbuf.ch ||
       lexbuf.ch == CharacterCodes.underscore
     ) do
-      next(lexbuf)
+      next lexbuf
     done;
     let str = Bytes.sub_string lexbuf.src startOff (lexbuf.offset - startOff) in
     Token.lookupKeyword str
@@ -335,13 +350,15 @@ module Lex = struct
     let str = Bytes.sub_string lexbuf.src startOff (lexbuf.offset - startOff) in
     Token.Int str
 
+  (* TODO: escaping *)
   let lexChar lexbuf =
     let startOff = lexbuf.offset in
-    while not (CharacterCodes.singleQuote == lexbuf.ch) do
-      next lexbuf
-    done;
-    next lexbuf; (* advance past ending ' *)
-    Token.Char (Bytes.unsafe_get lexbuf.src startOff)
+    if peek lexbuf == CharacterCodes.singleQuote then (
+      next lexbuf; next lexbuf;
+      Token.Char (Bytes.unsafe_get lexbuf.src startOff)
+    ) else (
+      Token.SingleQuote
+    )
 
   let lexString lexbuf =
     let startOff = lexbuf.offset in
@@ -456,7 +473,6 @@ module LangParser = struct
       p.pos <- Lex.position p.lexbuf
 
     let optional p token =
-      next p;
       if p.token = token then
         let () = next p in true
       else
@@ -508,6 +524,7 @@ module LangParser = struct
     | _ -> raise (Parser.Expected (p.pos, "expected Uident"))
 
   let parseOpen p =
+    Parser.expect p Open;
     let override = if Parser.optional p Token.Bang then
       Asttypes.Override
     else
@@ -521,6 +538,7 @@ module LangParser = struct
     | _ -> raise (Parser.Expected (p.pos, "expected Uident"))
     in
     let identLoc = mkLoc startIdentLoc p.pos in
+    Parser.next p;
     Parser.optional p Token.Semicolon |> ignore;
     Ast_helper.Str.open_ (
       Ast_helper.Opn.mk ~override (
@@ -1085,6 +1103,14 @@ module LangParser = struct
 
   and parseTypExpr p =
     let typ = match p.Parser.token with
+    | SingleQuote ->
+      Parser.next p;
+      begin match p.Parser.token with
+      | Lident ident ->
+        Parser.next p;
+        Ast_helper.Typ.var ident
+      | _ -> raise (Parser.Expected (p.pos, "Expected lowercase ident"))
+      end
     | Underscore ->
       Parser.next p;
       Ast_helper.Typ.any ()
@@ -1096,9 +1122,9 @@ module LangParser = struct
       let t = parseTypExpr p in
       Parser.expect p Rparen;
       t
-    | Uident _ ->
+    | Uident _ | Lident _ ->
       let startPos = p.pos in
-      let lident = parseModuleLongIdent p in
+      let lident = parseValuePath p in
       let endPos = p.pos in
       let loc = mkLoc startPos endPos in
       let constr = Location.mkloc lident loc in
@@ -1170,6 +1196,7 @@ module LangParser = struct
 
   (* definition	::=	let [rec] let-binding  { and let-binding }   *)
   let parseLetBindings p =
+    Parser.expect p Let;
     let recFlag = if Parser.optional p Token.Rec then
       Asttypes.Recursive
     else
@@ -1181,55 +1208,246 @@ module LangParser = struct
     let vb = Ast_helper.Vb.mk pat exp in
     Ast_helper.Str.value recFlag [vb]
 
-  (* let parseTypeConstructorDeclaration p = *)
-     (* Parser.next p; *)
-      (* begin match p.Parser.token with *)
-      (* | Uident uident -> *)
-        (* Parser.next p; *)
-        (* begin match p.Parser.token with *)
-        (* | Lparen -> *)
-          (* Parser.next p; *)
-          (* let typeArgs = parseConstructorTypeArgs p *)
-        (* | _ -> *)
-        (* end *)
-      (* | _ -> raise (Parser.Expected (p.pos, "expected constr name")) *)
-      (* end *)
+  let parseFieldDeclaration p =
+    let mut = if Parser.optional p Token.Mutable then
+      Asttypes.Mutable
+    else
+      Asttypes.Immutable
+    in
+    let name = match p.Parser.token with
+    | Lident ident ->
+      Parser.next p;
+      Location.mknoloc ident
+    | _ -> raise (Parser.Expected (p.pos, "need lowercase type name"))
+    in
+    Parser.expect p Colon;
+    (* TODO: parse poly type expr *)
+    let typ = parseTypExpr p in
+    Ast_helper.Type.field ~mut name typ
 
-  (* let parseTypeRepresentation p = *)
+  let parseRecordDeclaration p =
+    Parser.expect p Lbrace;
+    let rec loop p fields =
+      match p.Parser.token with
+      | Rbrace -> Parser.next p; List.rev fields
+      | _ ->
+        let field = parseFieldDeclaration p in
+        begin match p.Parser.token with
+        | Comma ->
+          Parser.next p;
+          loop p (field::fields)
+        | Rbrace ->
+          Parser.next p;
+          List.rev (field::fields)
+        | _ -> raise (Parser.Expected (p.pos, "Expected comma or rbrace"))
+        end
+    in
+    loop p []
+
+  let parseTypeConstructorDeclaration p =
+     match p.Parser.token with
+     | Uident uident ->
+       Parser.next p;
+       let args = match p.Parser.token with
+       | Lparen ->
+         Parser.next p;
+         begin match p.Parser.token with
+         | Lbrace ->
+           let recordDecl = parseRecordDeclaration p in
+           Parser.expect p Rparen;
+           Parsetree.Pcstr_record recordDecl
+         | _ ->
+           Parsetree.Pcstr_tuple (parseConstructorTypeArgs p)
+          end
+       | Lbrace ->
+         Parsetree.Pcstr_record (parseRecordDeclaration p)
+       | _ ->
+         Pcstr_tuple []
+       in
+       let res = match p.Parser.token with
+       | Colon ->
+         Parser.next p;
+         Some (parseTypExpr p)
+       | _ -> None
+       in
+       Ast_helper.Type.constructor ?res ~args (Location.mknoloc uident)
+     | _ -> raise (Parser.Expected (p.pos, "expected constr name"))
+
+   (* [|] constr-decl  { | constr-decl }   *)
+  let parseTypeConstructorDeclarations p =
+    ignore (Parser.optional p Token.Bar);
+    let firstConstrDecl = parseTypeConstructorDeclaration p in
+    let rec loop p acc =
+      match p.Parser.token with
+      | Bar ->
+        Parser.next p;
+        let constrDecl = parseTypeConstructorDeclaration p in
+        loop p (constrDecl::acc)
+      | _ ->
+        List.rev acc
+    in
+    loop p [firstConstrDecl]
+
+
+
+
+  (*
+   * type-representation ::=
+      ∣	 = private [ | ] constr-decl  { | constr-decl }
+      ∣	 = private record-decl
+      |  = ..
+  *)
+  let parseTypeRepresentation p =
+    (* = consumed *)
+    let privateFlag =
+      if Parser.optional p Token.Private
+      then Asttypes.Private
+      else Asttypes.Public
+    in
+    let kind = match p.Parser.token with
+    | Bar | Uident _ ->
+      Parsetree.Ptype_variant (parseTypeConstructorDeclarations p)
+    | Lbrace ->
+      Parsetree.Ptype_record (parseRecordDeclaration p)
+    | Dot ->
+      Parser.next p;
+      Parser.expect p Dot;
+      Ptype_open
+    | _ -> raise (Parser.Expected (p.pos, "expected constr-decl or record-decl"))
+    in
+    (privateFlag, kind)
+
+  let parseTypeParam p =
+    let variance = match p.Parser.token with
+    | Plus -> Parser.next p; Asttypes.Covariant
+    | Minus -> Parser.next p; Contravariant
+    | _ -> Invariant
+    in
+    let param = match p.Parser.token with
+    | SingleQuote ->
+      Parser.next p;
+      begin match p.Parser.token with
+      | Lident ident ->
+        Parser.next p;
+        (Ast_helper.Typ.var ident, variance)
+      | _ -> raise (Parser.Expected (p.pos, "type param needs lident"))
+      end
+    | Underscore ->
+      Parser.next p;
+      (Ast_helper.Typ.any (), variance)
+    | _ -> raise (Parser.Expected (p.pos, "invalid type param"))
+    in
+    Parser.expect p GreaterThan;
+    param
+
+  let parseTypeParams p =
+    let params = match p.Parser.token with
+    | LessThan -> Parser.next p; [parseTypeParam p]
+    | _ -> []
+    in
+    params
+
+  let parseTypeConstraint p =
+    Parser.expect p SingleQuote;
+    begin match p.Parser.token with
+    | Lident ident ->
+      Parser.next p;
+      Parser.expect p Equal;
+      let typ = parseTypExpr p in
+      (Ast_helper.Typ.var ident, typ, Location.none)
+    | _ -> raise (Parser.Expected (p.pos, "Expected lowercase ident"))
+    end
+
+  let parseTypeConstraints p =
+    let rec loop p constraints =
+      match p.Parser.token with
+      | Constraint ->
+        Parser.next p;
+        let constraint_ = parseTypeConstraint p in
+        (constraint_::constraints)
+      | _ -> List.rev constraints
+    in
+    loop p []
+
+  let parseTypeEquationAndRepresentation p =
+    match p.Parser.token with
+    | Equal ->
+      Parser.next p;
+      begin match p.Parser.token with
+      (* TODO: Uident as module path *)
+      (* start of type representation *)
+      | Bar | Uident _ | Lbrace | Private | Dot ->
+        let manifest = None in
+        let (priv, kind) = parseTypeRepresentation p in
+        (manifest, priv, kind)
+      | _ ->
+        let manifest = Some (parseTypExpr p) in
+        begin match p.Parser.token with
+        | Equal ->
+          Parser.next p;
+          let (priv, kind) = parseTypeRepresentation p in
+          (manifest, priv, kind)
+        | _ ->
+          (manifest, Public, Parsetree.Ptype_abstract)
+        end
+      end
+    | _ -> (None, Public, Parsetree.Ptype_abstract)
+
+  (* let parseConstrDef p = *)
     (* match p.Parser.token with *)
-    (* | Bar | Uident _ -> *)
-      (* parseTypeConstructorDeclaration p *)
-    (* | Lbrace -> *)
+    (* | Uident ident -> *)
+      (* Parser.next p; *)
 
 
-  (* let parseTypeEquation p = *)
-    (* parseTypExpr p *)
 
-  (* type-infromation ::= [type-equation] [type-representation] * {type-constraint} *)
-  (* let parseTypeInformation p = *)
-
-
-  (* typedef ::= [type-params] typeconstr-name type-information *)
-  (* let parseTypeDef p = *)
-    (* match p.Parser.token with *)
-    (* | Lident ident -> *)
-
-
-  (* let parseTypeDefinition p = *)
-    (* Parser.expect p Token.Typ; *)
-    (* let flag = if Parser.optional p Token.Nonrecursive then *)
-      (* Asttypes.Nonrecursive *)
-    (* else Asttypes.Recursive *)
+  (* let parseTypeExtensionDef p = *)
+    (* + consumed *)
+    (* Parser.expect p Equal; *)
+    (* let privateFlag = *)
+      (* if Parser.optional p Token.Private *)
+      (* then Asttypes.Private *)
+      (* else Asttypes.Public *)
     (* in *)
-    (* let typeDef = parseTypeDef p in *)
+    (* ignore (Parser.optional p Token.Bar); *)
+    (* let firstConstrDef = parseConstrDef p in *)
 
 
+
+  (* typedef ::= typeconstr-name [type-params] type-information *)
+  (* type-information ::= [type-equation] [type-representation] * {type-constraint} *)
+  let parseTypeDef p =
+    let typeConstrName = match p.Parser.token with
+    | Lident ident ->
+      Parser.next p;
+      (Location.mknoloc ident)
+    | _ -> raise (Parser.Expected (p.pos, "Expected lident"))
+    in
+    let params = parseTypeParams p in
+    match p.Parser.token with
+    (* | Plus -> *)
+      (* Parser.next p; *)
+      (* let (priv, kind) = parseTypeExtensionDef p in *)
+      (* Ast_helper.Type.mk ~priv ~kind typeConstrName *)
+    | _ ->
+      let (manifest, priv, kind) = parseTypeEquationAndRepresentation p in
+      let cstrs = parseTypeConstraints p in
+      Ast_helper.Type.mk ~priv ~kind ~params ~cstrs ?manifest typeConstrName
+
+  let parseTypeDefinition p =
+    Parser.expect p Token.Typ;
+    let recFlag =
+      if Parser.optional p Token.Nonrec
+        then Asttypes.Nonrecursive
+        else Asttypes.Recursive
+    in
+    let typeDef = parseTypeDef p in
+    Ast_helper.Str.type_ recFlag [typeDef]
 
   let parseStructureItem p =
     match p.Parser.token with
     | Open -> parseOpen p
     | Let -> parseLetBindings p
-    (* | Type -> parseTypeDefinition p *)
+    | Typ -> parseTypeDefinition p
     | _ -> raise (Parser.Expected (p.pos, "structure item"))
 
   let parseStructure p =
@@ -1242,14 +1460,10 @@ module LangParser = struct
 
   let () =
     let p = Parser.make "
+    let y = 'a'
 
-
-  let color = switch rgb {
-  | Blue => \"blue\"
-  | Red => \"red\"
-  | Custom1(1) => \"1\"
-  | Custom2(1, 2, 3,) => \"1, 2, 3\"
-    }
+      type x = Foo{x: int}
+      type x = Foo({x: int})
      " "file.rjs" in
     (* let p = Parser.make "open Foo.bar" "file.rjs" in *)
     try
@@ -1299,3 +1513,4 @@ end
   (* let y = while (break) { *)
     (* omg(1) *)
   (* } *)
+      (* type foo<-_> = equation = Foo :int | Bar :string constraint 'a = x *)
