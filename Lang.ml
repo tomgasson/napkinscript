@@ -1244,32 +1244,36 @@ module LangParser = struct
     in
     loop p []
 
+  let parseConstrDeclArgs p =
+    let args = match p.Parser.token with
+    | Lparen ->
+     Parser.next p;
+     begin match p.Parser.token with
+     | Lbrace ->
+       let recordDecl = parseRecordDeclaration p in
+       Parser.expect p Rparen;
+       Parsetree.Pcstr_record recordDecl
+     | _ ->
+       Parsetree.Pcstr_tuple (parseConstructorTypeArgs p)
+      end
+    | Lbrace ->
+     Parsetree.Pcstr_record (parseRecordDeclaration p)
+    | _ ->
+     Pcstr_tuple []
+    in
+    let res = match p.Parser.token with
+    | Colon ->
+     Parser.next p;
+     Some (parseTypExpr p)
+    | _ -> None
+    in
+    (args, res)
+
   let parseTypeConstructorDeclaration p =
      match p.Parser.token with
      | Uident uident ->
        Parser.next p;
-       let args = match p.Parser.token with
-       | Lparen ->
-         Parser.next p;
-         begin match p.Parser.token with
-         | Lbrace ->
-           let recordDecl = parseRecordDeclaration p in
-           Parser.expect p Rparen;
-           Parsetree.Pcstr_record recordDecl
-         | _ ->
-           Parsetree.Pcstr_tuple (parseConstructorTypeArgs p)
-          end
-       | Lbrace ->
-         Parsetree.Pcstr_record (parseRecordDeclaration p)
-       | _ ->
-         Pcstr_tuple []
-       in
-       let res = match p.Parser.token with
-       | Colon ->
-         Parser.next p;
-         Some (parseTypExpr p)
-       | _ -> None
-       in
+       let (args, res) = parseConstrDeclArgs p in
        Ast_helper.Type.constructor ?res ~args (Location.mknoloc uident)
      | _ -> raise (Parser.Expected (p.pos, "expected constr name"))
 
@@ -1443,11 +1447,59 @@ module LangParser = struct
     let typeDef = parseTypeDef p in
     Ast_helper.Str.type_ recFlag [typeDef]
 
+  let parseExternalDef p =
+    Parser.expect p Token.External;
+    let name = match p.Parser.token with
+    | Lident ident ->
+      Parser.next p;
+      Location.mknoloc ident
+    | _ -> raise (Parser.Expected (p.pos, "external name should be lident"))
+    in
+    Parser.expect p Colon;
+    let typExpr = parseTypExpr p in
+    Parser.expect p Equal;
+    (* TODO accept multiple strings *)
+    let externalDecl = match p.Parser.token with
+    | String s -> Parser.next p; s
+    | _ -> raise (Parser.Expected (p.pos, "external decl needs to be a string"))
+    in
+    Ast_helper.Str.primitive (Ast_helper.Val.mk ~prim:[externalDecl] name typExpr)
+
+  let parseConstrDeclOrName p =
+    let name = match p.Parser.token with
+    | Uident name ->
+      Parser.next p;
+      Location.mknoloc name
+    | _ -> raise (Parser.Expected (p.pos, "Expected constructor name"))
+    in
+    let kind = match p.Parser.token with
+    | Lparen | Lbrace ->
+      let (args, res) = parseConstrDeclArgs p in
+      Parsetree.Pext_decl (args, res)
+    | Equal ->
+      Parser.next p;
+      let longident = parseModuleLongIdent p in
+      Parsetree.Pext_rebind (Location.mknoloc longident)
+    | _ ->
+      Parsetree.Pext_decl (Pcstr_tuple [], None)
+    in
+    (name, kind)
+
+  let parseExceptionDef p =
+    Parser.expect p Token.Exception;
+    let (name, kind) = parseConstrDeclOrName p in
+    let constructor =
+      Ast_helper.Te.constructor name kind
+    in
+    Ast_helper.Str.exception_ constructor
+
   let parseStructureItem p =
     match p.Parser.token with
     | Open -> parseOpen p
     | Let -> parseLetBindings p
     | Typ -> parseTypeDefinition p
+    | External -> parseExternalDef p
+    | Exception -> parseExceptionDef p
     | _ -> raise (Parser.Expected (p.pos, "structure item"))
 
   let parseStructure p =
@@ -1462,8 +1514,17 @@ module LangParser = struct
     let p = Parser.make "
     let y = 'a'
 
+    external myShadyConversion : magic = \"%identity\"
+
       type x = Foo{x: int}
       type x = Foo({x: int})
+
+
+    exception Foo
+    exception Foo{n: int}
+    exception Foo({n: int})
+    exception Foo(string, bar, baz)
+    exception Lala = Foo.Bar.Baz
      " "file.rjs" in
     (* let p = Parser.make "open Foo.bar" "file.rjs" in *)
     try
@@ -1514,3 +1575,11 @@ end
     (* omg(1) *)
   (* } *)
       (* type foo<-_> = equation = Foo :int | Bar :string constraint 'a = x *)
+
+      (*
+    exception Foo
+    exception Foo{n: int}
+    exception Foo({n: int})
+    exception Foo(string, bar, baz)
+    exception Lala = Foo.Bar.Baz
+    *)
