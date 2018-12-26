@@ -356,15 +356,15 @@ module Lex = struct
     let str = Bytes.sub_string lexbuf.src startOff (lexbuf.offset - startOff) in
     Token.Int str
 
-  (* TODO: escaping *)
-  let lexChar lexbuf =
-    let startOff = lexbuf.offset in
-    if peek lexbuf == CharacterCodes.singleQuote then (
-      next lexbuf; next lexbuf;
-      Token.Char (Bytes.unsafe_get lexbuf.src startOff)
-    ) else (
-      Token.SingleQuote
-    )
+  (* we don't support CHAR for now *)
+  (* let lexChar lexbuf = *)
+    (* let startOff = lexbuf.offset in *)
+    (* if peek lexbuf == CharacterCodes.singleQuote then ( *)
+      (* next lexbuf; next lexbuf; *)
+      (* Token.Char (Bytes.unsafe_get lexbuf.src startOff) *)
+    (* ) else ( *)
+      (* Token.SingleQuote *)
+    (* ) *)
 
   let lexString lexbuf =
     let startOff = lexbuf.offset in
@@ -393,7 +393,7 @@ module Lex = struct
       else if ch == CharacterCodes.doubleQuote then
         lexString lexbuf
       else if ch == CharacterCodes.singleQuote then
-        lexChar lexbuf
+        Token.SingleQuote
       else if ch == CharacterCodes.bang then
         Token.Bang
       else if ch == CharacterCodes.semicolon then
@@ -568,7 +568,7 @@ module LangParser = struct
     let constant = match p.Parser.token with
     | Int i -> Parsetree.Pconst_integer (i, None)
     | String s -> Pconst_string(s, None)
-    | Char c -> Pconst_char c
+    (* | Char c -> Pconst_char c *)
     | _ ->
       raise (Parser.Expected (p.pos, "constant"))
     in
@@ -602,7 +602,7 @@ module LangParser = struct
   let rec parsePattern p =
     let pat = match p.Parser.token with
     (* TODO inline or refactor into "maintainable"/"reusable code"? *)
-    | Int _ | String _ | Char _ ->
+    | Int _ | String _ ->
       let c = parseConstant p in
 
       begin match p.token with
@@ -764,7 +764,7 @@ module LangParser = struct
 
   and parseOperand p =
     let expr = match p.Parser.token with
-      | Int _ | String _ | Char _ ->
+      | Int _ | String _ ->
         let c = parseConstant p in
         Ast_helper.Exp.constant c
       | Lident ident ->
