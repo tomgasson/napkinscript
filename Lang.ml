@@ -165,6 +165,8 @@ module Token = struct
     | Private
     | Mutable
     | Constraint
+    | Include
+    | Module
 
   let precedence = function
     | Plus | Minus -> 4
@@ -226,6 +228,8 @@ module Token = struct
     | Private -> "private"
     | Constraint -> "constraint"
     | Mutable -> "mutable"
+    | Include -> "include"
+    | Module -> "module"
 
   let keywordTable =
     let keywords = [|
@@ -252,6 +256,8 @@ module Token = struct
       "private", Private;
       "mutable", Mutable;
       "constraint", Constraint;
+      "include", Include;
+      "module", Module;
     |] in
     let t = Hashtbl.create 50 in
     Array.iter (fun (k, v) ->
@@ -1493,38 +1499,126 @@ module LangParser = struct
     in
     Ast_helper.Str.exception_ constructor
 
-  let parseStructureItem p =
+
+
+ let rec parseStructure p =
+    let rec parse p acc = match p.Parser.token with
+      | Eof -> acc
+      (* TODO is this sane? *)
+      | Rbrace -> Parser.next p; acc
+      | _ -> parse p ((parseStructureItem p)::acc)
+    in
+    let structure = parse p [] in
+    List.rev structure
+
+  and parseStructureItem p =
     match p.Parser.token with
     | Open -> parseOpen p
     | Let -> parseLetBindings p
     | Typ -> parseTypeDefinition p
     | External -> parseExternalDef p
     | Exception -> parseExceptionDef p
+    | Include -> parseIncludeStatement p
+    | Module -> parseMaybeRecModuleBinding p
     | _ -> raise (Parser.Expected (p.pos, "structure item"))
 
-  let parseStructure p =
-    let rec parse p acc = match p.Parser.token with
-      | Eof -> acc
-      | _ -> parse p ((parseStructureItem p)::acc)
+  and parseIncludeStatement p =
+    Parser.expect p Token.Include;
+    let modExpr = parseModuleExpr p in
+    Ast_helper.Str.include_ (Ast_helper.Incl.mk modExpr)
+
+  and parseModuleOperand p =
+    match p.Parser.token with
+    | Uident ident ->
+      Parser.next p;
+      Ast_helper.Mod.ident (Location.mknoloc (Longident.Lident ident))
+    | Lbrace ->
+      Parser.next p;
+      Ast_helper.Mod.structure (parseStructure p)
+    | Lparen ->
+      Parser.next p;
+      let modExpr = parseModuleExpr p in
+      Parser.expect p Rparen;
+      modExpr
+    | _ -> raise (Parser.Expected (p.pos, "Unsupport module expression"))
+
+  and parseModuleExpr p =
+    let modExpr = parseModuleOperand p in
+    let rec loop p modExpr =
+      match p.Parser.token with
+      | Lparen ->
+        Parser.next p;
+        loop p (parseModuleApplication p modExpr)
+      | EqualGreater ->
+        Parser.next p;
+        let arg = match modExpr.Parsetree.pmod_desc with
+        | Parsetree.Pmod_ident {Location.loc; txt} ->
+          {Location.loc; txt = Longident.last txt}
+        | _ -> raise (Parser.Expected (p.pos, "TODO"))
+        in
+        Ast_helper.Mod.functor_ arg None (parseModuleExpr p)
+      | _ ->
+        modExpr
+    in loop p modExpr
+
+  and parseModuleApplication p modExpr =
+    (* left '(' consumed *)
+    let arg = parseModuleExpr p in
+    Parser.expect p Rparen;
+    Ast_helper.Mod.apply modExpr arg
+
+  (* definition	::=
+    ∣	 module rec module-name :  module-type =  module-expr   { and module-name :  module-type =  module-expr }
+    |  module module-name  { ( module-name :  module-type ) }  [ : module-type ]  =  module-expr *)
+  and parseMaybeRecModuleBinding p =
+    Parser.expect p Module;
+    if Parser.optional p Token.Rec then
+      Ast_helper.Str.rec_module (parseModuleBindings p)
+    else
+      Ast_helper.Str.module_ (parseModuleBinding p)
+
+  and parseModuleBinding p =
+    let name = match p.Parser.token with
+    | Uident ident ->
+      Parser.next p;
+      Location.mknoloc ident
+    | _ -> raise (Parser.Expected (p.pos, "Expected module name"))
     in
-    let structure = parse p [] in
-    List.rev structure
+    let body = parseModuleBindingBody p in
+    Ast_helper.Mb.mk name body
+
+  and parseModuleBindingBody p =
+    match p.Parser.token with
+    | Equal ->
+      Parser.next p;
+      parseModuleExpr p
+    | _ -> raise (Parser.Expected (p.pos, "Unexpected module body"))
+
+  and parseModuleBindings p =
+    (* module-name :  module-type =  module-expr *)
+    (* { and module-name :  module-type =  module-expr } *)
+    let rec loop p acc =
+      match p.Parser.token with
+      | And ->
+        Parser.next p;
+        let modBinding = parseModuleBinding p in
+        loop p (modBinding::acc)
+      | _ -> List.rev acc
+    in
+    let first = parseModuleBinding p in
+    match p.Parser.token with
+    | And -> loop p [first]
+    | _ -> [first]
 
   let () =
     let p = Parser.make "
-    let y = 'a'
+    include (Foo(Bar)(Baz))
 
-    external myShadyConversion : magic = \"%identity\"
+    module Bar = Foo => Lala
 
-      type x = Foo{x: int}
-      type x = Foo({x: int})
-
-
-    exception Foo
-    exception Foo{n: int}
-    exception Foo({n: int})
-    exception Foo(string, bar, baz)
-    exception Lala = Foo.Bar.Baz
+    include {
+      let x = 1
+    }
      " "file.rjs" in
     (* let p = Parser.make "open Foo.bar" "file.rjs" in *)
     try
