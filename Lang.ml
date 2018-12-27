@@ -167,6 +167,8 @@ module Token = struct
     | Constraint
     | Include
     | Module
+    | Of
+    | With
 
   let precedence = function
     | Plus | Minus -> 4
@@ -230,6 +232,8 @@ module Token = struct
     | Mutable -> "mutable"
     | Include -> "include"
     | Module -> "module"
+    | Of -> "of"
+    | With -> "with"
 
   let keywordTable =
     let keywords = [|
@@ -258,6 +262,7 @@ module Token = struct
       "constraint", Constraint;
       "include", Include;
       "module", Module;
+      "of", Of;
     |] in
     let t = Hashtbl.create 50 in
     Array.iter (fun (k, v) ->
@@ -529,7 +534,7 @@ module LangParser = struct
       end
     | _ -> raise (Parser.Expected (p.pos, "expected Uident"))
 
-  let parseOpen p =
+  let parseOpenDescription p =
     Parser.expect p Open;
     let override = if Parser.optional p Token.Bang then
       Asttypes.Override
@@ -537,7 +542,6 @@ module LangParser = struct
       Asttypes.Fresh
     in
     let startIdentLoc = p.pos in
-    Lex.printPos startIdentLoc;
     let modident = match p.token with
     | Uident _ ->
       parseModuleLongIdent p
@@ -546,11 +550,10 @@ module LangParser = struct
     let identLoc = mkLoc startIdentLoc p.pos in
     Parser.next p;
     Parser.optional p Token.Semicolon |> ignore;
-    Ast_helper.Str.open_ (
-      Ast_helper.Opn.mk ~override (
-        Location.mkloc modident identLoc
-      )
+    Ast_helper.Opn.mk ~override (
+      Location.mkloc modident identLoc
     )
+
 
   (* constant	::=	integer-literal   *)
    (* ∣	 float-literal   *)
@@ -1451,7 +1454,7 @@ module LangParser = struct
         else Asttypes.Recursive
     in
     let typeDef = parseTypeDef p in
-    Ast_helper.Str.type_ recFlag [typeDef]
+    (recFlag, [typeDef])
 
   let parseExternalDef p =
     Parser.expect p Token.External;
@@ -1469,7 +1472,7 @@ module LangParser = struct
     | String s -> Parser.next p; s
     | _ -> raise (Parser.Expected (p.pos, "external decl needs to be a string"))
     in
-    Ast_helper.Str.primitive (Ast_helper.Val.mk ~prim:[externalDecl] name typExpr)
+    Ast_helper.Val.mk ~prim:[externalDecl] name typExpr
 
   let parseConstrDeclOrName p =
     let name = match p.Parser.token with
@@ -1494,12 +1497,7 @@ module LangParser = struct
   let parseExceptionDef p =
     Parser.expect p Token.Exception;
     let (name, kind) = parseConstrDeclOrName p in
-    let constructor =
-      Ast_helper.Te.constructor name kind
-    in
-    Ast_helper.Str.exception_ constructor
-
-
+    Ast_helper.Te.constructor name kind
 
  let rec parseStructure p =
     let rec parse p acc = match p.Parser.token with
@@ -1513,11 +1511,16 @@ module LangParser = struct
 
   and parseStructureItem p =
     match p.Parser.token with
-    | Open -> parseOpen p
+    | Open ->
+      Ast_helper.Str.open_ (parseOpenDescription p)
     | Let -> parseLetBindings p
-    | Typ -> parseTypeDefinition p
-    | External -> parseExternalDef p
-    | Exception -> parseExceptionDef p
+    | Typ ->
+      let (recFlag, typeDecls) = parseTypeDefinition p in
+      Ast_helper.Str.type_ recFlag typeDecls
+    | External ->
+      Ast_helper.Str.primitive (parseExternalDef p)
+    | Exception ->
+      Ast_helper.Str.exception_ (parseExceptionDef p)
     | Include -> parseIncludeStatement p
     | Module -> parseMaybeRecModuleBinding p
     | _ -> raise (Parser.Expected (p.pos, "structure item"))
@@ -1609,6 +1612,201 @@ module LangParser = struct
     match p.Parser.token with
     | And -> loop p [first]
     | _ -> [first]
+
+  (* Ocaml allows module types to end with lowercase: module Foo : bar = { ... }
+   * lets go with uppercase terminal for now *)
+  let parseModuleTypePath p =
+    Ast_helper.Mty.ident (Location.mknoloc (parseModuleLongIdent p))
+
+  (* Module types are the module-level equivalent of type expressions: they
+   * specify the general shape and type properties of modules. *)
+  let rec parseModuleType p =
+    let moduleType = match p.Parser.token with
+    | Uident _ ->
+      parseModuleTypePath p
+    | Lparen ->
+      Parser.next p;
+      let mty = parseModuleType p in
+      Parser.expect p Rparen;
+      mty
+    | Lbrace ->
+      Parser.next p;
+      parseSpecification p
+    | Module ->
+      parseModuleTypeOf p
+    | _ ->
+      raise (Parser.Expected (p.pos, "need a module type"))
+    in
+    match p.Parser.token with
+    | With ->
+      let constraints = parseWithConstraints p in
+      Ast_helper.Mty.with_ moduleType constraints
+    | _ ->
+      moduleType
+
+  and parseWithConstraints p =
+    Parser.expect p With;
+    let first = parseWithConstraint p in
+    let rec loop p acc =
+      match p.Parser.token with
+      | And ->
+        Parser.next p;
+        loop p ((parseWithConstraint p)::acc)
+      | _ ->
+        List.rev acc
+    in loop p [first]
+
+  and parseWithConstraint p =
+    match p.Parser.token with
+    | Module ->
+      Parser.next p;
+      let modulePath = parseModuleLongIdent p in
+      begin match p.Parser.token with
+      | Colon ->
+        Parser.next p;
+        Parser.expect p Equal;
+        let lident = parseModuleLongIdent p in
+        Parsetree.Pwith_modsubst (
+          Location.mknoloc modulePath,
+          Location.mknoloc lident
+        )
+      | Equal ->
+        Parser.next p;
+        let lident = parseModuleLongIdent p in
+        Parsetree.Pwith_module (
+          Location.mknoloc modulePath,
+          Location.mknoloc lident
+        )
+      | _ -> raise (Parser.Expected (p.pos, "Expected = or :="))
+      end
+    | Typ ->
+      Parser.next p;
+      let typeConstr = parseValuePath p in
+      let params = parseTypeParams p in
+      begin match p.Parser.token with
+      | Colon ->
+        Parser.next p;
+        Parser.expect p Equal;
+        let typExpr = parseTypExpr p in
+        Parsetree.Pwith_typesubst (
+          Location.mknoloc typeConstr,
+          Ast_helper.Type.mk
+            ~params
+            ~manifest:typExpr
+            (Location.mknoloc (Longident.last typeConstr))
+        )
+      | Equal ->
+        Parser.next p;
+        let typExpr = parseTypExpr p in
+        let typeConstraints = parseTypeConstraints p in
+        Parsetree.Pwith_type (
+          Location.mknoloc typeConstr,
+          Ast_helper.Type.mk
+            ~params
+            ~manifest:typExpr
+            ~cstrs:typeConstraints
+            (Location.mknoloc (Longident.last typeConstr))
+        )
+      | _ -> raise (Parser.Expected (p.pos, "Expected = or := to complete typeconstr"))
+      end
+    | _ -> raise (Parser.Expected (p.pos, "Unsupported with mod constraint"))
+
+  and parseModuleTypeOf p =
+    Parser.expect p Module;
+    Parser.expect p Typ;
+    Parser.expect p Of;
+    let moduleExpr = parseModuleExpr p in
+    Ast_helper.Mty.typeof_ moduleExpr
+
+  and parseSpecification p =
+    (* { consumed *)
+    let rec loop p spec =
+      let item = parseSignatureItem p in
+      match p.Parser.token with
+      | Semicolon ->
+        Parser.next p;
+        loop p (item::spec)
+      | Rbrace ->
+        List.rev (item::spec)
+      | _ -> raise (Parser.Expected (p.pos, "semi or rbrace expected"))
+    in
+    Ast_helper.Mty.signature (loop p [])
+
+  and parseSignatureItem p =
+    match p.Parser.token with
+    | Let ->
+      parseSignLetDesc p
+    | Typ ->
+      let (recFlag, typeDecls) = parseTypeDefinition p in
+      Ast_helper.Sig.type_ recFlag typeDecls
+    | External ->
+      Ast_helper.Sig.value (parseExternalDef p)
+    | Exception ->
+      Ast_helper.Sig.exception_ (parseExceptionDef p)
+    | Open ->
+      Ast_helper.Sig.open_ (parseOpenDescription p)
+    | Include ->
+      Parser.next p;
+      let moduleType = parseModuleType p in
+      let includeDescription = Ast_helper.Incl.mk moduleType in
+      Ast_helper.Sig.include_ includeDescription
+    | Module ->
+      Parser.next p;
+      begin match p.Parser.token with
+      | Uident _ ->
+        parseModuleDeclarationOrAlias p
+      | Typ ->
+        parseModuleTypeDeclaration p
+      | _ -> raise (Parser.Expected (p.pos, "need type or uident"))
+      end
+    | _ -> raise (Parser.Expected (p.pos, "signature item"))
+
+  and parseModuleDeclarationOrAlias p =
+    let moduleName = match p.Parser.token with
+    | Uident ident ->
+      Parser.next p;
+      Location.mknoloc ident
+    | _ -> raise (Parser.Expected (p.pos, "Module name should start with uident"))
+    in
+    let body = match p.Parser.token with
+    | Colon ->
+      Parser.next p;
+      parseModuleType p
+    | Equal ->
+      Parser.next p;
+      let lident = parseModuleLongIdent p in
+      Ast_helper.Mty.alias (Location.mknoloc lident)
+    | _ -> raise (Parser.Expected (p.pos, "Expected : or ="))
+    in
+    Ast_helper.Sig.module_ (Ast_helper.Md.mk moduleName body)
+
+  and parseModuleTypeDeclaration p =
+    Parser.expect p Typ;
+    let moduleName = match p.Parser.token with
+    | Uident ident ->
+      Parser.next p;
+      Location.mknoloc ident
+    | _ -> raise (Parser.Expected (p.pos, "Module type name should be uident"))
+    in
+    let typ = match p.Parser.token with
+    | Equal ->
+      Parser.next p;
+      Some (parseModuleType p)
+    | _ -> None
+    in
+    let moduleDecl = Ast_helper.Mtd.mk ?typ moduleName in
+    Ast_helper.Sig.modtype moduleDecl
+
+  and parseSignLetDesc p =
+    Parser.expect p Let;
+    let name = match p.Parser.token with
+    | Lident ident -> Parser.next p; Location.mknoloc ident
+    | _ -> raise (Parser.Expected (p.pos, "name of value should be lowercase"))
+    in
+    Parser.expect p Colon;
+    let typExpr = parseTypExpr p in
+    let valueDesc = Ast_helper.Val.mk name typExpr in
+    Ast_helper.Sig.value valueDesc
 
   let () =
     let p = Parser.make "
