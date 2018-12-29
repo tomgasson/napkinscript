@@ -787,9 +787,9 @@ module LangParser = struct
         parseArrayExp p
       | Lbrace ->
         Parser.next p;
-        (* let expr = parseExpr p in *)
-        parseBracedOrRecordExpr p
-        (* Parser.expect p Rbrace; *)
+        let e = parseBracedOrRecordExpr p in
+        Parser.expect p Rbrace;
+        e
       | Forwardslash ->
         Parser.next p;
         let expr = parseTuple p in
@@ -878,6 +878,20 @@ module LangParser = struct
     in
     loop a
 
+  (* definition	::=	let [rec] let-binding  { and let-binding }   *)
+  and parseLetBindings p =
+    Parser.expect p Let;
+    let recFlag = if Parser.optional p Token.Rec then
+      Asttypes.Recursive
+    else
+      Asttypes.Nonrecursive
+    in
+    let pat = parsePattern p in
+    Parser.expect p Token.Equal;
+    let exp = parseExpr p in
+    let vb = Ast_helper.Vb.mk pat exp in
+    (recFlag, [vb])
+
   and parseBracedOrRecordExpr p =
     (* opening brace consumed *)
     match p.Parser.token with
@@ -940,7 +954,18 @@ module LangParser = struct
 
   and parseSeqExpr rows p =
     let rec loop p rows =
-      let expr = parseExpr p in
+      let expr = match p.Parser.token with
+      | Let ->
+        let (recFlag, letBindings) = parseLetBindings p in
+        ignore (Parser.optional p Semicolon);
+        let expr = begin match p.Parser.token with
+        | Rbrace ->
+          Ast_helper.Exp.construct (Location.mknoloc (Longident.Lident "()")) None
+        | _ ->
+          parseSeqExpr [] p
+        end in
+        Ast_helper.Exp.let_ recFlag letBindings expr
+      | _ -> parseExpr p in
       match p.Parser.token with
       | Semicolon -> Parser.next p; loop p (expr::rows)
       | Rbrace -> expr::rows
@@ -1029,8 +1054,6 @@ module LangParser = struct
     Parser.expect p Lbrace;
     let cases = parsePatternMatching p in
     Ast_helper.Exp.match_ switchExpr cases
-
-   (* ∣	 for value-name =  expr  ( to ∣  downto ) expr do  expr done  *)
 
   and parseArgument p =
     match p.Parser.token with
@@ -1280,19 +1303,7 @@ module LangParser = struct
     in
     loop p []
 
-  (* definition	::=	let [rec] let-binding  { and let-binding }   *)
-  let parseLetBindings p =
-    Parser.expect p Let;
-    let recFlag = if Parser.optional p Token.Rec then
-      Asttypes.Recursive
-    else
-      Asttypes.Nonrecursive
-    in
-    let pat = parsePattern p in
-    Parser.expect p Token.Equal;
-    let exp = parseExpr p in
-    let vb = Ast_helper.Vb.mk pat exp in
-    Ast_helper.Str.value recFlag [vb]
+
 
   let parseFieldDeclaration p =
     let mut = if Parser.optional p Token.Mutable then
@@ -1377,9 +1388,6 @@ module LangParser = struct
         List.rev acc
     in
     loop p [firstConstrDecl]
-
-
-
 
   (*
    * type-representation ::=
@@ -1579,8 +1587,7 @@ module LangParser = struct
  let rec parseStructure p =
     let rec parse p acc = match p.Parser.token with
       | Eof -> acc
-      (* TODO is this sane? *)
-      | Rbrace -> Parser.next p; acc
+      (* | Rbrace -> Parser.next p; acc *)
       | _ -> parse p ((parseStructureItem p)::acc)
     in
     let structure = parse p [] in
@@ -1590,7 +1597,9 @@ module LangParser = struct
     match p.Parser.token with
     | Open ->
       Ast_helper.Str.open_ (parseOpenDescription p)
-    | Let -> parseLetBindings p
+    | Let ->
+      let (recFlag, letBindings) = parseLetBindings p in
+      Ast_helper.Str.value recFlag letBindings
     | Typ ->
       let (recFlag, typeDecls) = parseTypeDefinition p in
       Ast_helper.Str.type_ recFlag typeDecls
@@ -1600,7 +1609,8 @@ module LangParser = struct
       Ast_helper.Str.exception_ (parseExceptionDef p)
     | Include -> parseIncludeStatement p
     | Module -> parseMaybeRecModuleBinding p
-    | _ -> raise (Parser.Expected (p.pos, "structure item"))
+    | _ ->
+      Ast_helper.Str.eval (parseExpr p)
 
   and parseIncludeStatement p =
     Parser.expect p Token.Include;
@@ -1888,9 +1898,11 @@ module LangParser = struct
   let () =
     let p = Parser.make "
     let x = {
-      foo(2);
-      bar(3)
-      }
+      let x = 1;
+      x
+    }
+
+    foo(2)
      " "file.rjs" in
     (* let p = Parser.make "open Foo.bar" "file.rjs" in *)
     try
