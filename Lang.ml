@@ -787,9 +787,9 @@ module LangParser = struct
         parseArrayExp p
       | Lbrace ->
         Parser.next p;
-        let expr = parseExpr p in
-        Parser.expect p Rbrace;
-        expr
+        (* let expr = parseExpr p in *)
+        parseBracedOrRecordExpr p
+        (* Parser.expect p Rbrace; *)
       | Forwardslash ->
         Parser.next p;
         let expr = parseTuple p in
@@ -819,8 +819,11 @@ module LangParser = struct
     in
     expr
 
-  and parsePrimaryExpr p =
-    let e1 = parseOperand p in
+  and parsePrimaryExpr ?operand p =
+    let e1 = match operand with
+      | Some e -> e
+      | None -> parseOperand p
+    in
     let rec loop p expr =
       match p.Parser.token with
       | Dot ->
@@ -874,6 +877,80 @@ module LangParser = struct
       end
     in
     loop a
+
+  and parseBracedOrRecordExpr p =
+    (* opening brace consumed *)
+    match p.Parser.token with
+    | Dot ->
+      (* beginning of record spread, parse record, todo maybe lex DOTDOTDOT *)
+      Parser.next p;
+      Parser.expect p Dot;
+      Parser.expect p Dot;
+      let spreadExpr = parseExpr p in
+      parseRecordExpr ~spread:(Some spreadExpr) [] p
+    | Uident _ | Lident _ ->
+      let recordFieldOrPexpIdent = parseValuePath p in
+      let pathIdent = Location.mknoloc recordFieldOrPexpIdent in
+      begin match p.Parser.token with
+      | Comma ->
+        Parser.next p;
+        parseRecordExpr [(pathIdent, Ast_helper.Exp.ident pathIdent)] p
+      | Colon ->
+        Parser.next p;
+        let fieldExpr = parseExpr p in
+        parseRecordExpr [(pathIdent, fieldExpr)] p
+      | Semicolon ->
+        Parser.next p;
+        parseSeqExpr [Ast_helper.Exp.ident pathIdent] p
+      | Rbrace ->
+        Parser.next p;
+        Ast_helper.Exp.ident pathIdent
+      | _ ->
+        let firstExpr = parsePrimaryExpr ~operand:(Ast_helper.Exp.ident
+        pathIdent) p in
+        Parser.expect p Semicolon;
+        parseSeqExpr [firstExpr] p
+      end
+    | _ ->
+      parseSeqExpr [] p
+
+  and parseRecordRow p =
+    let field = parseValuePath p in
+    match p.Parser.token with
+    | Colon ->
+      Parser.next p;
+      let fieldExpr = parseExpr p in
+      (Location.mknoloc field, fieldExpr)
+    | _ ->
+      (Location.mknoloc field, Ast_helper.Exp.ident (Location.mknoloc field))
+
+  and parseRecordExpr ?(spread=None) rows p =
+    let rec loop p rows =
+      match p.Parser.token with
+      | Comma ->
+        Parser.next p;
+        loop p rows
+      | Rbrace ->
+        rows
+      | _ ->
+        let row = parseRecordRow p in
+        loop p (row::rows)
+    in
+    Ast_helper.Exp.record (loop p rows) spread
+
+  and parseSeqExpr rows p =
+    let rec loop p rows =
+      let expr = parseExpr p in
+      match p.Parser.token with
+      | Semicolon -> Parser.next p; loop p (expr::rows)
+      | Rbrace -> expr::rows
+      | _ -> raise (Parser.Expected (p.pos, "Expected ; or }"))
+    in
+    let exprs = loop p rows in
+    match exprs with
+    | first::tl ->
+      List.fold_left (fun acc curr -> Ast_helper.Exp.sequence curr acc) first tl
+    | [] -> assert false
 
   and parseIfExpression p =
     (* If token already consumed *)
@@ -1810,13 +1887,10 @@ module LangParser = struct
 
   let () =
     let p = Parser.make "
-    include (Foo(Bar)(Baz))
-
-    module Bar = Foo => Lala
-
-    include {
-      let x = 1
-    }
+    let x = {
+      foo(2);
+      bar(3)
+      }
      " "file.rjs" in
     (* let p = Parser.make "open Foo.bar" "file.rjs" in *)
     try
