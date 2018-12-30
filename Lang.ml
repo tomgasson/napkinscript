@@ -917,7 +917,6 @@ module LangParser = struct
         Parser.next p;
         parseSeqExpr [Ast_helper.Exp.ident pathIdent] p
       | Rbrace ->
-        Parser.next p;
         Ast_helper.Exp.ident pathIdent
       | _ ->
         let firstExpr = parsePrimaryExpr ~operand:(Ast_helper.Exp.ident
@@ -1586,8 +1585,7 @@ module LangParser = struct
 
  let rec parseStructure p =
     let rec parse p acc = match p.Parser.token with
-      | Eof -> acc
-      (* | Rbrace -> Parser.next p; acc *)
+      | Eof | Rbrace -> acc
       | _ -> parse p ((parseStructureItem p)::acc)
     in
     let structure = parse p [] in
@@ -1624,13 +1622,115 @@ module LangParser = struct
       Ast_helper.Mod.ident (Location.mknoloc (Longident.Lident ident))
     | Lbrace ->
       Parser.next p;
-      Ast_helper.Mod.structure (parseStructure p)
+      let structure = Ast_helper.Mod.structure (parseStructure p) in
+      Parser.expect p Rbrace;
+      structure
     | Lparen ->
       Parser.next p;
-      let modExpr = parseModuleExpr p in
-      Parser.expect p Rparen;
-      modExpr
+      parseParenthesizedOrFunctorModuleExpr p
     | _ -> raise (Parser.Expected (p.pos, "Unsupport module expression"))
+
+  and parseParenthesizedOrFunctorModuleExpr p =
+    (* Lparen consumed *)
+    match p.Parser.token with
+    | Underscore -> (* functor arg name, parse functor *)
+      parseFunctorModuleExpr p []
+    | Rparen ->
+      Parser.next p;
+      Parser.expect p EqualGreater;
+      let rhs = parseModuleExpr p in
+      Ast_helper.Mod.functor_ (Location.mknoloc "*") None rhs
+    | _ ->
+      let moduleExpression = parseModuleExpr p in
+      begin match p.Parser.token with
+      | Colon ->
+        Parser.next p;
+        let moduleType = parseModuleType p in
+        begin match p.Parser.token with
+        | Comma -> (* comma hints possible es6 style arrow: (A: Foo, ) => module_expr *)
+          Parser.next p;
+          let argName = match moduleExpression.pmod_desc with
+            | Parsetree.Pmod_ident ({Location.txt} as lident) ->
+              {lident with txt = Longident.last txt}
+            | _ -> raise (Parser.Expected (
+                p.pos,
+                "A functor arg needs a module type"
+              ))
+            in
+          let arg = (
+            argName,
+            Some moduleType
+          ) in
+          parseFunctorModuleExpr p [arg]
+        | Rparen ->
+          Parser.next p;
+          begin match p.Parser.token with
+          | EqualGreater ->
+            Parser.next p;
+            let rhs = parseModuleExpr p in
+            let argName = match moduleExpression.pmod_desc with
+            | Parsetree.Pmod_ident ({Location.txt} as lident) ->
+              {lident with txt = Longident.last txt}
+            | _ -> raise (Parser.Expected (
+                p.pos,
+                "A functor arg needs a module type"
+              ))
+            in
+            Ast_helper.Mod.functor_ argName (Some moduleType) rhs
+          | _ ->
+            Ast_helper.Mod.constraint_ moduleExpression moduleType
+          end
+        | _ -> raise (Parser.Expected (p.pos, "Expected ) or ,"))
+        end
+      | Rparen ->
+        Parser.next p;
+        begin match p.Parser.token with
+        | EqualGreater ->
+          raise (Parser.Expected (
+            p.pos,
+            "A functor arg needs a module type"
+          ))
+        | _ ->
+          moduleExpression
+        end
+      | _ -> raise (Parser.Expected (p.pos, "Expected , or rparen"))
+      end
+
+  and parseFunctorArgName p =
+    match p.Parser.token with
+    | Uident ident -> Parser.next p; Location.mknoloc ident
+    | Underscore -> Parser.next p; Location.mknoloc "_"
+    | _ -> raise (Parser.Expected (p.pos, "functor arg name should be Uident or _"))
+
+
+  and parseFunctorArgs p args =
+    let rec loop p args =
+      match p.Parser.token with
+      | Rparen -> Parser.next p; args
+      | _ ->
+        let functorArgName = parseFunctorArgName p in
+        Parser.expect p Colon;
+        let moduleType = parseModuleType p in
+        let arg = (functorArgName, Some moduleType) in
+        begin match p.Parser.token with
+        | Comma ->
+          Parser.next p;
+          loop p (arg::args)
+        | Rparen ->
+          Parser.next p;
+          (arg::args)
+        | _ -> raise (Parser.Expected (p.pos, "Expected ) or ,"))
+        end
+    in
+    loop p args
+
+  and parseFunctorModuleExpr p args =
+    let args = parseFunctorArgs p args in
+    Parser.expect p EqualGreater;
+    let rhsModuleExpr = parseModuleExpr p in
+    List.fold_left (fun acc (name, moduleType) ->
+      Ast_helper.Mod.functor_ name moduleType acc
+    ) rhsModuleExpr args
 
   and parseModuleExpr p =
     let modExpr = parseModuleOperand p in
@@ -1702,12 +1802,12 @@ module LangParser = struct
 
   (* Ocaml allows module types to end with lowercase: module Foo : bar = { ... }
    * lets go with uppercase terminal for now *)
-  let parseModuleTypePath p =
+   and parseModuleTypePath p =
     Ast_helper.Mty.ident (Location.mknoloc (parseModuleLongIdent p))
 
   (* Module types are the module-level equivalent of type expressions: they
    * specify the general shape and type properties of modules. *)
-  let rec parseModuleType p =
+ and parseModuleType p =
     let moduleType = match p.Parser.token with
     | Uident _ ->
       parseModuleTypePath p
@@ -1897,12 +1997,8 @@ module LangParser = struct
 
   let () =
     let p = Parser.make "
-    let x = {
-      let x = 1;
-      x
-    }
-
-    foo(2)
+     module Build = (A: ModA, B: ModB) => { }
+     module Build2 = (A: ModA) => (B: ModB) => { }
      " "file.rjs" in
     (* let p = Parser.make "open Foo.bar" "file.rjs" in *)
     try
