@@ -505,6 +505,28 @@ module LangParser = struct
 
   let array_function str name = Longident.Ldot(Lident str, name)
 
+  (* Ldot (Ldot (Lident "Foo", "Bar"), "baz") *)
+  let parseValuePath p =
+    let rec aux p path =
+      match p.Parser.token with
+      | Lident ident -> Longident.Ldot(path, ident)
+      | Uident uident ->
+        Parser.next p;
+        Parser.expect p Dot;
+        aux p (Ldot (path, uident))
+      | _ -> raise (Parser.Expected (p.pos, "value path"))
+    in
+    let ident = match p.Parser.token with
+    | Lident ident -> Longident.Lident ident
+    | Uident ident ->
+      Parser.next p;
+      Parser.expect p Dot;
+      aux p (Lident ident)
+    | _ -> raise (Parser.Expected (p.pos, "value path"))
+    in
+    Parser.next p;
+    ident
+
   (* Parses module identifiers:
        Foo
        Foo.Bar *)
@@ -618,12 +640,18 @@ module LangParser = struct
       end
     | Lparen ->
       Parser.next p;
+      (* let pat = begin match p.Parser.token with *)
+      (* | Uident ident -> *)
+      (* | _ -> *)
       let pat = parsePattern p in
+      (* end *)
       Parser.expect p Token.Rparen;
       pat
     | Lbracket ->
       Parser.next p;
       parseArrayPattern p
+    | Lbrace ->
+      parseRecordPattern p
     | Forwardslash ->
       Parser.next p;
       parseTuplePattern p
@@ -672,6 +700,44 @@ module LangParser = struct
       end
     | _ -> pat
     end
+
+  (* field  [: typexpr]  [: pattern] *)
+  and parseRecordPatternField p =
+    let label = parseValuePath p in
+    let pattern = match p.Parser.token with
+    | Colon ->
+      Parser.next p;
+      parsePattern p
+    | _ ->
+      Ast_helper.Pat.var (Longident.last label |> Location.mknoloc)
+    in
+    (Location.mknoloc label, pattern)
+
+
+   (* { field  [: typexpr]  [= pattern] { ; field  [: typexpr]  [= pattern] }  [; _ ] [ ; ] }  *)
+  and parseRecordPattern p =
+    Parser.expect p Lbrace;
+    let firstField = parseRecordPatternField p in
+    let rec loop p fields =
+      match p.Parser.token with
+      | Rbrace ->
+        (List.rev fields, Asttypes.Closed)
+      | Underscore ->
+        Parser.next p;
+        ignore (Parser.optional p Comma);
+        (List.rev fields, Asttypes.Open)
+      | Comma ->
+        Parser.next p;
+        loop p fields
+      | Uident _ | Lident _ ->
+        let field = parseRecordPatternField p in
+        loop p (field::fields)
+      | _ ->
+        raise (Parser.Expected (p.pos, "record pattern field should be lident or uident"))
+    in
+    let (fields, closedFlag) = loop p [firstField] in
+    Parser.expect p Rbrace;
+    Ast_helper.Pat.record fields closedFlag
 
   and parseTuplePattern p =
     (* '/' consumed *)
@@ -740,27 +806,6 @@ module LangParser = struct
     | patterns -> Some (Ast_helper.Pat.tuple patterns)
 
 
-  (* Ldot (Ldot (Lident "Foo", "Bar"), "baz") *)
-  let parseValuePath p =
-    let rec aux p path =
-      match p.Parser.token with
-      | Lident ident -> Longident.Ldot(path, ident)
-      | Uident uident ->
-        Parser.next p;
-        Parser.expect p Dot;
-        aux p (Ldot (path, uident))
-      | _ -> raise (Parser.Expected (p.pos, "value path"))
-    in
-    let ident = match p.Parser.token with
-    | Lident ident -> Longident.Lident ident
-    | Uident ident ->
-      Parser.next p;
-      Parser.expect p Dot;
-      aux p (Lident ident)
-    | _ -> raise (Parser.Expected (p.pos, "value path"))
-    in
-    Parser.next p;
-    ident
 
   let rec parseExpr p =
     parseBinaryExpr p 1
@@ -878,6 +923,12 @@ module LangParser = struct
     in
     loop a
 
+  and parseLetBindingBody p =
+    let pat = parsePattern p in
+    Parser.expect p Token.Equal;
+    let exp = parseExpr p in
+    Ast_helper.Vb.mk pat exp
+
   (* definition	::=	let [rec] let-binding  { and let-binding }   *)
   and parseLetBindings p =
     Parser.expect p Let;
@@ -886,11 +937,18 @@ module LangParser = struct
     else
       Asttypes.Nonrecursive
     in
-    let pat = parsePattern p in
-    Parser.expect p Token.Equal;
-    let exp = parseExpr p in
-    let vb = Ast_helper.Vb.mk pat exp in
-    (recFlag, [vb])
+    let first = parseLetBindingBody p in
+
+    let rec loop p bindings =
+      match p.Parser.token with
+      | And ->
+        Parser.next p;
+        let letBinding = parseLetBindingBody p in
+        loop p (letBinding::bindings)
+      | _ ->
+        List.rev bindings
+    in
+    (recFlag, loop p [first])
 
   and parseBracedOrRecordExpr p =
     (* opening brace consumed *)
@@ -1236,6 +1294,7 @@ module LangParser = struct
       let endPos = p.pos in
       let loc = mkLoc startPos endPos in
       let constr = Location.mkloc lident loc in
+      (* TODO extract this whole block into reusable logic, cf. type equation *)
       begin match p.Parser.token with
       | Lparen ->
         Parser.next p;
@@ -1374,9 +1433,14 @@ module LangParser = struct
      | _ -> raise (Parser.Expected (p.pos, "expected constr name"))
 
    (* [|] constr-decl  { | constr-decl }   *)
-  let parseTypeConstructorDeclarations p =
-    ignore (Parser.optional p Token.Bar);
-    let firstConstrDecl = parseTypeConstructorDeclaration p in
+  let parseTypeConstructorDeclarations ?first p =
+    let firstConstrDecl = match first with
+    | None ->
+      ignore (Parser.optional p Token.Bar);
+      parseTypeConstructorDeclaration p
+    | Some firstConstrDecl ->
+      firstConstrDecl
+    in
     let rec loop p acc =
       match p.Parser.token with
       | Bar ->
@@ -1466,14 +1530,55 @@ module LangParser = struct
     in
     loop p []
 
+  let parseTypeEquationOrConstrDecl p =
+    match p.Parser.token with
+    | Uident uident ->
+      Parser.next p;
+      begin match p.Parser.token with
+      | Dot ->
+        Parser.next p;
+        let rec loop p path =
+          match p.Parser.token with
+         | Lident ident ->
+           Parser.next p;
+           Longident.Ldot(path, ident)
+         | Uident uident ->
+           Parser.next p;
+           Parser.expect p Dot;
+           loop p (Longident.Ldot (path, uident))
+         | _ -> raise (Parser.Expected (p.pos, "value path"))
+        in
+        let typeConstr = Location.mknoloc (loop p (Longident.Lident uident)) in
+        let typ = match p.Parser.token with
+        | Lparen ->
+          Parser.next p;
+          Ast_helper.Typ.constr typeConstr (parseConstructorTypeArgs p)
+        | _ ->
+          Ast_helper.Typ.constr typeConstr []
+        in
+        (Some typ, Parsetree.Ptype_abstract)
+      | _ ->
+        Parser.next p;
+        let (args, res) = parseConstrDeclArgs p in
+        let first = Some (
+          Ast_helper.Type.constructor ?res ~args (Location.mknoloc uident)
+        ) in
+        (None, Parsetree.Ptype_variant (parseTypeConstructorDeclarations p ?first))
+      end
+    | _ -> raise (Parser.Expected (p.pos, "Expected Uident"))
+
+
   let parseTypeEquationAndRepresentation p =
     match p.Parser.token with
     | Equal ->
       Parser.next p;
       begin match p.Parser.token with
-      (* TODO: Uident as module path *)
-      (* start of type representation *)
-      | Bar | Uident _ | Lbrace | Private | Dot ->
+      | Uident ident ->
+        let (manifest, kind) = parseTypeEquationOrConstrDecl p in
+        (manifest, Asttypes.Public, kind)
+      (* start of type representation, beware Uident
+       * type t = Foo.t indicates type-equation, not representation! *)
+      | Bar | Lbrace | Private | Dot ->
         let manifest = None in
         let (priv, kind) = parseTypeRepresentation p in
         (manifest, priv, kind)
@@ -1509,15 +1614,26 @@ module LangParser = struct
     (* let firstConstrDef = parseConstrDef p in *)
 
 
+(*
+  type-definition	::=	type [nonrec] typedef  { and typedef }
 
-  (* typedef ::= typeconstr-name [type-params] type-information *)
-  (* type-information ::= [type-equation] [type-representation] * {type-constraint} *)
+  typedef	::=	[type-params]  typeconstr-name  type-information
+
+  type-information	::=	[type-equation]  [type-representation]  { type-constraint }
+
+  type-equation	::=	= typexpr
+
+  type-representation	::=	= [|] constr-decl  { | constr-decl }
+    ∣	 = record-decl
+    ∣	 = |
+*)
+
   let parseTypeDef p =
     let typeConstrName = match p.Parser.token with
     | Lident ident ->
       Parser.next p;
       (Location.mknoloc ident)
-    | _ -> raise (Parser.Expected (p.pos, "Expected lident"))
+    | _ -> raise (Parser.Expected (p.pos, "Type constructor name should be lowercase"))
     in
     let params = parseTypeParams p in
     match p.Parser.token with
@@ -1538,7 +1654,16 @@ module LangParser = struct
         else Asttypes.Recursive
     in
     let typeDef = parseTypeDef p in
-    (recFlag, [typeDef])
+    let rec loop p defs =
+      match p.Parser.token with
+      | And ->
+        Parser.next p;
+        let typeDef = parseTypeDef p in
+        loop p (typeDef::defs)
+      | _ ->
+        List.rev defs
+    in
+    (recFlag, loop p [typeDef])
 
   let parseExternalDef p =
     Parser.expect p Token.External;
@@ -1997,8 +2122,21 @@ module LangParser = struct
 
   let () =
     let p = Parser.make "
-     module Build = (A: ModA, B: ModB) => { }
-     module Build2 = (A: ModA) => (B: ModB) => { }
+
+  let arr1 = [1, 2, 3]
+  let arr2 = [4, 5, 6,]
+
+
+       type z = Plant.Bar.t(string, int)
+
+    let x = 1
+
+
+    let q = switch z {
+    | {field: x Lar.Bar.z: z, _, } => log(1)
+    }
+
+
      " "file.rjs" in
     (* let p = Parser.make "open Foo.bar" "file.rjs" in *)
     try
@@ -2012,6 +2150,8 @@ module LangParser = struct
       print_newline()
     with
     | Parser.Expected (pos, trace) ->
+      print_endline ("pos_lnum: " ^ (string_of_int pos.pos_lnum));
+      print_endline ("pos_cnum: " ^ (string_of_int pos.pos_cnum));
       print_endline "something threw an exception";
       print_endline "current token:";
       print_endline (Token.toString p.Parser.token);
