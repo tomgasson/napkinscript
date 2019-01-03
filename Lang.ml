@@ -505,6 +505,24 @@ module LangParser = struct
 
   let array_function str name = Longident.Ldot(Lident str, name)
 
+  let makeListExpression seq extOpt =
+    let rec handleSeq = function
+      | [] ->
+        begin match extOpt with
+        | Some ext -> ext
+        | None ->
+          let nil = Location.mknoloc (Longident.Lident "[]") in
+          Ast_helper.Exp.construct nil None
+        end
+      | e1 :: el ->
+        let exp_el = handleSeq el in
+        let arg = Ast_helper.Exp.tuple [e1; exp_el] in
+        Ast_helper.Exp.construct
+          (Location.mknoloc (Longident.Lident "::"))
+          (Some arg)
+    in
+    handleSeq seq
+
   (* Ldot (Ldot (Lident "Foo", "Bar"), "baz") *)
   let parseValuePath p =
     let rec aux p path =
@@ -859,6 +877,8 @@ module LangParser = struct
       | Switch ->
         Parser.next p;
         parseSwitchExpression p
+      | LessThan ->
+        parseJsx p
       | _ ->
         raise (Parser.Expected (p.pos, "unsupported expresion"))
     in
@@ -950,6 +970,103 @@ module LangParser = struct
     in
     (recFlag, loop p [first])
 
+  (*
+   *  jsx ::=
+   *    | <> {primary-expr} </>
+   *    | <element-name {jsx-attribute} />
+   *    | <element-name {jsx-attribute}> {primary-expr} </element-name>
+   *)
+  and parseJsx p =
+    let attr = (Location.mknoloc "JSX", Parsetree.PStr []) in
+    Parser.expect p LessThan;
+    match p.Parser.token with
+    | Lident ident ->
+      Parser.next p;
+      let name = Ast_helper.Exp.ident (Location.mknoloc (Longident.Lident ident)) in
+      let jsxAttrs = parseJsxAttributes p in
+      let children = match p.Parser.token with
+      | Forwardslash -> (* <foo a=b /> *)
+        Parser.next p;
+        Parser.expect p GreaterThan;
+        [] (* no children *)
+      | GreaterThan -> (* <foo a=b> bar </foo> *)
+        Parser.next p;
+        let children = parseJsxChildren p in
+        Parser.expect p LessThan;
+        Parser.expect p Forwardslash;
+        begin match p.Parser.token with
+        | Lident closingIdent when closingIdent = ident ->
+          Parser.next p;
+          Parser.expect p GreaterThan;
+          children
+        | _ -> raise (Parser.Expected (p.pos, "Closing jsx element should match"))
+        end
+      | _ -> raise (Parser.Expected (p.pos, "jsx opening invalid"))
+      in
+      Ast_helper.Exp.apply
+        ~attrs:[attr]
+        name
+        (jsxAttrs @ [
+          (Asttypes.Labelled "childen", makeListExpression children None);
+          (Asttypes.Nolabel, Ast_helper.Exp.construct (Location.mknoloc (Longident.Lident "()")) None)
+        ])
+    | GreaterThan -> (* fragment: <> foo </> *)
+      Parser.next p;
+      let children = parseJsxChildren p in
+      Parser.expect p LessThan;
+      Parser.expect p Forwardslash;
+      Parser.expect p GreaterThan;
+      let fragment = makeListExpression children None in
+      {fragment with pexp_attributes = [attr]}
+    | _ -> raise (Parser.Expected (p.pos, "Expected jsx name"))
+
+  (*
+   * jsx-attribute ::=
+   *   | [?] LIDENT
+   *   | LIDENT = [?] jsx_expr
+   *)
+  and parseJsxAttribute p =
+    let optional = Parser.optional p Question in
+    let name = match p.Parser.token with
+    | Lident ident -> Parser.next p; ident
+    | _ ->
+      raise (Parser.Expected (p.pos, "jsx attr new should be lowercase"))
+    in
+    (* optional punning: <foo ?a /> *)
+    if optional then
+      (Asttypes.Labelled name, Ast_helper.Exp.ident (Location.mknoloc
+        (Longident.Lident name)))
+    else begin
+      (* no punning *)
+      Parser.expect p Equal;
+      let optional = Parser.optional p Question in
+      let attrExpr = parsePrimaryExpr p in
+      let label =
+        if optional then Asttypes.Optional name else Asttypes.Labelled name
+      in
+      (label, attrExpr)
+    end
+
+  and parseJsxAttributes p =
+    let rec loop p attrs =
+      match p.Parser.token with
+      | Token.Eof | Forwardslash | GreaterThan -> List.rev attrs
+      | _ ->
+        let attr = parseJsxAttribute p in
+        loop p (attr::attrs)
+    in
+    loop p []
+
+  and parseJsxChildren p =
+    let rec loop p children =
+      match p.Parser.token  with
+      | Token.Eof | LessThan -> List.rev children
+      | _ ->
+        let child = parsePrimaryExpr p in
+        loop p (child::children)
+    in
+    loop p []
+
   and parseBracedOrRecordExpr p =
     (* opening brace consumed *)
     match p.Parser.token with
@@ -979,8 +1096,14 @@ module LangParser = struct
       | _ ->
         let firstExpr = parsePrimaryExpr ~operand:(Ast_helper.Exp.ident
         pathIdent) p in
-        Parser.expect p Semicolon;
-        parseSeqExpr [firstExpr] p
+        begin match p.Parser.token with
+        | Semicolon ->
+          Parser.next p;
+          parseSeqExpr [firstExpr] p
+        | Rbrace ->
+          firstExpr
+        | _ -> raise (Parser.Expected (p.pos, "Expeced } or ;"))
+        end
       end
     | _ ->
       parseSeqExpr [] p
@@ -2122,20 +2245,8 @@ module LangParser = struct
 
   let () =
     let p = Parser.make "
-
-  let arr1 = [1, 2, 3]
-  let arr2 = [4, 5, 6,]
-
-
-       type z = Plant.Bar.t(string, int)
-
-    let x = 1
-
-
-    let q = switch z {
-    | {field: x Lar.Bar.z: z, _, } => log(1)
-    }
-
+      let x = < div a=f(a) > {f(a)} bar {[0]} < / div >
+      let z = <> foo bar </>
 
      " "file.rjs" in
     (* let p = Parser.make "open Foo.bar" "file.rjs" in *)
