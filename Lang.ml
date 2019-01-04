@@ -18,6 +18,7 @@ module CharacterCodes = struct
   let bar = 0x7C
   let tilde = 0x7E
   let question = 0x3F
+  let ampersand = 0x26
 
   let lparen = 0x28
   let rparen = 0x29
@@ -129,11 +130,11 @@ module Token = struct
     | Bang
     | Semicolon
     | Let
+    | And
     | Rec | Nonrec
     | Underscore
     | SingleQuote
-    | Equal
-    | And
+    | Equal | EqualEqual | EqualEqualEqual
     | Bar
     | Lparen
     | Rparen
@@ -146,20 +147,20 @@ module Token = struct
     | Eof
     | Exception
     | Backslash
-    | Forwardslash
-    | Minus
-    | Plus
+    | Forwardslash | ForwardslashDot
+    | Asterisk | AsteriskDot | Exponentiation
+    | Minus | MinusDot
+    | Plus | PlusDot | PlusPlus
     | GreaterThan
     | LessThan
-    | Hash
-    | Asterisk
+    | Hash | HashEqual | HashHash
     | Assert
     | Lazy
     | Tilde
     | Question
     | If | Else | For | In | To | Downto | While | Switch
     | When
-    | EqualGreater
+    | EqualGreater | MinusGreater
     | External
     | Typ
     | Private
@@ -169,10 +170,24 @@ module Token = struct
     | Module
     | Of
     | With
+    | Mod | Land | Lor | Lxor
+    | Lsl | Lsr | Asr
+    | Band (* Bitwise and: & *)
+    | BangEqual | BangEqualEqual
+    | LessEqual | GreaterEqual
+    | ColonEqual
 
   let precedence = function
-    | Plus | Minus -> 4
-    | Asterisk | Forwardslash -> 5
+    | HashEqual | ColonEqual -> 1
+    | Lor -> 2
+    | Land -> 3
+    | EqualEqual | EqualEqualEqual | LessThan | GreaterThan
+    | BangEqual | BangEqualEqual | LessEqual | GreaterEqual -> 4
+    | Plus | PlusDot | Minus | MinusDot | Lxor | PlusPlus -> 5
+    | Asterisk | AsteriskDot | Forwardslash | ForwardslashDot  | Lsl | Lsr | Mod -> 6
+    | Exponentiation -> 7
+    | Hash | HashHash | MinusGreater -> 8
+    | Dot -> 9
     | _ -> 0
 
   let toString = function
@@ -186,31 +201,28 @@ module Token = struct
     | Bang -> "!"
     | Semicolon -> ";"
     | Let -> "let"
+    | And -> "and"
     | Rec -> "rec" | Nonrec -> "nonrec"
     | Underscore -> "_"
     | SingleQuote -> "'"
-    | Equal -> "="
-    | And -> "and"
+    | Equal -> "=" | EqualEqual -> "==" | EqualEqualEqual -> "==="
     | Eof -> "eof"
     | Bar -> "bar"
     | As -> "as"
-    | Lparen -> "("
-    | Rparen -> ")"
-    | Lbracket -> "["
-    | Rbracket -> "]"
-    | Lbrace -> "{"
-    | Rbrace -> "}"
+    | Lparen -> "(" | Rparen -> ")"
+    | Lbracket -> "[" | Rbracket -> "]"
+    | Lbrace -> "{" | Rbrace -> "}"
     | Colon -> ":"
     | Comma -> ","
-    | Minus -> "-"
-    | Plus -> "+"
+    | Minus -> "-" | MinusDot -> "-."
+    | Plus -> "+" | PlusDot -> "+." | PlusPlus -> "++"
     | Backslash -> "\\"
-    | Forwardslash -> "/"
+    | Forwardslash -> "/" | ForwardslashDot -> "/."
     | Exception -> "exception"
-    | Hash -> "#"
+    | Hash -> "#" | HashHash -> "##" | HashEqual -> "#="
     | GreaterThan -> ">"
     | LessThan -> "<"
-    | Asterisk -> "*"
+    | Asterisk -> "*" | AsteriskDot -> "*." | Exponentiation -> "**"
     | Assert -> "assert"
     | Lazy -> "lazy"
     | Tilde -> "tilde"
@@ -224,7 +236,7 @@ module Token = struct
     | While -> "while"
     | Switch -> "switch"
     | When -> "when"
-    | EqualGreater -> "=>"
+    | EqualGreater -> "=>" | MinusGreater -> "->"
     | External -> "external"
     | Typ -> "type"
     | Private -> "private"
@@ -234,6 +246,12 @@ module Token = struct
     | Module -> "module"
     | Of -> "of"
     | With -> "with"
+    | Mod -> "mod"  | Lor -> "||" | Lxor -> "lxor"
+    | Lsl -> "lsl"| Lsr -> "lsr" | Asr -> "asr"
+    | Band -> "&" | Land -> "&&"
+    | BangEqual -> "!=" | BangEqualEqual -> "!=="
+    | GreaterEqual -> ">=" | LessEqual -> "<="
+    | ColonEqual -> ":="
 
   let keywordTable =
     let keywords = [|
@@ -263,6 +281,10 @@ module Token = struct
       "include", Include;
       "module", Module;
       "of", Of;
+      "mod", Mod; "land", Land; "lor", Lor; "lxor", Lxor;
+      "lsl", Lsl;
+      "lsr", Lsr;
+      "asr", Asr;
     |] in
     let t = Hashtbl.create 50 in
     Array.iter (fun (k, v) ->
@@ -400,7 +422,17 @@ module Lex = struct
       else if ch == CharacterCodes.singleQuote then
         Token.SingleQuote
       else if ch == CharacterCodes.bang then
-        Token.Bang
+        if lexbuf.ch == CharacterCodes.equal then (
+          next lexbuf;
+          if lexbuf.ch == CharacterCodes.equal then (
+            next lexbuf;
+            Token.BangEqualEqual
+          ) else (
+            Token.BangEqual
+          )
+        ) else (
+          Token.Bang
+        )
       else if ch == CharacterCodes.semicolon then
         Token.Semicolon
       else if ch == CharacterCodes.underscore then
@@ -409,11 +441,30 @@ module Lex = struct
         if lexbuf.ch == CharacterCodes.greaterThan then (
           next lexbuf;
           Token.EqualGreater
+        ) else if lexbuf.ch == CharacterCodes.equal then (
+          next lexbuf;
+          if lexbuf.ch == CharacterCodes.equal then (
+            Token.EqualEqualEqual
+          ) else (
+            Token.EqualEqual
+          )
         ) else (
           Token.Equal
         )
       ) else if ch == CharacterCodes.bar then
-        Token.Bar
+        if lexbuf.ch == CharacterCodes.bar then (
+          next lexbuf;
+          Token.Lor
+        ) else (
+          Token.Bar
+        )
+      else if ch == CharacterCodes.ampersand then
+        if lexbuf.ch == CharacterCodes.ampersand then (
+          next lexbuf;
+          Token.Land
+        ) else (
+          Token.Band
+        )
       else if ch == CharacterCodes.lparen then
         Token.Lparen
       else if ch == CharacterCodes.rparen then
@@ -429,23 +480,67 @@ module Lex = struct
       else if ch == CharacterCodes.comma then
         Token.Comma
       else if ch == CharacterCodes.colon then
-        Token.Colon
+       if lexbuf.ch == CharacterCodes.equal then(
+          next lexbuf;
+          Token.ColonEqual
+        ) else (
+          Token.Colon
+        )
       else if ch == CharacterCodes.backslash then
         Token.Backslash
       else if ch == CharacterCodes.forwardslash then
         Token.Forwardslash
       else if ch == CharacterCodes.minus then
-        Token.Minus
+        if lexbuf.ch == CharacterCodes.dot then (
+          next lexbuf;
+          Token.MinusDot
+        ) else if lexbuf.ch == CharacterCodes.greaterThan then (
+          next lexbuf;
+          Token.MinusGreater;
+        ) else (
+          Token.Minus
+        )
       else if ch == CharacterCodes.plus then
-        Token.Plus
+        if lexbuf.ch == CharacterCodes.dot then (
+          next lexbuf;
+          Token.PlusDot
+        ) else if lexbuf.ch == CharacterCodes.plus then (
+          next lexbuf;
+          Token.PlusPlus
+        ) else (
+          Token.Plus
+        )
       else if ch == CharacterCodes.greaterThan then
-        Token.GreaterThan
+        if lexbuf.ch == CharacterCodes.equal then(
+          next lexbuf;
+          Token.GreaterEqual
+        ) else (
+          Token.GreaterThan
+        )
       else if ch == CharacterCodes.lessThan then
-        Token.LessThan
+        if lexbuf.ch == CharacterCodes.equal then(
+          next lexbuf;
+          Token.LessEqual
+        ) else (
+          Token.LessThan
+        )
       else if ch == CharacterCodes.hash then
-        Token.Hash
+        if lexbuf.ch == CharacterCodes.hash then(
+          next lexbuf;
+          Token.HashHash
+        ) else if lexbuf.ch == CharacterCodes.equal then(
+          next lexbuf;
+          Token.HashEqual
+        ) else (
+          Token.Hash
+        )
       else if ch == CharacterCodes.asterisk then
-        Token.Asterisk
+        if lexbuf.ch == CharacterCodes.asterisk then (
+          next lexbuf;
+          Token.Exponentiation;
+        ) else (
+          Token.Asterisk
+        )
       else if ch == CharacterCodes.tilde then
         Token.Tilde
       else if ch == CharacterCodes.question then
@@ -504,6 +599,39 @@ module LangParser = struct
 
 
   let array_function str name = Longident.Ldot(Lident str, name)
+
+  let makeInfixOperator token startPos endPos =
+    let stringifiedToken =
+      if token = Token.MinusGreater then "|."
+      else Token.toString token
+    in
+    let operator = Location.mkloc
+      (Longident.Lident stringifiedToken) (mkLoc startPos endPos)
+    in
+    Ast_helper.Exp.ident operator
+
+  let negateString s =
+    if String.length s > 0 && s.[0] = '-'
+    then String.sub s 1 (String.length s - 1)
+    else "-" ^ s
+
+  let makeUnaryExpr token expr =
+    match token, expr.Parsetree.pexp_desc with
+    | (Token.Plus | PlusDot), Pexp_constant((Pconst_integer _ | Pconst_float _)) -> expr
+    | (Minus | MinusDot), Pexp_constant(Pconst_integer (n,m)) ->
+      {expr with pexp_desc = Pexp_constant(Pconst_integer (negateString n,m))}
+    | (Minus | MinusDot), Pexp_constant(Pconst_float (n,m)) ->
+      {expr with pexp_desc = Pexp_constant(Pconst_float (negateString n,m))}
+    | (Token.Plus | PlusDot | Minus | MinusDot ), _ ->
+       let operator = "~" ^ Token.toString token in
+       Ast_helper.Exp.apply
+         (Ast_helper.Exp.ident (Location.mknoloc (Longident.Lident operator)))
+         [Nolabel, expr]
+    | Token.Bang, _ ->
+      Ast_helper.Exp.apply
+        (Ast_helper.Exp.ident (Location.mknoloc (Longident.Lident "not")))
+        [Nolabel, expr]
+    | _ -> expr
 
   let makeListExpression seq extOpt =
     let rec handleSeq = function
@@ -914,9 +1042,9 @@ module LangParser = struct
 
   and parseUnaryExpr p =
     match p.Parser.token with
-    | Minus | Plus | Bang ->
+    | (Minus | MinusDot | Plus | PlusDot | Bang) as token ->
       Parser.next p;
-      parseUnaryExpr p
+      makeUnaryExpr token (parseUnaryExpr p)
     | _ ->
       parsePrimaryExpr p
 
@@ -930,12 +1058,9 @@ module LangParser = struct
         let startPos = p.pos in
         Parser.next p;
         let endPos = p.pos in
-        let operator = Location.mkloc
-          (Longident.Lident (Token.toString token)) (mkLoc startPos endPos)
-        in
         let b = parseBinaryExpr p (tokenPrec + 1) in
         let expr = Ast_helper.Exp.apply
-          (Ast_helper.Exp.ident operator)
+          (makeInfixOperator token startPos endPos)
           [Nolabel, a; Nolabel, b]
         in
         loop expr
@@ -1221,7 +1346,7 @@ module LangParser = struct
           None
         in
         Parser.expect p EqualGreater;
-        let rhs = parseExpr p in
+        let rhs = parseSeqExpr [] p in
         let case = Ast_helper.Exp.case lhs ?guard rhs in
         loop p (case::cases)
       | _ -> raise (Parser.Expected (p.pos, "case problem"))
@@ -2245,9 +2370,16 @@ module LangParser = struct
 
   let () =
     let p = Parser.make "
-      let x = < div a=f(a) > {f(a)} bar {[0]} < / div >
-      let z = <> foo bar </>
+    let x = \"foo\" ++ \"lala\"
 
+    let y = !x.y.z
+    let y = !(x.y.z)
+
+    let x = switch foo {
+    | bar =>
+      x := 1;
+      foo()
+    }
      " "file.rjs" in
     (* let p = Parser.make "open Foo.bar" "file.rjs" in *)
     try
@@ -2269,6 +2401,8 @@ module LangParser = struct
       print_endline "trace";
       print_endline trace
 end
+
+
 
 
 (*  let arr1 = [1, 2, 3]
