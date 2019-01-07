@@ -2417,9 +2417,9 @@ and parseTypeRepresentation p =
    * Also what about type-expressions and specifications?
    * @attr(:myType) ???
    *)
-  and parsePayload p =
+  and parsePayload cnumEndAttrId p =
     let structure = match p.Parser.token with
-    | Lparen ->
+    | Lparen when p.pos.pos_cnum = cnumEndAttrId + 1 ->
       Parser.next p;
       let item = parseStructureItem p in
       Parser.expect p Rparen;
@@ -2431,8 +2431,9 @@ and parseTypeRepresentation p =
   (* type attribute = string loc * payload *)
   and parseAttribute p =
     Parser.expect p At;
+    let cnumEndAttrId = p.Parser.pos.pos_cnum in
     let attrId = parseAttributeId p in
-    let payload = parsePayload p in
+    let payload = parsePayload cnumEndAttrId p in
     (attrId, payload)
 
   and parseAttributes p =
@@ -2447,11 +2448,10 @@ and parseTypeRepresentation p =
     loop p []
 
   let () =
-    let p = Parser.make "
+    let p = Parser.make "@structure (@onBar bar + @onFoo foo)
 
-    let x = @onFoo foo + @onBar bar
-
-     " "file.rjs" in
+   @attr(payload) x
+    " "file.rjs" in
     (* let p = Parser.make "open Foo.bar" "file.rjs" in *)
     try
       let ast = parseStructure p in
