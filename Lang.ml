@@ -596,7 +596,73 @@ module LangParser = struct
         next p
       else
         raise (Expected (p.pos, ("expected: " ^ (Token.toString token))))
+
+    let lookahead p callback =
+      (* is this copying correct? *)
+      let lexbufCopy = {p.lexbuf with filename = p.lexbuf.filename} in
+      let parserStateCopy = {p with lexbuf = lexbufCopy} in
+      callback parserStateCopy
   end
+
+
+    exception Unbalanced
+
+type context =
+  | StructureExpr
+  | OrdinaryExpr
+  | TernaryTrueBranchExpr
+  | WhenExpr
+
+let getClosingToken = function
+  | Token.Lparen -> Token.Rparen
+  | Lbrace -> Rbrace
+  | Lbracket -> Rbracket
+  | _ -> assert false
+
+let rec goToClosing closingToken state =
+  match (state.Parser.token, closingToken) with
+  | (Rparen, Token.Rparen) | (Rbrace, Rbrace) | (Rbracket, Rbracket)-> Parser.next state; ()
+  | (Token.Lbracket | Lparen | Lbrace), _ ->
+     goToClosing (getClosingToken state.Parser.token) state;
+     Parser.next state;
+     goToClosing closingToken state
+  | ((Rparen | Token.Rbrace | Rbracket | Eof), _)  -> raise Unbalanced
+  | _ ->
+    Parser.next state;
+    goToClosing closingToken state
+
+  (* Madness *)
+  let isEs6ArrowExpression ~inTernary p =
+    Parser.lookahead p (fun state ->
+      match state.Parser.token with
+      | Lident _ | Underscore ->
+        Parser.next state;
+        begin match state.Parser.token with
+        | Colon when not inTernary -> true
+        | EqualGreater -> true
+        | _ -> false
+        end
+      | Lparen ->
+        Parser.next state;
+        begin match state.token with
+        | Rparen ->
+          Parser.next state;
+          begin match state.Parser.token with
+          | Colon when not inTernary -> true
+          | EqualGreater -> true
+          | _ -> false
+          end
+        | Dot (* uncurried *) -> true
+        | Tilde -> true
+        | _ ->
+          goToClosing Rparen state;
+          begin match state.Parser.token with
+          | EqualGreater -> true
+          | Colon when not inTernary -> true
+          | _ -> false
+          end
+        end
+      | _ -> false)
 
   let buildLongident words = match List.rev words with
     | [] -> assert false
@@ -775,6 +841,7 @@ module LangParser = struct
      (* ∣	 char-literal ..  char-literal *)
      (*	∣	 exception pattern  *)
   let rec parsePattern p =
+    let attrs = parseAttributes p in
     let pat = match p.Parser.token with
     (* TODO inline or refactor into "maintainable"/"reusable code"? *)
     | Int _ | String _ ->
@@ -799,18 +866,18 @@ module LangParser = struct
       pat
     | Lbracket ->
       Parser.next p;
-      parseArrayPattern p
+      parseArrayPattern ~attrs p
     | Lbrace ->
-      parseRecordPattern p
+      parseRecordPattern ~attrs p
     | Forwardslash ->
       Parser.next p;
-      parseTuplePattern p
+      parseTuplePattern ~attrs p
     | Underscore ->
       Parser.next p;
-      Ast_helper.Pat.any ()
+      Ast_helper.Pat.any ~attrs ()
     | Lident ident ->
       Parser.next p;
-      Ast_helper.Pat.var (Location.mkloc ident Location.none)
+      Ast_helper.Pat.var ~attrs (Location.mkloc ident Location.none)
     | Uident _ ->
       let startPos = p.pos in
       let lident = parseModuleLongIdent p in
@@ -820,18 +887,18 @@ module LangParser = struct
       begin match p.Parser.token with
       | Lparen ->
         Parser.next p;
-        Ast_helper.Pat.construct constr (parseConstructorPatternArgs p)
+        Ast_helper.Pat.construct ~attrs constr (parseConstructorPatternArgs p)
       | _ ->
-        Ast_helper.Pat.construct constr None
+        Ast_helper.Pat.construct ~attrs constr None
       end
     | Exception ->
       Parser.next p;
       let pat = parsePattern p in
-      Ast_helper.Pat.exception_ pat
+      Ast_helper.Pat.exception_ ~attrs pat
     | Lazy ->
       Parser.next p;
       let pat = parsePattern p in
-      Ast_helper.Pat.lazy_ pat
+      Ast_helper.Pat.lazy_ ~attrs pat
     | _ ->
       raise (Parser.Expected (p.pos, "pattern"))
     in
@@ -845,7 +912,7 @@ module LangParser = struct
         Parser.next p;
         let endLoc = p.pos in
         let loc = mkLoc startLoc endLoc in
-        Ast_helper.Pat.alias pat (Location.mkloc ident loc)
+        Ast_helper.Pat.alias ~attrs pat (Location.mkloc ident loc)
       | _ -> raise (Parser.Expected (p.pos, "ident plz"))
       end
     | _ -> pat
@@ -865,7 +932,7 @@ module LangParser = struct
 
 
    (* { field  [: typexpr]  [= pattern] { ; field  [: typexpr]  [= pattern] }  [; _ ] [ ; ] }  *)
-  and parseRecordPattern p =
+  and parseRecordPattern ~attrs p =
     Parser.expect p Lbrace;
     let firstField = parseRecordPatternField p in
     let rec loop p fields =
@@ -887,9 +954,9 @@ module LangParser = struct
     in
     let (fields, closedFlag) = loop p [firstField] in
     Parser.expect p Rbrace;
-    Ast_helper.Pat.record fields closedFlag
+    Ast_helper.Pat.record ~attrs fields closedFlag
 
-  and parseTuplePattern p =
+  and parseTuplePattern ~attrs p =
     (* '/' consumed *)
     let rec loop p patterns =
       match p.Parser.token with
@@ -909,9 +976,9 @@ module LangParser = struct
         end
     in
     let patterns = loop p [] in
-    Ast_helper.Pat.tuple patterns
+    Ast_helper.Pat.tuple ~attrs patterns
 
-  and parseArrayPattern p =
+  and parseArrayPattern ~attrs p =
     (* '[' consumed *)
     let rec loop p patterns =
       match p.Parser.token with
@@ -931,7 +998,7 @@ module LangParser = struct
         end
     in
     let patterns = loop p [] in
-    Ast_helper.Pat.tuple patterns
+    Ast_helper.Pat.array ~attrs patterns
 
   and parseConstructorPatternArgs p =
     let rec loop p patterns =
@@ -955,10 +1022,118 @@ module LangParser = struct
     | [pattern] -> Some pattern
     | patterns -> Some (Ast_helper.Pat.tuple patterns)
 
+  and parseExpr ?(context=OrdinaryExpr) p =
+    let expr = if (context != WhenExpr) && isEs6ArrowExpression ~inTernary:(context=TernaryTrueBranchExpr) p then
+      parseEs6ArrowExpression p
+    else
+      parseBinaryExpr ~allowAttrs:(context != StructureExpr) p 1
+    in
+    parseTernaryTrueBranchExpr expr p
 
+  (* expr ? expr : expr *)
+  and parseTernaryTrueBranchExpr leftOperand p =
+    match p.Parser.token with
+    | Question ->
+      Parser.next p;
+      let trueBranch = parseExpr ~context:TernaryTrueBranchExpr p in
+      Parser.expect p Colon;
+      let falseBranch = parseExpr p in
+      Ast_helper.Exp.ifthenelse leftOperand trueBranch (Some falseBranch)
+    | _ ->
+      leftOperand
 
-  let rec parseExpr ?(allowAttrs=true) p =
-    parseBinaryExpr ~allowAttrs p 1
+  and parseEs6ArrowExpression p =
+    let parameters = parseParameters p in
+    let returnType = match p.Parser.token with
+    | Colon ->
+      Parser.next p;
+      Some (parseTypExpr p)
+    | _ ->
+      None
+    in
+    Parser.expect p EqualGreater;
+    let body =
+      let expr = parseExpr p in
+      match returnType with
+      | Some typ ->
+        Ast_helper.Exp.constraint_ expr typ
+      | None -> expr
+    in
+    List.fold_right (fun (lbl, defaultExpr, pat) expr ->
+      Ast_helper.Exp.fun_ lbl defaultExpr pat expr
+    ) parameters body
+
+  and parseParameter p =
+    let (lbl, pat) = match p.Parser.token with
+    | Tilde ->
+      Parser.next p;
+      let lblName = match p.Parser.token with
+      | Lident ident ->
+        Parser.next p;
+        ident
+      | _ -> raise (Parser.Expected (p.pos, "label-name should be lowercase"))
+      in
+      begin match p.Parser.token with
+      | Comma | Equal | Rparen ->
+        (Asttypes.Labelled lblName, Ast_helper.Pat.var (Location.mknoloc lblName))
+      | As ->
+        Parser.next p;
+        let pat = parsePattern p in
+        (Asttypes.Labelled lblName, pat)
+      | _ -> raise (Parser.Expected (p.pos, "Expectected , or = or as"))
+      end
+    | _ ->
+      (Asttypes.Nolabel, parsePattern p)
+    in
+    (* TODO: explicitly passed optional and constraints *)
+    match p.Parser.token with
+    | Equal ->
+      Parser.next p;
+      let expr = parseExpr p in
+      (lbl, Some expr, pat)
+    | _ ->
+      (lbl, None, pat)
+
+  and parseParameterList p =
+    (* ( consumed *)
+    let rec loop p parameters =
+      match p.Parser.token with
+      | Comma ->
+        Parser.next p;
+        loop p parameters
+      | Rparen ->
+        Parser.next p;
+        List.rev parameters
+      | _ ->
+        let parameter = parseParameter p in
+        loop p (parameter::parameters)
+    in
+    loop p []
+
+  (*
+   * parameters ::= _
+   *             | lident
+   *             | ( parameter {, parameter} [,] )
+   *)
+  and parseParameters p =
+    match p.Parser.token with
+    | Lident ident ->
+      Parser.next p;
+      [Asttypes.Nolabel, None, Ast_helper.Pat.var (Location.mknoloc ident)]
+    | Underscore ->
+      Parser.next p;
+      [Asttypes.Nolabel, None, Ast_helper.Pat.any ()]
+    | Lparen ->
+      Parser.next p;
+      begin match p.Parser.token with
+      | Rparen ->
+        Parser.next p;
+        let unitPattern = Ast_helper.Pat.construct (Location.mknoloc (Longident.Lident "()")) None in
+        [Asttypes.Nolabel, None, unitPattern]
+      | _ -> parseParameterList p
+      end
+
+    | _ -> raise (Parser.Expected (p.pos, "Unsupported parameter"))
 
   and parseOperand p =
     let expr = match p.Parser.token with
@@ -1080,27 +1255,28 @@ module LangParser = struct
     in
     loop a
 
-  and parseLetBindingBody p =
+  and parseLetBindingBody ~attrs p =
     let pat = parsePattern p in
     Parser.expect p Token.Equal;
     let exp = parseExpr p in
-    Ast_helper.Vb.mk pat exp
+    Ast_helper.Vb.mk ~attrs pat exp
 
   (* definition	::=	let [rec] let-binding  { and let-binding }   *)
-  and parseLetBindings p =
+  and parseLetBindings ~attrs p =
     Parser.expect p Let;
     let recFlag = if Parser.optional p Token.Rec then
       Asttypes.Recursive
     else
       Asttypes.Nonrecursive
     in
-    let first = parseLetBindingBody p in
+    let first = parseLetBindingBody ~attrs p in
 
     let rec loop p bindings =
+      let attrs = parseAttributes p in
       match p.Parser.token with
       | And ->
         Parser.next p;
-        let letBinding = parseLetBindingBody p in
+        let letBinding = parseLetBindingBody ~attrs p in
         loop p (letBinding::bindings)
       | _ ->
         List.rev bindings
@@ -1273,7 +1449,7 @@ module LangParser = struct
     let rec loop p rows =
       let expr = match p.Parser.token with
       | Let ->
-        let (recFlag, letBindings) = parseLetBindings p in
+          let (recFlag, letBindings) = parseLetBindings ~attrs:[] p in
         ignore (Parser.optional p Semicolon);
         let expr = begin match p.Parser.token with
         | Rbrace ->
@@ -1286,6 +1462,8 @@ module LangParser = struct
       match p.Parser.token with
       | Semicolon -> Parser.next p; loop p (expr::rows)
       | Rbrace -> expr::rows
+      (* TODO: refactor | from pattern matching *)
+      | Bar -> expr::rows
       | _ -> raise (Parser.Expected (p.pos, "Expected ; or }"))
     in
     let exprs = loop p rows in
@@ -1353,12 +1531,12 @@ module LangParser = struct
         let guard = match p.Parser.token with
         | When ->
           Parser.next p;
-          Some (parseExpr p)
+          Some (parseExpr ~context:WhenExpr p)
         | _ ->
           None
         in
         Parser.expect p EqualGreater;
-        let rhs = parseSeqExpr [] p in
+        let rhs = parseExpr p in
         let case = Ast_helper.Exp.case lhs ?guard rhs in
         loop p (case::cases)
       | _ -> raise (Parser.Expected (p.pos, "case problem"))
@@ -1528,18 +1706,19 @@ module LangParser = struct
     Ast_helper.Exp.array (List.rev exprs)
 
   and parseTypExpr p =
+    let attrs = parseAttributes p in
     let typ = match p.Parser.token with
     | SingleQuote ->
       Parser.next p;
       begin match p.Parser.token with
       | Lident ident ->
         Parser.next p;
-        Ast_helper.Typ.var ident
+        Ast_helper.Typ.var ~attrs ident
       | _ -> raise (Parser.Expected (p.pos, "Expected lowercase ident"))
       end
     | Underscore ->
       Parser.next p;
-      Ast_helper.Typ.any ()
+      Ast_helper.Typ.any ~attrs ()
     | Forwardslash ->
       Parser.next p;
       parseTupleType p
@@ -1558,22 +1737,22 @@ module LangParser = struct
       begin match p.Parser.token with
       | Lparen ->
         Parser.next p;
-        Ast_helper.Typ.constr constr (parseConstructorTypeArgs p)
+        Ast_helper.Typ.constr ~attrs constr (parseConstructorTypeArgs p)
       | _ ->
-        Ast_helper.Typ.constr constr []
+        Ast_helper.Typ.constr ~attrs constr []
       end
     | _ ->
       raise (Parser.Expected (p.pos, "hmm we're going to parse a typexpr"))
     in
+    (* TODO: check associativity in combination with attributes *)
     match p.Parser.token with
     | As ->
       Parser.next p;
-      (* TODO parse quote here *)
-      (* Parser.expect p Quote; *)
+      Parser.expect p SingleQuote;
       begin match p.token with
       | Lident ident ->
         Parser.next p;
-        Ast_helper.Typ.alias typ ident
+        Ast_helper.Typ.alias ~attrs typ ident
       | _ -> raise (Parser.Expected (p.pos, "ident plz"))
       end
     | _ -> typ
@@ -1886,6 +2065,7 @@ and parseTypeRepresentation p =
 *)
 
   and parseTypeDef p =
+    let attrs = parseAttributes p in
     let typeConstrName = match p.Parser.token with
     | Lident ident ->
       Parser.next p;
@@ -1901,9 +2081,9 @@ and parseTypeRepresentation p =
     | _ ->
       let (manifest, priv, kind) = parseTypeEquationAndRepresentation p in
       let cstrs = parseTypeConstraints p in
-      Ast_helper.Type.mk ~priv ~kind ~params ~cstrs ?manifest typeConstrName
+      Ast_helper.Type.mk ~attrs ~priv ~kind ~params ~cstrs ?manifest typeConstrName
 
-    and parseTypeDefinition p =
+  and parseTypeDefinition p =
     Parser.expect p Token.Typ;
     let recFlag =
       if Parser.optional p Token.Nonrec
@@ -1922,7 +2102,6 @@ and parseTypeRepresentation p =
     in
     (recFlag, loop p [typeDef])
 
-  (* TODO: make sure we have at least one string *)
   and parsePrimitive p =
     let rec loop p prims =
       match p.Parser.token with
@@ -1930,7 +2109,10 @@ and parseTypeRepresentation p =
         Parser.next p;
         loop p (s::prims)
       | _ ->
-        List.rev prims
+        begin match prims with
+        | [] -> raise (Parser.Expected (p.pos, "should have at least one string"))
+        | prims -> List.rev prims
+        end
     in
     loop p []
 
@@ -1945,7 +2127,6 @@ and parseTypeRepresentation p =
     Parser.expect p Colon;
     let typExpr = parseTypExpr p in
     Parser.expect p Equal;
-    (* TODO accept multiple strings *)
     let prim = parsePrimitive p in
     Ast_helper.Val.mk ~attrs ~prim name typExpr
 
@@ -1988,7 +2169,7 @@ and parseTypeRepresentation p =
     | Open ->
       Ast_helper.Str.open_ (parseOpenDescription ~attrs p)
     | Let ->
-      let (recFlag, letBindings) = parseLetBindings p in
+      let (recFlag, letBindings) = parseLetBindings ~attrs p in
       Ast_helper.Str.value recFlag letBindings
     | Typ ->
       let (recFlag, typeDecls) = parseTypeDefinition p in
@@ -2001,7 +2182,7 @@ and parseTypeRepresentation p =
       Ast_helper.Str.include_ (parseIncludeStatement ~attrs p)
     | Module -> parseMaybeRecModuleBinding p
     | _ ->
-      Ast_helper.Str.eval ~attrs (parseExpr ~allowAttrs:false p)
+      Ast_helper.Str.eval ~attrs (parseExpr ~context:StructureExpr p)
 
   and parseIncludeStatement ~attrs p =
     Parser.expect p Token.Include;
@@ -2313,6 +2494,7 @@ and parseTypeRepresentation p =
     Ast_helper.Mty.signature (loop p [])
 
   and parseSignatureItem p =
+    let attrs = parseAttributes p in
     match p.Parser.token with
     | Let ->
       parseSignLetDesc p
@@ -2320,11 +2502,11 @@ and parseTypeRepresentation p =
       let (recFlag, typeDecls) = parseTypeDefinition p in
       Ast_helper.Sig.type_ recFlag typeDecls
     | External ->
-      Ast_helper.Sig.value (parseExternalDef ~attrs:[] p)
+      Ast_helper.Sig.value (parseExternalDef ~attrs p)
     | Exception ->
-      Ast_helper.Sig.exception_ (parseExceptionDef ~attrs:[] p)
+      Ast_helper.Sig.exception_ (parseExceptionDef ~attrs p)
     | Open ->
-      Ast_helper.Sig.open_ (parseOpenDescription ~attrs:[] p)
+      Ast_helper.Sig.open_ (parseOpenDescription ~attrs p)
     | Include ->
       Parser.next p;
       let moduleType = parseModuleType p in
@@ -2334,14 +2516,14 @@ and parseTypeRepresentation p =
       Parser.next p;
       begin match p.Parser.token with
       | Uident _ ->
-        parseModuleDeclarationOrAlias p
+        parseModuleDeclarationOrAlias ~attrs p
       | Typ ->
-        parseModuleTypeDeclaration p
+        parseModuleTypeDeclaration ~attrs p
       | _ -> raise (Parser.Expected (p.pos, "need type or uident"))
       end
     | _ -> raise (Parser.Expected (p.pos, "signature item"))
 
-  and parseModuleDeclarationOrAlias p =
+  and parseModuleDeclarationOrAlias ~attrs p =
     let moduleName = match p.Parser.token with
     | Uident ident ->
       Parser.next p;
@@ -2358,9 +2540,9 @@ and parseTypeRepresentation p =
       Ast_helper.Mty.alias (Location.mknoloc lident)
     | _ -> raise (Parser.Expected (p.pos, "Expected : or ="))
     in
-    Ast_helper.Sig.module_ (Ast_helper.Md.mk moduleName body)
+    Ast_helper.Sig.module_ (Ast_helper.Md.mk ~attrs moduleName body)
 
-  and parseModuleTypeDeclaration p =
+  and parseModuleTypeDeclaration ~attrs p =
     Parser.expect p Typ;
     let moduleName = match p.Parser.token with
     | Uident ident ->
@@ -2374,7 +2556,7 @@ and parseTypeRepresentation p =
       Some (parseModuleType p)
     | _ -> None
     in
-    let moduleDecl = Ast_helper.Mtd.mk ?typ moduleName in
+    let moduleDecl = Ast_helper.Mtd.mk ~attrs ?typ moduleName in
     Ast_helper.Sig.modtype moduleDecl
 
   and parseSignLetDesc p =
@@ -2448,9 +2630,18 @@ and parseTypeRepresentation p =
     loop p []
 
   let () =
-    let p = Parser.make "@structure (@onBar bar + @onFoo foo)
+    let p = Parser.make "
 
-   @attr(payload) x
+    let x = {a}
+
+    let emitVariantLabel = (~comment=true, ~polymorphic, label) => a + b
+
+    let x = foo ? (a) : 1
+
+    switch foo {
+    | Foo when x => bar
+    }
+
     " "file.rjs" in
     (* let p = Parser.make "open Foo.bar" "file.rjs" in *)
     try
@@ -2472,8 +2663,6 @@ and parseTypeRepresentation p =
       print_endline "trace";
       print_endline trace
 end
-
-
 
 
 (*  let arr1 = [1, 2, 3]
