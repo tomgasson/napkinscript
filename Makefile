@@ -10,4 +10,4 @@ build-native:
 	ocamlopt -O3 -o _build/native.exe -I _build -I +compiler-libs ocamlcommon.cmxa Lang.ml
 
 test: build
-	./_build/prog.exe
+	./_build/prog.exe file.rjs

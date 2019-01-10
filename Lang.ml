@@ -2,7 +2,12 @@ module CharacterCodes = struct
   let eol = -1
 
   let space = 0x0020
-  let newline = 0x0A
+  let newline = 0x0A (* \n *)
+  let lineFeed = 0x0A (* \n *)
+  let carriageReturn = 0x0D  (* \r *)
+  let lineSeparator = 0x2028
+  let paragraphSeparator = 0x2029
+
   let tab = 0x09
 
   let bang = 0x21
@@ -116,6 +121,25 @@ module CharacterCodes = struct
     Upper.a <= ch && ch <= Upper.z
 
   let isDigit ch = _0 <= ch && ch <= _9
+
+    (*
+      // ES5 7.3:
+      // The ECMAScript line terminator characters are listed in Table 3.
+      //     Table 3: Line Terminator Characters
+      //     Code Unit Value     Name                    Formal Name
+      //     \u000A              Line Feed               <LF>
+      //     \u000D              Carriage Return         <CR>
+      //     \u2028              Line separator          <LS>
+      //     \u2029              Paragraph separator     <PS>
+      // Only the characters in Table 3 are treated as line terminators. Other new line or line
+      // breaking characters are treated as white space but not as line terminators.
+  *)
+  let isLineBreak ch =
+       ch == lineFeed
+    || ch == carriageReturn
+    || ch == lineSeparator
+    || ch == paragraphSeparator
+
 end
 
 module Token = struct
@@ -178,6 +202,7 @@ module Token = struct
     | LessEqual | GreaterEqual
     | ColonEqual
     | At
+    | Comment of string
 
   let precedence = function
     | HashEqual | ColonEqual -> 1
@@ -209,7 +234,7 @@ module Token = struct
     | SingleQuote -> "'"
     | Equal -> "=" | EqualEqual -> "==" | EqualEqualEqual -> "==="
     | Eof -> "eof"
-    | Bar -> "bar"
+    | Bar -> "|"
     | As -> "as"
     | Lparen -> "(" | Rparen -> ")"
     | Lbracket -> "[" | Rbracket -> "]"
@@ -255,6 +280,7 @@ module Token = struct
     | GreaterEqual -> ">=" | LessEqual -> "<="
     | ColonEqual -> ":="
     | At -> "@"
+    | Comment text -> "Comment(" ^ text ^ ")"
 
   let keywordTable =
     let keywords = [|
@@ -406,6 +432,28 @@ module Lex = struct
       Bytes.sub_string lexbuf.src startOff (lexbuf.offset - 1 - startOff)
     )
 
+  let lexSingleLineComment lexbuf =
+    let startOff = lexbuf.offset in
+    while not (CharacterCodes.isLineBreak lexbuf.ch) do
+      next lexbuf
+    done;
+    next lexbuf;
+    Token.Comment (
+      Bytes.sub_string lexbuf.src startOff (lexbuf.offset - 1 - startOff)
+    )
+
+  (* TODO: error handling unclosed multi-line comment, i.e. missing */ *)
+  let lexMultiLineComment lexbuf =
+    let startOff = lexbuf.offset in
+    while not (
+      lexbuf.ch == CharacterCodes.asterisk &&
+      peek lexbuf == CharacterCodes.forwardslash
+    ) do next lexbuf done;
+    next lexbuf;
+    next lexbuf;
+    Token.Comment (
+      Bytes.sub_string lexbuf.src startOff (lexbuf.offset - 1 - startOff)
+    )
 
   exception Unknown_token of int
 
@@ -447,6 +495,7 @@ module Lex = struct
         ) else if lexbuf.ch == CharacterCodes.equal then (
           next lexbuf;
           if lexbuf.ch == CharacterCodes.equal then (
+            next lexbuf;
             Token.EqualEqualEqual
           ) else (
             Token.EqualEqual
@@ -492,7 +541,15 @@ module Lex = struct
       else if ch == CharacterCodes.backslash then
         Token.Backslash
       else if ch == CharacterCodes.forwardslash then
-        Token.Forwardslash
+        if lexbuf.ch == CharacterCodes.forwardslash then (
+          next lexbuf;
+          lexSingleLineComment lexbuf
+        ) else if (lexbuf.ch == CharacterCodes.asterisk) then (
+          next lexbuf;
+          lexMultiLineComment lexbuf
+        ) else (
+          Token.Forwardslash
+        )
       else if ch == CharacterCodes.minus then
         if lexbuf.ch == CharacterCodes.dot then (
           next lexbuf;
@@ -571,17 +628,23 @@ module LangParser = struct
       mutable pos: Lexing.position;
     }
 
+   let rec next p =
+      p.token <- Lex.lex p.lexbuf;
+      p.pos <- Lex.position p.lexbuf;
+      match p.token with
+      | Comment _ -> next p
+      | _ -> ()
+
     let make src filename =
       let lexbuf = Lex.make (Bytes.of_string src) filename in
-      {
+      let parserState = {
         lexbuf;
-        token = Lex.lex lexbuf;
-        pos = Lex.position lexbuf;
-      }
+        token = Token.Eof;
+        pos = Lexing.dummy_pos
+      } in
+      next parserState;
+      parserState
 
-    let next p =
-      p.token <- Lex.lex p.lexbuf;
-      p.pos <- Lex.position p.lexbuf
 
     let optional p token =
       if p.token = token then
@@ -1458,13 +1521,15 @@ let rec goToClosing closingToken state =
           parseSeqExpr [] p
         end in
         Ast_helper.Exp.let_ recFlag letBindings expr
-      | _ -> parseExpr p in
+      | _ -> parseExpr p
+      in
       match p.Parser.token with
       | Semicolon -> Parser.next p; loop p (expr::rows)
-      | Rbrace -> expr::rows
-      (* TODO: refactor | from pattern matching *)
-      | Bar -> expr::rows
-      | _ -> raise (Parser.Expected (p.pos, "Expected ; or }"))
+      (* TODO: refactor | from pattern matching, or }, ideally
+       * this should keep going without knowing the ending*)
+      (* | Rbrace | Bar -> expr::rows *)
+      | _ -> expr::rows
+      (* | _ -> raise (Parser.Expected (p.pos, "Expected ; or }")) *)
     in
     let exprs = loop p rows in
     match exprs with
@@ -1536,7 +1601,7 @@ let rec goToClosing closingToken state =
           None
         in
         Parser.expect p EqualGreater;
-        let rhs = parseExpr p in
+        let rhs = parseSeqExpr [] p in
         let case = Ast_helper.Exp.case lhs ?guard rhs in
         loop p (case::cases)
       | _ -> raise (Parser.Expected (p.pos, "case problem"))
@@ -2629,30 +2694,30 @@ and parseTypeRepresentation p =
     in
     loop p []
 
+  let read_file filename =
+    let txt = ref "" in
+    let chan = open_in filename in
+    try
+      while true; do
+        txt := !txt ^ input_line chan ^ "\n"
+      done; !txt
+    with End_of_file ->
+      close_in chan;
+      !txt;;
+
   let () =
-    let p = Parser.make "
-
-    let x = {a}
-
-    let emitVariantLabel = (~comment=true, ~polymorphic, label) => a + b
-
-    let x = foo ? (a) : 1
-
-    switch foo {
-    | Foo when x => bar
-    }
-
-    " "file.rjs" in
-    (* let p = Parser.make "open Foo.bar" "file.rjs" in *)
+    let filename = Sys.argv.(1) in
+    let src =  read_file filename in
+    let p = Parser.make src filename in
     try
       let ast = parseStructure p in
       Pprintast.structure Format.std_formatter ast;
       Format.pp_print_flush Format.std_formatter ();
       print_newline();
-      Printast.implementation Format.std_formatter ast;
-      Format.pp_print_flush Format.std_formatter ();
-      print_newline();
-      print_newline()
+      (* Printast.implementation Format.std_formatter ast; *)
+      (* Format.pp_print_flush Format.std_formatter (); *)
+      (* print_newline(); *)
+      (* print_newline() *)
     with
     | Parser.Expected (pos, trace) ->
       print_endline ("pos_lnum: " ^ (string_of_int pos.pos_lnum));
