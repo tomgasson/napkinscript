@@ -791,20 +791,25 @@ let rec goToClosing closingToken state =
         [Nolabel, expr]
     | _ -> expr
 
-  let makeListExpression seq extOpt =
+  let makeListExpression loc seq extOpt =
     let rec handleSeq = function
       | [] ->
         begin match extOpt with
         | Some ext -> ext
         | None ->
-          let nil = Location.mknoloc (Longident.Lident "[]") in
-          Ast_helper.Exp.construct nil None
+          let loc = {loc with Location.loc_ghost = true} in
+          let nil = Location.mkloc (Longident.Lident "[]") loc in
+          Ast_helper.Exp.construct ~loc nil None
         end
       | e1 :: el ->
         let exp_el = handleSeq el in
-        let arg = Ast_helper.Exp.tuple [e1; exp_el] in
-        Ast_helper.Exp.construct
-          (Location.mknoloc (Longident.Lident "::"))
+        let loc = mkLoc
+          e1.Parsetree.pexp_loc.Location.loc_start
+          exp_el.pexp_loc.loc_end
+        in
+        let arg = Ast_helper.Exp.tuple ~loc [e1; exp_el] in
+        Ast_helper.Exp.construct ~loc
+          (Location.mkloc (Longident.Lident "::") loc)
           (Some arg)
     in
     handleSeq seq
@@ -1423,45 +1428,64 @@ let rec goToClosing closingToken state =
    *)
   and parseJsx p =
     let attr = (Location.mknoloc "JSX", Parsetree.PStr []) in
+    let jsxStartPos = p.Parser.startPos in
     Parser.expect p LessThan;
     match p.Parser.token with
     | Lident ident ->
+      let identStart = p.startPos in
       Parser.next p;
-      let name = Ast_helper.Exp.ident (Location.mknoloc (Longident.Lident ident)) in
+      let identEnd = p.prevEndPos in
+      let loc = mkLoc identStart identEnd in
+      let name = Ast_helper.Exp.ident
+        ~loc
+        (Location.mkloc (Longident.Lident ident) loc)
+      in
       let jsxAttrs = parseJsxAttributes p in
       let children = match p.Parser.token with
       | Forwardslash -> (* <foo a=b /> *)
+        let childrenStartPos = p.Parser.startPos in
         Parser.next p;
+        let childrenEndPos = p.Parser.startPos in
         Parser.expect p GreaterThan;
-        [] (* no children *)
+        let loc = mkLoc childrenStartPos childrenEndPos in
+        makeListExpression loc [] None (* no children *)
       | GreaterThan -> (* <foo a=b> bar </foo> *)
+        let childrenStartPos = p.Parser.startPos in
         Parser.next p;
         let children = parseJsxChildren p in
+        let childrenEndPos = p.Parser.startPos in
         Parser.expect p LessThan;
         Parser.expect p Forwardslash;
         begin match p.Parser.token with
         | Lident closingIdent when closingIdent = ident ->
           Parser.next p;
           Parser.expect p GreaterThan;
-          children
+          let loc = mkLoc childrenStartPos childrenEndPos in
+          makeListExpression loc children None
         | _ -> raise (Parser.Expected (p.startPos, "Closing jsx element should match"))
         end
       | _ -> raise (Parser.Expected (p.startPos, "jsx opening invalid"))
       in
+      let jsxEndPos = p.prevEndPos in
+      let loc = mkLoc jsxStartPos jsxEndPos in
       Ast_helper.Exp.apply
+        ~loc
         ~attrs:[attr]
         name
         (jsxAttrs @ [
-          (Asttypes.Labelled "childen", makeListExpression children None);
+          (Asttypes.Labelled "childen", children);
           (Asttypes.Nolabel, Ast_helper.Exp.construct (Location.mknoloc (Longident.Lident "()")) None)
         ])
     | GreaterThan -> (* fragment: <> foo </> *)
+      let childrenStartPos = p.Parser.startPos in
       Parser.next p;
       let children = parseJsxChildren p in
+      let childrenEndPos = p.Parser.startPos in
       Parser.expect p LessThan;
       Parser.expect p Forwardslash;
       Parser.expect p GreaterThan;
-      let fragment = makeListExpression children None in
+      let loc = mkLoc childrenStartPos childrenEndPos in
+      let fragment = makeListExpression loc children None in
       {fragment with pexp_attributes = [attr]}
     | _ -> raise (Parser.Expected (p.startPos, "Expected jsx name"))
 
