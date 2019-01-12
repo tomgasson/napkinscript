@@ -761,6 +761,7 @@ let rec goToClosing closingToken state =
   let makeInfixOperator token startPos endPos =
     let stringifiedToken =
       if token = Token.MinusGreater then "|."
+      else if token = Token.PlusPlus then "^"
       else Token.toString token
     in
     let operator = Location.mkloc
@@ -884,7 +885,6 @@ let rec goToClosing closingToken state =
     | _ -> raise (Parser.Expected (p.startPos, "expected Uident"))
     in
     Parser.next p;
-    Parser.optional p Token.Semicolon |> ignore;
     let endPos = p.prevEndPos in
     let loc = mkLoc startPos endPos in
     Ast_helper.Opn.mk ~loc ~attrs ~override modident
