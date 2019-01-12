@@ -1364,6 +1364,20 @@ let rec goToClosing closingToken state =
     | (Minus | MinusDot | Plus | PlusDot | Bang) as token ->
       Parser.next p;
       makeUnaryExpr token (parseUnaryExpr p)
+    | Asterisk ->
+      let startPos = p.startPos in
+      Parser.next p;
+      let refAccess =
+        let loc = mkLoc startPos p.prevEndPos in
+        let op = Location.mkloc (Longident.Lident "!") loc in
+        Ast_helper.Exp.ident ~loc op
+      in
+      let arg = parseUnaryExpr p in
+      let loc = mkLoc startPos arg.pexp_loc.loc_end in
+      Ast_helper.Exp.apply
+        ~loc
+        refAccess
+        [Nolabel, arg]
     | _ ->
       parsePrimaryExpr p
 
