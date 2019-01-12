@@ -828,6 +828,28 @@ let rec goToClosing closingToken state =
     in
     handleSeq seq
 
+  let makeListPattern loc seq ext_opt =
+    let rec handle_seq = function
+      [] ->
+        let base_case = match ext_opt with
+          | Some ext ->
+            ext
+          | None ->
+            let loc = { loc with Location.loc_ghost = true} in
+            let nil = { Location.txt = Longident.Lident "[]"; loc } in
+            Ast_helper.Pat.construct ~loc nil None
+        in
+        base_case
+    | p1 :: pl ->
+        let pat_pl = handle_seq pl in
+        let loc = mkLoc p1.Parsetree.ppat_loc.loc_start pat_pl.ppat_loc.loc_end in
+        let arg = Ast_helper.Pat.mk ~loc (Ppat_tuple [p1; pat_pl]) in
+        Ast_helper.Pat.mk ~loc (Ppat_construct(Location.mkloc (Longident.Lident "::") loc, Some arg))
+    in
+    handle_seq seq
+
+
+
   (* Ldot (Ldot (Lident "Foo", "Bar"), "baz") *)
   let parseValuePath p =
     let startPos = p.Parser.startPos in
@@ -1008,6 +1030,8 @@ let rec goToClosing closingToken state =
       let pat = parsePattern p in
       let loc = mkLoc startPos pat.ppat_loc.loc_end in
       Ast_helper.Pat.lazy_ ~loc ~attrs pat
+    | List ->
+      parseListPattern ~attrs p
     | _ ->
       raise (Parser.Expected (p.startPos, "pattern"))
     in
@@ -1099,6 +1123,42 @@ let rec goToClosing closingToken state =
         end
     in
     loop p []
+
+  and parseListPattern ~attrs p =
+    let startPos = p.Parser.startPos in
+    Parser.expect p List;
+    Parser.expect p Lparen;
+    let rec loop p patterns = match p.Parser.token with
+    | Rparen ->
+      Parser.next p;
+      patterns
+    | Comma -> Parser.next p; loop p patterns
+    | DotDotDot ->
+      Parser.next p;
+      let pattern = parsePattern p in
+      loop p ((true, pattern)::patterns)
+    | _ ->
+      let pattern = parsePattern p in
+      loop p ((false, pattern)::patterns)
+    in
+    let listPatterns = loop p [] in
+    let endPos = p.prevEndPos in
+    let loc = mkLoc startPos endPos in
+    match listPatterns with
+    | (true, pattern)::patterns ->
+      let patterns =
+        patterns
+        |> List.map snd
+        |> List.rev
+      in
+      makeListPattern loc patterns (Some pattern)
+    | patterns ->
+     let patterns =
+        patterns
+        |> List.map snd
+        |> List.rev
+      in
+      makeListPattern loc patterns None
 
   and parseArrayPattern ~attrs p =
     let startPos = p.startPos in
