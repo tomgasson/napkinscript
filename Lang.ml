@@ -152,7 +152,7 @@ module Token = struct
     | Lident of string
     | Uident of string
     | As
-    | Dot
+    | Dot | DotDot | DotDotDot
     | Bang
     | Semicolon
     | Let
@@ -204,6 +204,7 @@ module Token = struct
     | ColonEqual
     | At
     | Comment of string
+    | List
 
   let precedence = function
     | HashEqual | ColonEqual -> 1
@@ -225,7 +226,7 @@ module Token = struct
     | String s -> s
     | Lident str -> "Lident " ^ str
     | Uident str -> "Lident " ^ str
-    | Dot -> "."
+    | Dot -> "." | DotDot -> ".." | DotDotDot -> "..."
     | Int i -> "int " ^ i
     | Bang -> "!"
     | Semicolon -> ";"
@@ -283,6 +284,7 @@ module Token = struct
     | ColonEqual -> ":="
     | At -> "@"
     | Comment text -> "Comment(" ^ text ^ ")"
+    | List -> "list"
 
   let keywordTable =
     let keywords = [|
@@ -318,6 +320,7 @@ module Token = struct
       "lsl", Lsl;
       "lsr", Lsr;
       "asr", Asr;
+      "list", List;
     |] in
     let t = Hashtbl.create 50 in
     Array.iter (fun (k, v) ->
@@ -481,7 +484,17 @@ module Lex = struct
     else begin
       next lexbuf;
       if ch == CharacterCodes.dot then
-        Token.Dot
+        if lexbuf.ch == CharacterCodes.dot then (
+          next lexbuf;
+          if lexbuf.ch == CharacterCodes.dot then (
+            next lexbuf;
+            Token.DotDotDot
+          ) else (
+            Token.DotDot
+          )
+        ) else (
+          Token.Dot
+        )
       else if ch == CharacterCodes.doubleQuote then
         lexString lexbuf
       else if ch == CharacterCodes.singleQuote then
@@ -1288,6 +1301,8 @@ let rec goToClosing closingToken state =
           Parser.expect p Rparen;
           expr
         end
+      | List ->
+        parseListExpr p
       | Lbracket ->
         parseArrayExp p
       | Lbrace ->
@@ -1881,6 +1896,42 @@ let rec goToClosing closingToken state =
     in
     let exprs = aux p [] in
     Ast_helper.Exp.tuple (List.rev exprs)
+
+  and parseListExpr p =
+    let startPos = p.Parser.startPos in
+    Parser.expect p List;
+    Parser.expect p Lparen;
+    let rec loop p exprs = match p.Parser.token with
+    | Rparen ->
+      Parser.next p;
+      exprs
+    | Comma -> Parser.next p; loop p exprs
+    | DotDotDot ->
+      Parser.next p;
+      let expr = parseExpr p in
+      loop p ((true, expr)::exprs)
+    | _ ->
+      let expr = parseExpr p in
+      loop p ((false, expr)::exprs)
+    in
+    let listExprs = loop p [] in
+    let endPos = p.prevEndPos in
+    let loc = mkLoc startPos endPos in
+    match listExprs with
+    | (true, expr)::exprs ->
+      let exprs =
+        exprs
+        |> List.map snd
+        |> List.rev
+      in
+      makeListExpression loc exprs (Some expr)
+    | exprs ->
+     let exprs =
+        exprs
+        |> List.map snd
+        |> List.rev
+      in
+      makeListExpression loc exprs None
 
   and parseArrayExp p =
     let startPos = p.Parser.startPos in
