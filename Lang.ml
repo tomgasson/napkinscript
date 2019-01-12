@@ -1421,6 +1421,27 @@ let rec goToClosing closingToken state =
     (recFlag, loop p [first])
 
   (*
+   * div -> div
+   * Foo -> Foo.createElement
+   * Foo.Bar -> Foo.Bar.createElement
+   *)
+  and parseJsxName p =
+    let (ident, loc) = match p.Parser.token with
+    | Lident ident ->
+      let identStart = p.startPos in
+      Parser.next p;
+      let identEnd = p.prevEndPos in
+      let loc = mkLoc identStart identEnd in
+      (Longident.Lident ident, loc)
+    | Uident _ ->
+      let longident = parseModuleLongIdent p in
+      let identName = (Longident.Ldot (longident.txt, "createElement")) in
+      (identName, longident.loc)
+    | _ -> raise (Parser.Expected (p.startPos, "Expected lident or uident jsx name"))
+    in
+    Ast_helper.Exp.ident ~loc (Location.mkloc ident loc)
+
+  (*
    *  jsx ::=
    *    | <> {primary-expr} </>
    *    | <element-name {jsx-attribute} />
@@ -1431,15 +1452,8 @@ let rec goToClosing closingToken state =
     let jsxStartPos = p.Parser.startPos in
     Parser.expect p LessThan;
     match p.Parser.token with
-    | Lident ident ->
-      let identStart = p.startPos in
-      Parser.next p;
-      let identEnd = p.prevEndPos in
-      let loc = mkLoc identStart identEnd in
-      let name = Ast_helper.Exp.ident
-        ~loc
-        (Location.mkloc (Longident.Lident ident) loc)
-      in
+    | Lident _ | Uident _ ->
+      let name = parseJsxName p in
       let jsxAttrs = parseJsxAttributes p in
       let children = match p.Parser.token with
       | Forwardslash -> (* <foo a=b /> *)
@@ -1457,7 +1471,8 @@ let rec goToClosing closingToken state =
         Parser.expect p LessThan;
         Parser.expect p Forwardslash;
         begin match p.Parser.token with
-        | Lident closingIdent when closingIdent = ident ->
+        (* TODO: better error messages *)
+        | Lident closingIdent | Uident closingIdent ->
           Parser.next p;
           Parser.expect p GreaterThan;
           let loc = mkLoc childrenStartPos childrenEndPos in
