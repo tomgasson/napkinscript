@@ -371,7 +371,7 @@ module Lex = struct
       lexbuf.offset <- lexbuf.rdOffset;
       let ch = Bytes.get lexbuf.src lexbuf.rdOffset in
       if ch = '\n' then begin
-        lexbuf.lineOffset <- lexbuf.offset;
+        lexbuf.lineOffset <- lexbuf.offset + 1;
         lexbuf.lnum <- lexbuf.lnum + 1
       end;
       lexbuf.rdOffset <- lexbuf.rdOffset + 1;
@@ -767,9 +767,6 @@ let rec goToClosing closingToken state =
   let buildLongident words = match List.rev words with
     | [] -> assert false
     | hd::tl -> List.fold_left (fun p s -> Longident.Ldot (p, s)) (Lident hd) tl
-
-
-  let array_function str name = Longident.Ldot(Lident str, name)
 
   let makeInfixOperator token startPos endPos =
     let stringifiedToken =
@@ -1416,15 +1413,49 @@ let rec goToClosing closingToken state =
       | Dot ->
         Parser.next p;
         let lident = parseValuePath p in
-        loop p (Ast_helper.Exp.field expr lident)
+        begin match p.Parser.token with
+        | Equal ->
+          Parser.next p;
+          let endPos = p.prevEndPos in
+          let loc = mkLoc startPos endPos in
+          Ast_helper.Exp.setfield ~loc expr lident (parseExpr p)
+        | _ ->
+          let endPos = p.prevEndPos in
+          let loc = mkLoc startPos endPos in
+          loop p (Ast_helper.Exp.field ~loc expr lident)
+        end
       | Lbracket ->
+        let lbracket = p.startPos in
         Parser.next p;
         let accessExpr = parseExpr p in
         Parser.expect p Rbracket;
-        loop p (Ast_helper.Exp.apply
-          (Ast_helper.Exp.ident
-            (Location.mknoloc (Longident.Ldot(Lident "Array", "get"))))
-            [Nolabel, expr; Nolabel, accessExpr])
+        let rbracket = p.prevEndPos in
+        let arrayLoc = mkLoc lbracket rbracket in
+
+        begin match p.token with
+        | Equal ->
+          Parser.next p;
+          let rhsExpr = parseExpr p in
+          let arraySet = Location.mkloc
+            (Longident.Ldot(Lident "Array", "set"))
+            arrayLoc
+          in
+          let endPos = p.prevEndPos in
+          Ast_helper.Exp.apply
+            ~loc:(mkLoc startPos endPos)
+            (Ast_helper.Exp.ident ~loc:arrayLoc arraySet)
+            [Nolabel, expr; Nolabel, accessExpr; Nolabel, rhsExpr]
+        | _ ->
+          let endPos = p.prevEndPos in
+          loop p
+            (Ast_helper.Exp.apply
+              ~loc:(mkLoc startPos endPos)
+              (Ast_helper.Exp.ident
+                ~loc:arrayLoc
+                (Location.mkloc (Longident.Ldot(Lident "Array", "get")) arrayLoc)
+              )
+              [Nolabel, expr; Nolabel, accessExpr])
+        end
       | Lparen ->
         Parser.next p;
         loop p (parseCallExpr p expr)
@@ -1439,7 +1470,7 @@ let rec goToClosing closingToken state =
     | (Minus | MinusDot | Plus | PlusDot | Bang) as token ->
       Parser.next p;
       makeUnaryExpr token (parseUnaryExpr p)
-    | Asterisk ->
+    | Band (* & *) ->
       let startPos = p.startPos in
       Parser.next p;
       let refAccess =
@@ -1457,9 +1488,11 @@ let rec goToClosing closingToken state =
       parsePrimaryExpr p
 
   and parseAttributedExpr p =
+    let startPos = p.Parser.startPos in
     let attrs = parseAttributes p in
     let unaryExpr = parseUnaryExpr p in
-    {unaryExpr with pexp_attributes = attrs}
+    let endPos = p.Parser.prevEndPos in
+    {unaryExpr with pexp_attributes = attrs; pexp_loc = mkLoc startPos endPos}
 
   and parseBinaryExpr ?(allowAttrs=true) p prec =
     let a = if allowAttrs then parseAttributedExpr p else parseUnaryExpr p in
