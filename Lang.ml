@@ -1794,6 +1794,7 @@ let rec goToClosing closingToken state =
     | _ ->
       parseExpr p
 
+  (* TODO; improve? perf? *)
   and parseSeqExpr ?first p =
       let item = match first with
       | Some e -> e
@@ -1812,10 +1813,6 @@ let rec goToClosing closingToken state =
           let next = parseSeqExprItem p in
           Ast_helper.Exp.sequence item next
         | _ -> item
-        (* | _ -> *)
-          (* Ast_helper.Exp.construct ( *)
-            (* Location.mknoloc (Longident.Lident "()") *)
-          (* ) None *)
         end
       | _ ->
         item
@@ -2580,7 +2577,10 @@ and parseTypeRepresentation p =
   and parseStructure p =
     let rec parse p acc = match p.Parser.token with
       | Eof | Rbrace -> acc
-      | _ -> parse p ((parseStructureItem p)::acc)
+      | _ ->
+        let item = parseStructureItem p in
+        Parser.expect p Semicolon;
+        parse p (item::acc)
     in
     let structure = parse p [] in
     List.rev structure
