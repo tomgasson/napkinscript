@@ -148,6 +148,7 @@ module Token = struct
     | True | False
     | Char of char
     | Int of string
+    | Float of string
     | String of string
     | Lident of string
     | Uident of string
@@ -228,6 +229,8 @@ module Token = struct
     | Uident str -> "Lident " ^ str
     | Dot -> "." | DotDot -> ".." | DotDotDot -> "..."
     | Int i -> "int " ^ i
+    | Float f -> "Float: " ^ f
+
     | Bang -> "!"
     | Semicolon -> ";"
     | Let -> "let"
@@ -420,23 +423,24 @@ module Lex = struct
     let str = Bytes.sub_string lexbuf.src startOff (lexbuf.offset - startOff) in
     Token.lookupKeyword str
 
+  (* float: (0…9) { 0…9∣ _ } [. { 0…9∣ _ }] [(e∣ E) [+∣ -] (0…9) { 0…9∣ _ }]   *)
   let lexNumber lexbuf =
     let startOff = lexbuf.offset in
     while CharacterCodes.isDigit lexbuf.ch do
       next lexbuf
     done;
-    let str = Bytes.sub_string lexbuf.src startOff (lexbuf.offset - startOff) in
-    Token.Int str
-
-  (* we don't support CHAR for now *)
-  (* let lexChar lexbuf = *)
-    (* let startOff = lexbuf.offset in *)
-    (* if peek lexbuf == CharacterCodes.singleQuote then ( *)
-      (* next lexbuf; next lexbuf; *)
-      (* Token.Char (Bytes.unsafe_get lexbuf.src startOff) *)
-    (* ) else ( *)
-      (* Token.SingleQuote *)
-    (* ) *)
+    (* floats *)
+    if CharacterCodes.dot == lexbuf.ch then (
+      next lexbuf;
+      while CharacterCodes.isDigit lexbuf.ch do
+        next lexbuf
+      done;
+      let str = Bytes.sub_string lexbuf.src startOff (lexbuf.offset - startOff) in
+      Token.Float str
+    ) else (
+      let str = Bytes.sub_string lexbuf.src startOff (lexbuf.offset - startOff) in
+      Token.Int str
+    )
 
   let lexString lexbuf =
     let startOff = lexbuf.offset in
@@ -936,6 +940,7 @@ let rec goToClosing closingToken state =
   let parseConstant p =
     let constant = match p.Parser.token with
     | Int i -> Parsetree.Pconst_integer (i, None)
+    | Float i -> Parsetree.Pconst_float (i, None)
     | String s -> Pconst_string(s, None)
     (* | Char c -> Pconst_char c *)
     | _ ->
@@ -1337,7 +1342,7 @@ let rec goToClosing closingToken state =
         let loc = mkLoc startPos endPos in
         Ast_helper.Exp.construct
           (Location.mkloc (Longident.Lident (Token.toString token)) loc) None
-      | Int _ | String _ ->
+      | Int _ | String _ | Float _ ->
         let c = parseConstant p in
         Ast_helper.Exp.constant c
       | Lident ident ->
@@ -1779,7 +1784,7 @@ let rec goToClosing closingToken state =
         begin match p.Parser.token with
         (* seq expr start *)
         | At | Minus | MinusDot | Plus | PlusDot | Bang | Band
-        | True | False | Int _ | String _ | Lident _ | Uident _
+        | True | False | Int _ | Float _ | String _ | Lident _ | Uident _
         | Lparen | List | Lbracket | Lbrace | Forwardslash | Assert
         | Lazy | If | For | While | Switch | Open | Module | Exception | Let
         | LessThan ->
