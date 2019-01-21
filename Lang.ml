@@ -14,6 +14,7 @@ module CharacterCodes = struct
   let dot = 0x2E
   let colon = 0x3A
   let comma = 0x2C
+  let backtick = 0x60
   let question = 0x3F
   let semicolon = 0x3B
   let underscore = 0x5F
@@ -25,6 +26,7 @@ module CharacterCodes = struct
   let question = 0x3F
   let ampersand = 0x26
   let at = 0x40
+  let dollar = 0x24
 
   let lparen = 0x28
   let rparen = 0x29
@@ -206,6 +208,9 @@ module Token = struct
     | At
     | Comment of string
     | List
+    | TemplateTail of string
+    | TemplatePart of string
+    | Backtick
 
   let precedence = function
     | HashEqual | ColonEqual -> 1
@@ -288,6 +293,9 @@ module Token = struct
     | At -> "@"
     | Comment text -> "Comment(" ^ text ^ ")"
     | List -> "list"
+    | TemplatePart text -> text ^ "${"
+    | TemplateTail text -> "TemplateTail(" ^ text ^ ")"
+    | Backtick -> "`"
 
   let keywordTable =
     let keywords = [|
@@ -340,6 +348,8 @@ module Token = struct
 end
 
 module Lex = struct
+  type mode = Normal | Template
+
   type lexbuf = {
     filename: string;
     src: bytes;
@@ -348,7 +358,14 @@ module Lex = struct
     mutable rdOffset: int; (* reading offset (position after current character) *)
     mutable lineOffset: int; (* current line offset *)
     mutable lnum: int; (* current line number *)
+    mutable mode: mode;
   }
+
+  let setNormalMode lexbuf =
+    lexbuf.mode <- Normal
+
+  let setTemplateMode lexbuf =
+    lexbuf.mode <- Template
 
   let position lexbuf = Lexing.{
     pos_fname = lexbuf.filename;
@@ -399,6 +416,7 @@ module Lex = struct
       rdOffset = 0;
       lineOffset = 0;
       lnum = 1;
+      mode = Normal;
     } in
     next lexbuf;
     lexbuf
@@ -477,11 +495,41 @@ module Lex = struct
 
   exception Unknown_token of int
 
+  let lexTemplate lexbuf =
+    let startOff = lexbuf.offset in
+
+    let rec scan lexbuf =
+      if lexbuf.ch == CharacterCodes.backtick then (
+        next lexbuf;
+        let contents =
+          Bytes.sub_string lexbuf.src startOff (lexbuf.offset - 1 - startOff)
+        in
+        setNormalMode lexbuf;
+        Token.TemplateTail contents
+      ) else if lexbuf.ch == CharacterCodes.dollar &&
+                peek lexbuf == CharacterCodes.lbrace
+        then (
+          next lexbuf; (* consume $ *)
+          next lexbuf; (* consume { *)
+          let contents =
+            Bytes.sub_string lexbuf.src startOff (lexbuf.offset - 2 - startOff)
+          in
+          setNormalMode lexbuf;
+          Token.TemplatePart contents
+      ) else (
+        next lexbuf;
+        scan lexbuf
+      )
+    in
+    scan lexbuf
+
   let lex lexbuf =
     skipWhitespace lexbuf;
     let startPos = position lexbuf in
     let ch = lexbuf.ch in
-    let token = if CharacterCodes.isLetter ch then
+    let token = if lexbuf.mode = Template then
+        lexTemplate lexbuf
+    else if CharacterCodes.isLetter ch then
       lexIdentifier lexbuf
     else if CharacterCodes.isDigit ch then
       lexNumber lexbuf
@@ -638,6 +686,8 @@ module Lex = struct
         Token.Question
       else if ch == CharacterCodes.at then
         Token.At
+      else if ch == CharacterCodes.backtick  then
+        Token.Backtick
       else if ch == -1 then
         Token.Eof
       else
@@ -1345,6 +1395,8 @@ let rec goToClosing closingToken state =
       | Int _ | String _ | Float _ ->
         let c = parseConstant p in
         Ast_helper.Exp.constant c
+      | Backtick ->
+        parseTemplateExpr p
       | Lident ident ->
         let endPos = p.endPos in
         Parser.next p;
@@ -1518,6 +1570,70 @@ let rec goToClosing closingToken state =
       end
     in
     loop a
+
+  and parseTemplateExpr p =
+    let hiddenOperator =
+      let op = Location.mknoloc (Longident.Lident "^") in
+      Ast_helper.Exp.ident op
+    in
+    let rec loop acc p =
+      match p.Parser.token with
+      | TemplateTail txt ->
+        Parser.next p;
+        if String.length txt > 0 then
+          let str = Ast_helper.Exp.constant (Pconst_string(txt, None)) in
+          Ast_helper.Exp.apply hiddenOperator
+            [Nolabel, acc; Nolabel, str]
+        else
+          acc
+      | TemplatePart txt ->
+        Parser.next p;
+        let expr = parseSeqExpr p in
+        let () = match p.Parser.token with
+        | Rbrace ->
+          Lex.setTemplateMode p.lexbuf;
+          Parser.next p
+        | _ -> raise (Parser.Expected (p.startPos, "close with } plz"))
+        in
+        let str = Ast_helper.Exp.constant (Pconst_string(txt, None)) in
+        let next =
+          let a = if String.length txt > 0 then
+              Ast_helper.Exp.apply hiddenOperator [Nolabel, acc; Nolabel, str]
+            else acc
+          in
+          Ast_helper.Exp.apply hiddenOperator
+            [Nolabel, a; Nolabel, expr]
+        in
+        loop next p
+      | _ -> raise (Parser.Expected (p.startPos, "invalid template expression stuff"))
+    in
+    Lex.setTemplateMode p.lexbuf;
+    Parser.expect p Backtick;
+    match p.Parser.token with
+    | TemplateTail txt ->
+      Parser.next p;
+      Ast_helper.Exp.constant (Pconst_string(txt, None))
+    | TemplatePart txt ->
+      Parser.next p;
+      let expr = parseSeqExpr p in
+      let () = match p.Parser.token with
+      | Rbrace ->
+        Lex.setTemplateMode p.lexbuf;
+        Parser.next p
+      | _ -> raise (Parser.Expected (p.startPos, "close with } plz"))
+      in
+      let str = Ast_helper.Exp.constant (Pconst_string(txt, None)) in
+      let next =
+        if String.length txt > 0 then
+          Ast_helper.Exp.apply hiddenOperator [Nolabel, str; Nolabel, expr]
+        else
+          expr
+      in
+      loop next p
+   | _ -> raise (Parser.Expected (p.startPos, "invalid template expression stuff"))
+
+
+
 
   and parseLetBindingBody ~attrs p =
     let pat = parsePattern p in
@@ -1787,7 +1903,7 @@ let rec goToClosing closingToken state =
         | True | False | Int _ | Float _ | String _ | Lident _ | Uident _
         | Lparen | List | Lbracket | Lbrace | Forwardslash | Assert
         | Lazy | If | For | While | Switch | Open | Module | Exception | Let
-        | LessThan ->
+        | LessThan | Backtick ->
           parseSeqExpr p
         | _ ->
           Ast_helper.Exp.construct (Location.mknoloc (Longident.Lident "()")) None
@@ -1814,7 +1930,7 @@ let rec goToClosing closingToken state =
         | True | False | Int _ | String _ | Lident _ | Uident _
         | Lparen | List | Lbracket | Lbrace | Forwardslash | Assert
         | Lazy | If | For | While | Switch | Open | Module | Exception | Let
-        | LessThan ->
+        | LessThan | Backtick ->
           let next = parseSeqExprItem p in
           Ast_helper.Exp.sequence item next
         | _ -> item
