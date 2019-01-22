@@ -211,6 +211,7 @@ module Token = struct
     | TemplateTail of string
     | TemplatePart of string
     | Backtick
+    | Export
 
   let precedence = function
     | HashEqual | ColonEqual -> 1
@@ -296,6 +297,7 @@ module Token = struct
     | TemplatePart text -> text ^ "${"
     | TemplateTail text -> "TemplateTail(" ^ text ^ ")"
     | Backtick -> "`"
+    | Export -> "export"
 
   let keywordTable =
     let keywords = [|
@@ -332,6 +334,7 @@ module Token = struct
       "lsr", Lsr;
       "asr", Asr;
       "list", List;
+      "export", Export;
     |] in
     let t = Hashtbl.create 50 in
     Array.iter (fun (k, v) ->
@@ -497,7 +500,6 @@ module Lex = struct
 
   let lexTemplate lexbuf =
     let startOff = lexbuf.offset in
-    print_endline (string_of_int startOff);
 
     let rec scan lexbuf =
       if lexbuf.ch == CharacterCodes.backtick then (
@@ -1430,7 +1432,7 @@ let rec goToClosing closingToken state =
         let expr = parseTuple p in
         expr
       (* TODO: check if Assert/Lazy/If/For/While/Switch belong here,
-       * they might be not 100% simple *)
+       * they might be not 100% simple/atomic *)
       | Assert ->
         Parser.next p;
         let expr = parseExpr p in
@@ -1633,11 +1635,16 @@ let rec goToClosing closingToken state =
       loop next p
    | _ -> raise (Parser.Expected (p.startPos, "invalid template expression stuff"))
 
-
-
-
   and parseLetBindingBody ~attrs p =
-    let pat = parsePattern p in
+    let pat =
+      let pat = parsePattern p in
+      match p.Parser.token with
+      | Colon ->
+        Parser.next p;
+        let polyType = parsePolyTypeExpr p in
+        Ast_helper.Pat.constraint_ pat polyType
+      | _ -> pat
+    in
     Parser.expect p Token.Equal;
     let exp = parseExpr p in
     Ast_helper.Vb.mk ~attrs pat exp
@@ -2223,6 +2230,52 @@ let rec goToClosing closingToken state =
     let (endPos, exprs) = aux p [] in
     Ast_helper.Exp.array ~loc:(mkLoc startPos endPos) (List.rev exprs)
 
+  (* TODO: check attributes in the case of poly type vars,
+   * might be context dependend: parseFieldDeclaration (see ocaml) *)
+  and parsePolyTypeExpr p =
+    match p.Parser.token with
+    | SingleQuote ->
+      let vars = parseTypeVarList p in
+      begin match vars with
+      | _v1::_v2::_ ->
+        Parser.expect p Dot;
+        let typ = parseTypExpr p in
+        Ast_helper.Typ.poly vars typ
+      | [var] ->
+        begin match p.Parser.token with
+        | Dot ->
+          Parser.next p;
+          let typ = parseTypExpr p in
+          Ast_helper.Typ.poly vars typ
+        | _ ->
+          Ast_helper.Typ.var ~loc:var.loc var.txt
+        end
+      | _ -> assert false
+      end
+    | _ ->
+      parseTypExpr p
+
+  (* 'a 'b 'c *)
+  and parseTypeVarList p =
+    let rec loop p vars =
+      let startPos = p.Parser.startPos in
+      match p.Parser.token with
+      | SingleQuote ->
+        Parser.next p;
+        begin match p.Parser.token with
+        | Lident ident ->
+          let endPos = p.endPos in
+          Parser.next p;
+          let var = Location.mkloc ident (mkLoc startPos endPos) in
+          loop p (var::vars)
+        | _ ->
+          raise (Parser.Expected (p.startPos, "Expected lowercase ident"))
+        end
+      | _ ->
+        List.rev vars
+    in
+    loop p []
+
   and parseTypExpr p =
     let startPos = p.Parser.startPos in
     let attrs = parseAttributes p in
@@ -2338,8 +2391,7 @@ let rec goToClosing closingToken state =
     | _ -> raise (Parser.Expected (p.startPos, "need lowercase type name"))
     in
     Parser.expect p Colon;
-    (* TODO: parse poly type expr *)
-    let typ = parseTypExpr p in
+    let typ = parsePolyTypeExpr p in
     let loc = mkLoc startPos typ.ptyp_loc.loc_end in
     Ast_helper.Type.field ~loc ~mut name typ
 
@@ -3164,7 +3216,7 @@ and parseTypeRepresentation p =
     | _ -> raise (Parser.Expected (p.startPos, "name of value should be lowercase"))
     in
     Parser.expect p Colon;
-    let typExpr = parseTypExpr p in
+    let typExpr = parsePolyTypeExpr p in
     let valueDesc = Ast_helper.Val.mk name typExpr in
     Ast_helper.Sig.value valueDesc
 
