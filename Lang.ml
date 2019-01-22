@@ -160,7 +160,7 @@ module Token = struct
     | Semicolon
     | Let
     | And
-    | Rec | Nonrec
+    | Rec
     | Underscore
     | SingleQuote
     | Equal | EqualEqual | EqualEqualEqual
@@ -242,7 +242,7 @@ module Token = struct
     | Semicolon -> ";"
     | Let -> "let"
     | And -> "and"
-    | Rec -> "rec" | Nonrec -> "nonrec"
+    | Rec -> "rec"
     | Underscore -> "_"
     | SingleQuote -> "'"
     | Equal -> "=" | EqualEqual -> "==" | EqualEqualEqual -> "==="
@@ -308,7 +308,6 @@ module Token = struct
       "open", Open;
       "let", Let;
       "rec", Rec;
-      "nonrec", Nonrec;
       "and", And;
       "as", As;
       "exception", Exception;
@@ -2684,9 +2683,9 @@ and parseTypeRepresentation p =
   and parseTypeDefinition p =
     Parser.expect p Token.Typ;
     let recFlag =
-      if Parser.optional p Token.Nonrec
-        then Asttypes.Nonrecursive
-        else Asttypes.Recursive
+      if Parser.optional p Token.Rec
+        then Asttypes.Recursive
+        else Asttypes.Nonrecursive
     in
     let typeDef = parseTypeDef p in
     let rec loop p defs =
