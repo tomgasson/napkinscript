@@ -1892,19 +1892,21 @@ let rec goToClosing closingToken state =
       | _ -> raise (Parser.Expected (p.startPos, "Expected module name"))
       in
       let body = parseModuleBindingBody p in
-      Parser.expect p Semicolon;
+      Parser.optional p Semicolon |> ignore;
       let expr = parseSeqExpr p in
       let endPos = p.prevEndPos in
       let loc = mkLoc startPos endPos in
       Ast_helper.Exp.letmodule ~loc name body expr
     | Exception ->
       let extensionConstructor = parseExceptionDef ~attrs:[] p in
+      Parser.optional p Semicolon |> ignore;
       let seqExpr = parseSeqExpr  p in
       let endPos = p.prevEndPos in
       let loc = mkLoc startPos endPos in
       Ast_helper.Exp.letexception ~loc extensionConstructor seqExpr
     | Open ->
       let od = parseOpenDescription ~attrs:[] p in
+      Parser.optional p Semicolon |> ignore;
       let seqExpr = parseSeqExpr p in
       let endPos = p.prevEndPos in
       let loc = mkLoc startPos endPos in
@@ -2765,7 +2767,14 @@ and parseTypeRepresentation p =
       | Eof | Rbrace -> acc
       | _ ->
         let item = parseStructureItem p in
-        Parser.expect p Semicolon;
+        let () = match p.Parser.token with
+        | Semicolon -> Parser.next p
+        | Open | Let | Typ | External | Include | Module | Eof
+        | String _ | Int _ | Float _ | Lbrace | Lparen | True | False
+        | Backtick | Uident _ | Lident _ | Lbracket | Assert | Lazy
+        | If | For | While | Switch | LessThan -> ()
+        | _ -> raise (Parser.Expected (p.startPos, "Expected semicolon"))
+        in
         parse p (item::acc)
     in
     let structure = parse p [] in
@@ -3148,9 +3157,14 @@ and parseTypeRepresentation p =
     let rec loop p spec =
       let item = parseSignatureItem p in
       Parser.expect p Semicolon;
+      let () = match p.Parser.token with
+      | Semicolon -> Parser.next p
+      | Let | Typ | External | Exception | Open | Include | Module | Eof -> ()
+      | _ -> raise (Parser.Expected (p.startPos, "expected semi"))
+      in
       let spec = (item::spec) in
       match p.Parser.token with
-      | Rbrace -> spec
+      | Rbrace | Eof -> spec
       | _ -> loop p spec
     in
     Ast_helper.Mty.signature (loop p [])
@@ -3341,7 +3355,14 @@ and parseTypeRepresentation p =
         List.rev items
       | _ ->
         let item = parseExportItem p in
-        Parser.expect p Semicolon;
+        let () = match p.Parser.token with
+        | Semicolon -> Parser.next p
+        | Open | Let | Typ | External | Include | Module | Eof
+        | String _ | Int _ | Float _ | Lbrace | Lparen | True | False
+        | Backtick | Uident _ | Lident _ | Lbracket | Assert | Lazy
+        | If | For | While | Switch | LessThan | Export -> ()
+        | _ -> raise (Parser.Expected (p.startPos, "Expected semicolon"))
+        in
         loop p (item::items)
       end
     in
