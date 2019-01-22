@@ -497,6 +497,7 @@ module Lex = struct
 
   let lexTemplate lexbuf =
     let startOff = lexbuf.offset in
+    print_endline (string_of_int startOff);
 
     let rec scan lexbuf =
       if lexbuf.ch == CharacterCodes.backtick then (
@@ -2724,7 +2725,7 @@ and parseTypeRepresentation p =
       Ast_helper.Str.exception_ (parseExceptionDef ~attrs p)
     | Include ->
       Ast_helper.Str.include_ (parseIncludeStatement ~attrs p)
-    | Module -> parseMaybeRecModuleBinding p
+    | Module -> parseModuleOrModuleTypeImpl p
     | _ ->
       Ast_helper.Str.eval ~attrs (parseExpr ~context:StructureExpr p)
     in
@@ -2899,11 +2900,38 @@ and parseTypeRepresentation p =
     let loc = mkLoc modExpr.pmod_loc.loc_start endPos in
     Ast_helper.Mod.apply ~loc modExpr arg
 
+  and parseModuleOrModuleTypeImpl p =
+    let startPos = p.Parser.startPos in
+    Parser.expect p Module;
+    match p.Parser.token with
+    | Typ -> parseModuleTypeImpl startPos p
+    | _ -> parseMaybeRecModuleBinding p
+
+  and parseModuleTypeImpl startPos p =
+    Parser.expect p Typ;
+    let nameStart = p.Parser.startPos in
+    let name = match p.Parser.token with
+    | Uident ident ->
+      Parser.next p;
+      let loc = mkLoc nameStart p.prevEndPos in
+      Location.mkloc ident loc
+    | _ -> raise (Parser.Expected (p.startPos, "Expected module name"))
+    in
+    Parser.expect p Equal;
+    let moduleType = parseModuleType p in
+    let moduleTypeDeclaration =
+      Ast_helper.Mtd.mk
+        ~loc:(mkLoc name.loc.loc_start p.prevEndPos)
+        ~typ:moduleType
+        name
+    in
+    let loc = mkLoc startPos p.prevEndPos in
+    Ast_helper.Str.modtype ~loc moduleTypeDeclaration
+
   (* definition	::=
     ∣	 module rec module-name :  module-type =  module-expr   { and module-name :  module-type =  module-expr }
     |  module module-name  { ( module-name :  module-type ) }  [ : module-type ]  =  module-expr *)
   and parseMaybeRecModuleBinding p =
-    Parser.expect p Module;
     if Parser.optional p Token.Rec then
       Ast_helper.Str.rec_module (parseModuleBindings p)
     else
@@ -2954,6 +2982,7 @@ and parseTypeRepresentation p =
   (* Module types are the module-level equivalent of type expressions: they
    * specify the general shape and type properties of modules. *)
  and parseModuleType p =
+    let startPos = p.Parser.startPos in
     let moduleType = match p.Parser.token with
     | Uident _ ->
       parseModuleTypePath p
@@ -2964,16 +2993,21 @@ and parseTypeRepresentation p =
       mty
     | Lbrace ->
       Parser.next p;
-      parseSpecification p
+      let spec = parseSpecification p in
+      Parser.expect p Rbrace;
+      spec
     | Module ->
       parseModuleTypeOf p
     | _ ->
       raise (Parser.Expected (p.startPos, "need a module type"))
     in
+    let moduleTypeLoc = mkLoc startPos p.prevEndPos in
+    let moduleType = {moduleType with pmty_loc = moduleTypeLoc} in
     match p.Parser.token with
     | With ->
       let constraints = parseWithConstraints p in
-      Ast_helper.Mty.with_ moduleType constraints
+      let loc = mkLoc startPos p.prevEndPos in
+      Ast_helper.Mty.with_ ~loc moduleType constraints
     | _ ->
       moduleType
 
@@ -3049,13 +3083,11 @@ and parseTypeRepresentation p =
     (* { consumed *)
     let rec loop p spec =
       let item = parseSignatureItem p in
+      Parser.expect p Semicolon;
+      let spec = (item::spec) in
       match p.Parser.token with
-      | Semicolon ->
-        Parser.next p;
-        loop p (item::spec)
-      | Rbrace ->
-        List.rev (item::spec)
-      | _ -> raise (Parser.Expected (p.startPos, "semi or rbrace expected"))
+      | Rbrace -> spec
+      | _ -> loop p spec
     in
     Ast_helper.Mty.signature (loop p [])
 
@@ -3217,10 +3249,10 @@ and parseTypeRepresentation p =
       Pprintast.structure Format.std_formatter ast;
       Format.pp_print_flush Format.std_formatter ();
       print_newline();
-      Printast.implementation Format.std_formatter ast;
-      Format.pp_print_flush Format.std_formatter ();
-      print_newline();
-      print_newline()
+      (* Printast.implementation Format.std_formatter ast; *)
+      (* Format.pp_print_flush Format.std_formatter (); *)
+      (* print_newline(); *)
+      (* print_newline() *)
     with
     | Parser.Expected (pos, trace) ->
       print_endline ("pos_lnum: " ^ (string_of_int pos.pos_lnum));
