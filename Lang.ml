@@ -1046,11 +1046,19 @@ let rec goToClosing closingToken state =
       end
     | Lparen ->
       Parser.next p;
-      let pat = parsePattern p in
-      let endPos = p.endPos in
-      let loc = mkLoc startPos endPos in
-      Parser.expect p Token.Rparen;
-      {pat with ppat_loc = loc}
+      begin match p.token with
+      | Rparen ->
+        Parser.next p;
+        let endPos = p.endPos in
+        let loc = mkLoc startPos endPos in
+        let lid = Location.mkloc (Longident.Lident "()") loc in
+        Ast_helper.Pat.construct lid None
+      | _ ->
+        let pat = parsePattern p in
+        Parser.expect p Token.Rparen;
+        let loc = mkLoc startPos p.prevEndPos in
+        {pat with ppat_loc = loc}
+      end
     | Lbracket ->
       parseArrayPattern ~attrs p
     | Lbrace ->
@@ -3281,6 +3289,66 @@ and parseTypeRepresentation p =
     in
     loop p []
 
+  let extractExportedType structureItem =
+    let loc = structureItem.Parsetree.pstr_loc in
+    match structureItem.Parsetree.pstr_desc with
+    | Pstr_primitive valueDescription ->
+      Ast_helper.Sig.value ~loc valueDescription
+    | Pstr_type (recFlag, typeDecls) ->
+      Ast_helper.Sig.type_ ~loc recFlag typeDecls
+    | Pstr_exception extensionConstructor ->
+      Ast_helper.Sig.exception_ ~loc extensionConstructor
+    | Pstr_open openDescription ->
+      Ast_helper.Sig.open_ ~loc openDescription
+    (* | Pstr_include includeDeclaration -> *)
+      (* Ast_helper.Sig.include_ ~loc includeDeclaration *)
+    | Pstr_value (Asttypes.Nonrecursive, [vb]) ->
+      let (var, typ) = match vb.pvb_pat.ppat_desc with
+      | Ppat_constraint ({ppat_desc= Ppat_var stringLoc}, coreType) ->
+        (stringLoc, coreType)
+      | _ -> raise (Parser.Expected (vb.pvb_loc.loc_start, "TODO"))
+      in
+      let vd = Ast_helper.Val.mk var typ in
+      Ast_helper.Sig.value ~loc vd
+    | _ -> raise (Parser.Expected (loc.loc_start, "Hey! we don't support exporting here (yet?)"))
+
+  let parseExportItem p =
+    match p.Parser.token with
+    | Export ->
+      Parser.next p;
+      let structureItem = parseStructureItem p in
+      (structureItem, Some (extractExportedType structureItem))
+    | _ -> (parseStructureItem p, None)
+
+  let compileExports items =
+    List.fold_right (fun curr (items, exports) ->
+      match curr with
+      | (structureItem, Some export) ->
+        (structureItem::items, export::exports)
+      | (structureItem, None) ->
+        (structureItem::items, exports)
+    ) items ([], [])
+
+
+  let parseFile p =
+    let rec loop p items =
+      begin match p.Parser.token with
+      | Eof ->
+        List.rev items
+      | _ ->
+        let item = parseExportItem p in
+        Parser.expect p Semicolon;
+        loop p (item::items)
+      end
+    in
+    let items = loop p [] in
+    let (structure, exports) = compileExports items in
+    let modExpr = Ast_helper.Mod.constraint_
+      (Ast_helper.Mod.structure structure)
+      (Ast_helper.Mty.signature exports)
+    in
+    [Ast_helper.Str.include_ (Ast_helper.Incl.mk modExpr)]
+
   let read_file filename =
     let txt = ref "" in
     let chan = open_in filename in
@@ -3297,7 +3365,7 @@ and parseTypeRepresentation p =
     let src =  read_file filename in
     let p = Parser.make src filename in
     try
-      let ast = parseStructure p in
+      let ast = parseFile p in
       Pprintast.structure Format.std_formatter ast;
       Format.pp_print_flush Format.std_formatter ();
       print_newline();
