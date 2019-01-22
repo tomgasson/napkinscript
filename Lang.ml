@@ -212,13 +212,14 @@ module Token = struct
     | TemplatePart of string
     | Backtick
     | Export
+    | BarGreater
 
   let precedence = function
     | HashEqual | ColonEqual -> 1
     | Lor -> 2
     | Land -> 3
     | EqualEqual | EqualEqualEqual | LessThan | GreaterThan
-    | BangEqual | BangEqualEqual | LessEqual | GreaterEqual -> 4
+    | BangEqual | BangEqualEqual | LessEqual | GreaterEqual | BarGreater -> 4
     | Plus | PlusDot | Minus | MinusDot | Lxor | PlusPlus -> 5
     | Asterisk | AsteriskDot | Forwardslash | ForwardslashDot  | Lsl | Lsr | Mod -> 6
     | Exponentiation -> 7
@@ -298,6 +299,7 @@ module Token = struct
     | TemplateTail text -> "TemplateTail(" ^ text ^ ")"
     | Backtick -> "`"
     | Export -> "export"
+    | BarGreater -> "|>"
 
   let keywordTable =
     let keywords = [|
@@ -589,6 +591,9 @@ module Lex = struct
         if lexbuf.ch == CharacterCodes.bar then (
           next lexbuf;
           Token.Lor
+        ) else if lexbuf.ch == CharacterCodes.greaterThan then (
+          next lexbuf;
+          Token.BarGreater
         ) else (
           Token.Bar
         )
