@@ -1465,7 +1465,7 @@ let rec goToClosing closingToken state =
         Parser.expect p Rbrace;
         e
       | Forwardslash ->
-        let expr = parseTuple p in
+        let expr = parseTupleExpr p in
         expr
       (* TODO: check if Assert/Lazy/If/For/While/Switch belong here,
        * they might be not 100% simple/atomic *)
@@ -1498,7 +1498,7 @@ let rec goToClosing closingToken state =
     (* {expr with pexp_loc = mkLoc startPos p.startPos} *)
 
   (* TODO: is this "operand"-arg a clear API? probably not with positions… *)
-  and parsePrimaryExpr ?operand p =
+  and parsePrimaryExpr ?operand ?(noCall=false) p =
     let startPos = p.Parser.startPos in
     let e1 = match operand with
       | Some e -> e
@@ -1520,7 +1520,7 @@ let rec goToClosing closingToken state =
           let loc = mkLoc startPos endPos in
           loop p (Ast_helper.Exp.field ~loc expr lident)
         end
-      | Lbracket ->
+      | Lbracket when noCall = false ->
         let lbracket = p.startPos in
         Parser.next p;
         let accessExpr = parseExpr p in
@@ -1552,7 +1552,7 @@ let rec goToClosing closingToken state =
               )
               [Nolabel, expr; Nolabel, accessExpr])
         end
-      | Lparen ->
+      | Lparen when noCall = false ->
         Parser.next p;
         loop p (parseCallExpr p expr)
       | _ -> expr
@@ -1833,7 +1833,7 @@ let rec goToClosing closingToken state =
       match p.Parser.token  with
       | Token.Eof | LessThan -> List.rev children
       | _ ->
-        let child = parsePrimaryExpr p in
+        let child = parsePrimaryExpr ~noCall:true p in
         loop p (child::children)
     in
     loop p []
@@ -2186,7 +2186,7 @@ let rec goToClosing closingToken state =
     in
     List.rev (aux p [])
 
-  and parseTuple p =
+  and parseTupleExpr p =
     Parser.expect p Forwardslash;
     Lex.setTupleMode p.lexbuf;
     let rec aux p acc =
