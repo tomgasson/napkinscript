@@ -176,7 +176,7 @@ module Token = struct
     | Eof
     | Exception
     | Backslash
-    | Forwardslash | ForwardslashDot
+    | Forwardslash | ForwardslashDot | TupleEnding
     | Asterisk | AsteriskDot | Exponentiation
     | Minus | MinusDot
     | Plus | PlusDot | PlusPlus
@@ -237,7 +237,6 @@ module Token = struct
     | Dot -> "." | DotDot -> ".." | DotDotDot -> "..."
     | Int i -> "int " ^ i
     | Float f -> "Float: " ^ f
-
     | Bang -> "!"
     | Semicolon -> ";"
     | Let -> "let"
@@ -258,6 +257,7 @@ module Token = struct
     | Plus -> "+" | PlusDot -> "+." | PlusPlus -> "++"
     | Backslash -> "\\"
     | Forwardslash -> "/" | ForwardslashDot -> "/."
+    | TupleEnding -> "/ (tuple ending)"
     | Exception -> "exception"
     | Hash -> "#" | HashHash -> "##" | HashEqual -> "#="
     | GreaterThan -> ">"
@@ -352,7 +352,7 @@ module Token = struct
 end
 
 module Lex = struct
-  type mode = Normal | Template
+  type mode = Normal | Template | Tuple
 
   type lexbuf = {
     filename: string;
@@ -370,6 +370,9 @@ module Lex = struct
 
   let setTemplateMode lexbuf =
     lexbuf.mode <- Template
+
+  let setTupleMode lexbuf =
+    lexbuf.mode <- Tuple
 
   let position lexbuf = Lexing.{
     pos_fname = lexbuf.filename;
@@ -424,6 +427,12 @@ module Lex = struct
     } in
     next lexbuf;
     lexbuf
+
+
+  (* black magic, use sparingly! *)
+  let lookahead lexbuf callback =
+    let lexbufCopy = {lexbuf with filename = lexbuf.filename} in
+    callback lexbufCopy
 
   let skipWhitespace lexbuf =
     while
@@ -527,7 +536,7 @@ module Lex = struct
     in
     scan lexbuf
 
-  let lex lexbuf =
+  let rec lex lexbuf =
     skipWhitespace lexbuf;
     let startPos = position lexbuf in
     let ch = lexbuf.ch in
@@ -634,6 +643,9 @@ module Lex = struct
           next lexbuf;
           lexMultiLineComment lexbuf
         ) else (
+          if lexbuf.mode = Tuple then
+            lexForwardSlashOrTupleEnding lexbuf
+          else
           Token.Forwardslash
         )
       else if ch == CharacterCodes.minus then
@@ -703,6 +715,19 @@ module Lex = struct
     in
     let endPos = position lexbuf in
     (startPos, endPos, token)
+
+  and lexForwardSlashOrTupleEnding lexbuf =
+    let cb lexbuf =
+      let (_, _, token) = lex lexbuf in
+      match token with
+      | Int _ | Lident _ | Uident _ | Lparen | Lbrace | Minus | Plus
+      | Lazy | If | For | While | Switch | At -> Token.Forwardslash
+      | _ -> TupleEnding
+    in
+    let result = lookahead lexbuf cb in
+    setNormalMode lexbuf;
+    result
+
 end
 
 module LangParser = struct
@@ -1440,7 +1465,6 @@ let rec goToClosing closingToken state =
         Parser.expect p Rbrace;
         e
       | Forwardslash ->
-        Parser.next p;
         let expr = parseTuple p in
         expr
       (* TODO: check if Assert/Lazy/If/For/While/Switch belong here,
@@ -2163,9 +2187,11 @@ let rec goToClosing closingToken state =
     List.rev (aux p [])
 
   and parseTuple p =
+    Parser.expect p Forwardslash;
+    Lex.setTupleMode p.lexbuf;
     let rec aux p acc =
       match p.Parser.token with
-      | Forwardslash ->
+      | TupleEnding ->
         Parser.next p;
         acc
       | _ ->
@@ -2174,7 +2200,7 @@ let rec goToClosing closingToken state =
         | Comma ->
           Parser.next p;
           aux p (exp::acc)
-        | Forwardslash ->
+        | TupleEnding ->
           Parser.next p;
           (exp::acc)
         | _ -> raise (Parser.Expected (p.startPos, "expected tuple thing: / or ,"))
