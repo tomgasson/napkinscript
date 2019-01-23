@@ -1841,11 +1841,9 @@ let rec goToClosing closingToken state =
   and parseBracedOrRecordExpr p =
     (* opening brace consumed *)
     match p.Parser.token with
-    | Dot ->
+    | DotDotDot ->
       (* beginning of record spread, parse record, todo maybe lex DOTDOTDOT *)
       Parser.next p;
-      Parser.expect p Dot;
-      Parser.expect p Dot;
       let spreadExpr = parseExpr p in
       parseRecordExpr ~spread:(Some spreadExpr) [] p
     | Uident _ | Lident _ ->
