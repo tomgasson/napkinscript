@@ -1952,6 +1952,13 @@ let rec goToClosing closingToken state =
         | _ ->
           Ast_helper.Exp.construct (Location.mknoloc (Longident.Lident "()")) None
         end
+      (* High danger, TODO check if we really can omit semi in these case*)
+      | Bang | Band
+      | True | False | Int _ | Float _ | String _ | Lident _ | Uident _
+      | Lparen | List | Lbracket | Lbrace | Forwardslash | Assert
+      | Lazy | If | For | While | Switch | Open | Module | Exception | Let
+      | LessThan | Backtick ->
+        parseSeqExpr p
       | _ ->
         Ast_helper.Exp.construct (Location.mknoloc (Longident.Lident "()")) None
       in
@@ -1979,6 +1986,28 @@ let rec goToClosing closingToken state =
           Ast_helper.Exp.sequence item next
         | _ -> item
         end
+      (* semicolon recovery *)
+      | token when
+          begin match token with
+          | Bang | Band
+          | True | False | Int _ | String _ | Lident _ | Uident _
+          | Lparen | List | Lbracket | Lbrace | Forwardslash | Assert
+          | Lazy | If | For | While | Switch | Open | Module | Exception | Let
+          | LessThan | Backtick -> true
+          | _ -> false
+          end
+        ->
+          begin match p.Parser.token with
+          (* seq expr start *)
+          | At | Minus | MinusDot | Plus | PlusDot | Bang | Band
+          | True | False | Int _ | String _ | Lident _ | Uident _
+          | Lparen | List | Lbracket | Lbrace | Forwardslash | Assert
+          | Lazy | If | For | While | Switch | Open | Module | Exception | Let
+          | LessThan | Backtick ->
+            let next = parseSeqExprItem p in
+            Ast_helper.Exp.sequence item next
+          | _ -> item
+          end
       | _ ->
         item
 
@@ -3411,7 +3440,7 @@ and parseTypeRepresentation p =
 
   let () =
     let filename = Sys.argv.(1) in
-    let src =  read_file filename in
+    let src = read_file filename in
     let p = Parser.make src filename in
     try
       let ast = parseFile p in
@@ -3432,42 +3461,3 @@ and parseTypeRepresentation p =
       Printf.eprintf "trace\n";
       Printf.eprintf "%s\n" trace
 end
-
-
-(*  let arr1 = [1, 2, 3]
-  * let arr2 = [4, 5, 6,] *)
-
-      (* let t1 = /a, b/ *)
-      (* let t2 = /a, b,/ *)
-
-      (* let v = Foo.Bar.Baz.x *)
-
-      (* let c = A(a, b) *)
-
-      (* let d = Foo.Lala.Hihi(a, b) *)
-
-      (* let x = A(a) *)
-      (* let binaryApply = foo.bar(~a=?1, ~b, c,) *)
-
-      (* let ifThenElse = if foo { *)
-        (* lala *)
-      (* } else { *)
-        (* doStuff(x, y, z,) *)
-      (* } *)
-
-      (* let x = for (x in xStart downto xEnd) { *)
-        (* print_int(x) *)
-      (* } *)
-
-  (* let y = while (break) { *)
-    (* omg(1) *)
-  (* } *)
-      (* type foo<-_> = equation = Foo :int | Bar :string constraint 'a = x *)
-
-      (*
-    exception Foo
-    exception Foo{n: int}
-    exception Foo({n: int})
-    exception Foo(string, bar, baz)
-    exception Lala = Foo.Bar.Baz
-    *)
