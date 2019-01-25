@@ -3424,13 +3424,13 @@ and parseTypeRepresentation p =
       (* print_newline() *)
     with
     | Parser.Expected (pos, trace) ->
-      print_endline ("pos_lnum: " ^ (string_of_int pos.pos_lnum));
-      print_endline ("pos_cnum: " ^ (string_of_int pos.pos_cnum));
-      print_endline "something threw an exception";
-      print_endline "current token:";
-      print_endline (Token.toString p.Parser.token);
-      print_endline "trace";
-      print_endline trace
+      Printf.eprintf "%s\n" ("pos_lnum: " ^ (string_of_int pos.pos_lnum));
+      Printf.eprintf "%s\n" ("pos_cnum: " ^ (string_of_int pos.pos_cnum));
+      Printf.eprintf "something threw an exception\n";
+      Printf.eprintf "current token:\n";
+      Printf.eprintf "%s\n" (Token.toString p.Parser.token);
+      Printf.eprintf "trace\n";
+      Printf.eprintf "%s\n" trace
 end
 
 
