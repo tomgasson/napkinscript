@@ -1062,17 +1062,8 @@ let rec goToClosing closingToken state =
     | Int _ | String _ ->
       let endPos = p.endPos in
       let c = parseConstant p in
-
-      begin match p.token with
-      | Dot ->
-        Parser.next p;
-        Parser.expect p Dot;
-        let c2 = parseConstant p in
-        Ast_helper.Pat.interval c c2
-      | _ ->
-        let loc = mkLoc startPos endPos in
-        Ast_helper.Pat.constant ~loc c
-      end
+      let loc = mkLoc startPos endPos in
+      Ast_helper.Pat.constant ~loc c
     | Lparen ->
       Parser.next p;
       begin match p.token with
