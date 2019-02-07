@@ -266,7 +266,7 @@ module Token = struct
     | Assert -> "assert"
     | Lazy -> "lazy"
     | Tilde -> "tilde"
-    | Question -> "question"
+    | Question -> "?"
     | If -> "if"
     | Else -> "else"
     | For -> "for"
@@ -342,6 +342,14 @@ module Token = struct
       Hashtbl.add t k v;
     ) keywords;
     t
+
+  let isKeyword = function
+    | True | False | Open | Let | Rec | And | As
+    | Exception | Assert | Lazy | If | Else | For | In | To
+    | Downto | While | Switch | When | External | Typ | Private
+    | Mutable | Constraint | Include | Module | Of | Mod
+    | Land | Lor | Lxor | Lsl | Lsr | Asr | List | Export -> true
+    | _ -> false
 
   let lookupKeyword str =
     try Hashtbl.find keywordTable str with
@@ -474,13 +482,31 @@ module Lex = struct
     )
 
   let lexString lexbuf =
-    let startOff = lexbuf.offset in
-    while not (CharacterCodes.doubleQuote == lexbuf.ch) do
-      next lexbuf
+    let didEnd = ref false in
+
+    let buffer = Buffer.create 256 in
+    while not !didEnd do
+      if lexbuf.ch == CharacterCodes.doubleQuote then (
+        didEnd := true;
+      ) else if lexbuf.ch == CharacterCodes.backslash then (
+        next lexbuf;
+
+        let char_for_backslash = function
+          | 110 -> '\010'
+          | 114 -> '\013'
+          | 98 -> '\008'
+          | 116 -> '\009'
+          | c   -> Char.chr c
+        in
+
+        Buffer.add_char buffer (char_for_backslash lexbuf.ch);
+      ) else (
+        Buffer.add_char buffer (Char.chr lexbuf.ch)
+      );
+      next lexbuf;
     done;
-    next lexbuf;
     Token.String (
-      Bytes.sub_string lexbuf.src startOff (lexbuf.offset - 1 - startOff)
+      Buffer.contents buffer
     )
 
   let lexSingleLineComment lexbuf =
@@ -730,6 +756,54 @@ module Lex = struct
 
 end
 
+module Report = struct
+  type circumstance =
+    | OpenDescription (* open Belt *)
+    | ModuleLongIdent (* Foo or Foo.Bar *)
+    | Ternary (* condExpr ? trueExpr : falseExpr *)
+    | Es6ArrowExpr
+    | Jsx
+    | JsxAttribute
+    | ExprOperand
+    | ExprUnary
+    | ExprBinaryAfterOp
+    | ExprIf
+    | IfCondition | IfBranch | ElseBranch
+    | TypeExpression
+
+  (* type context = circumstance * token *)
+
+  let circumstanceToString = function
+    | OpenDescription -> "an open description"
+    | ModuleLongIdent -> "a module identifier"
+    | Ternary -> "a ternary expression"
+    | Es6ArrowExpr -> "an es6 arrow function"
+    | Jsx -> "a jsx expression"
+    | JsxAttribute -> "a jsx attribute"
+    | ExprOperand -> "an atomic expression"
+    | ExprUnary -> "a unary expression"
+    | ExprBinaryAfterOp -> "an expression after an operator"
+    | ExprIf -> "an if expression"
+    | IfCondition -> "the condition of an if expression"
+    | IfBranch -> "the true-branch of an if expression"
+    | ElseBranch -> "the else-branch of an if expression"
+    | TypeExpression -> "a type"
+
+  (* let parseCircumstances css = *)
+
+
+  type problem =
+    | Unexpected of Token.t
+    | Expected of Token.t
+    | OneOf of Token.t list
+    | Message of string
+    | Uident
+    | Lident
+
+  type parseError = Lexing.position * problem
+
+end
+
 module LangParser = struct
   let mkLoc startLoc endLoc = Location.{
     loc_start = startLoc;
@@ -744,6 +818,7 @@ module LangParser = struct
       mutable startPos: Lexing.position;
       mutable endPos: Lexing.position;
       mutable prevEndPos: Lexing.position;
+      mutable breadcrumbs: Report.circumstance list;
     }
 
     let rec next p =
@@ -763,11 +838,19 @@ module LangParser = struct
         token = Token.Eof;
         startPos = Lexing.dummy_pos;
         prevEndPos = Lexing.dummy_pos;
-        endPos = Lexing.dummy_pos
+        endPos = Lexing.dummy_pos;
+        breadcrumbs = [];
       } in
       next parserState;
       parserState
 
+    let leaveBreadcrumb p circumstance =
+      p.breadcrumbs <- circumstance::p.breadcrumbs
+
+    let eatBreadcrumb p =
+      match p.breadcrumbs with
+      | [] -> ()
+      | _::crumbs -> p.breadcrumbs <- crumbs
 
     let optional p token =
       if p.token = token then
@@ -776,12 +859,13 @@ module LangParser = struct
         false
 
     exception Expected of (Lexing.position * string)
+    exception ParseError of Report.parseError
 
     let expect p token =
       if p.token = token then
         next p
       else
-        raise (Expected (p.startPos, ("expected: " ^ (Token.toString token))))
+        raise (ParseError (p.startPos, Report.Expected token))
 
     let lookahead p callback =
       (* is this copying correct? *)
@@ -808,9 +892,9 @@ let getClosingToken = function
 let rec goToClosing closingToken state =
   match (state.Parser.token, closingToken) with
   | (Rparen, Token.Rparen) | (Rbrace, Rbrace) | (Rbracket, Rbracket)-> Parser.next state; ()
-  | (Token.Lbracket | Lparen | Lbrace), _ ->
-     goToClosing (getClosingToken state.Parser.token) state;
+  | (Token.Lbracket | Lparen | Lbrace) as t, _ ->
      Parser.next state;
+     goToClosing (getClosingToken t) state;
      goToClosing closingToken state
   | ((Rparen | Token.Rbrace | Rbracket | Eof), _)  -> raise Unbalanced
   | _ ->
@@ -843,7 +927,7 @@ let rec goToClosing closingToken state =
         | _ ->
           goToClosing Rparen state;
           begin match state.Parser.token with
-          | EqualGreater -> true
+          | EqualGreater | Lbrace -> true
           | Colon when not inTernary -> true
           | _ -> false
           end
@@ -931,7 +1015,18 @@ let rec goToClosing closingToken state =
     in
     handle_seq seq
 
+    let verifyJsxOpeningClosingName nameExpr closingName =
+      match nameExpr.Parsetree.pexp_desc with
+      | Pexp_ident openingIdent ->
+          let openingName = List.hd (Longident.flatten openingIdent.txt) in
+          openingName = closingName
+      | _ -> assert false
 
+    let string_of_pexp_ident nameExpr =
+      match nameExpr.Parsetree.pexp_desc with
+      | Pexp_ident openingIdent ->
+        List.hd (Longident.flatten openingIdent.txt)
+      | _ -> ""
 
   (* Ldot (Ldot (Lident "Foo", "Bar"), "baz") *)
   let parseValuePath p =
@@ -961,6 +1056,7 @@ let rec goToClosing closingToken state =
        Foo
        Foo.Bar *)
   let parseModuleLongIdent p =
+    (* Parser.leaveBreadcrumb p Report.ModuleLongIdent; *)
     let startPos = p.Parser.startPos in
     let rec aux p acc =
       match p.Parser.token with
@@ -974,9 +1070,9 @@ let rec goToClosing closingToken state =
           aux p lident
         | _ -> Location.mkloc lident (mkLoc startPos endPos)
         end
-      | _ -> raise (Parser.Expected (p.startPos, "expected Uident"))
+      | _ -> raise (Parser.ParseError (p.startPos, Report.Uident))
     in
-    match p.Parser.token with
+    let moduleIdent = match p.Parser.token with
     | Uident ident ->
       let lident = Longident.Lident ident in
       let endPos = p.endPos in
@@ -987,9 +1083,13 @@ let rec goToClosing closingToken state =
         aux p lident
       | _ -> Location.mkloc lident (mkLoc startPos endPos)
       end
-    | _ -> raise (Parser.Expected (p.startPos, "expected Uident"))
+    | _ -> raise (Parser.ParseError (p.startPos, Report.Uident))
+    in
+    (* Parser.eatBreadcrumb p; *)
+    moduleIdent
 
   let parseOpenDescription ~attrs p =
+    Parser.leaveBreadcrumb p Report.OpenDescription;
     let startPos = p.Parser.startPos in
     Parser.expect p Open;
     let override = if Parser.optional p Token.Bang then
@@ -997,14 +1097,11 @@ let rec goToClosing closingToken state =
     else
       Asttypes.Fresh
     in
-    let modident = match p.token with
-    | Uident _ ->
-      parseModuleLongIdent p
-    | _ -> raise (Parser.Expected (p.startPos, "expected Uident"))
-    in
+    let modident = parseModuleLongIdent p in
     Parser.next p;
     let endPos = p.prevEndPos in
     let loc = mkLoc startPos endPos in
+    Parser.eatBreadcrumb p;
     Ast_helper.Opn.mk ~loc ~attrs ~override modident
 
   (* constant	::=	integer-literal   *)
@@ -1024,9 +1121,8 @@ let rec goToClosing closingToken state =
     | Int i -> Parsetree.Pconst_integer (i, None)
     | Float i -> Parsetree.Pconst_float (i, None)
     | String s -> Pconst_string(s, None)
-    (* | Char c -> Pconst_char c *)
     | _ ->
-      raise (Parser.Expected (p.startPos, "constant"))
+      raise (Parser.ParseError (p.startPos, Report.Message "I'm expecting a constant like: 1 or \"a string\""))
     in
     Parser.next p;
     constant
@@ -1074,7 +1170,7 @@ let rec goToClosing closingToken state =
         let lid = Location.mkloc (Longident.Lident "()") loc in
         Ast_helper.Pat.construct lid None
       | _ ->
-        let pat = parsePattern p in
+        let pat = parseConstrainedPattern p in
         Parser.expect p Token.Rparen;
         let loc = mkLoc startPos p.prevEndPos in
         {pat with ppat_loc = loc}
@@ -1103,10 +1199,13 @@ let rec goToClosing closingToken state =
       | _ ->
         Ast_helper.Pat.construct ~loc:constr.loc ~attrs constr None
       end
+    (* is this safe in a let-context? let exception Foo
+     * probably, local exceptions in seq expressions are
+     * exception Foo *)
     | Exception ->
       Parser.next p;
       let pat = parsePattern p in
-      let loc = mkLoc startPos pat.ppat_loc.loc_end in
+      let loc = mkLoc startPos p.prevEndPos in
       Ast_helper.Pat.exception_ ~loc ~attrs pat
     | Lazy ->
       Parser.next p;
@@ -1133,6 +1232,17 @@ let rec goToClosing closingToken state =
       end
     | _ -> pat
     end
+
+  and parseConstrainedPattern p =
+    let pat = parsePattern p in
+    match p.Parser.token with
+    | Colon ->
+      Parser.next p;
+      let typ = parseTypExpr p in
+      let loc = mkLoc pat.ppat_loc.loc_start typ.Parsetree.ptyp_loc.loc_end in
+      Ast_helper.Pat.constraint_ ~loc pat typ
+    | _ ->
+      pat
 
   (* field  [: typexpr]  [: pattern] *)
   and parseRecordPatternField p =
@@ -1191,7 +1301,7 @@ let rec goToClosing closingToken state =
         let loc = mkLoc startPos endPos in
         Ast_helper.Pat.tuple ~loc~attrs patterns
       | _ ->
-        let pattern = parsePattern p in
+        let pattern = parseConstrainedPattern p in
         begin match p.Parser.token with
         | Comma ->
           Parser.next p;
@@ -1218,10 +1328,10 @@ let rec goToClosing closingToken state =
     | Comma -> Parser.next p; loop p patterns
     | DotDotDot ->
       Parser.next p;
-      let pattern = parsePattern p in
+      let pattern = parseConstrainedPattern p in
       loop p ((true, pattern)::patterns)
     | _ ->
-      let pattern = parsePattern p in
+      let pattern = parseConstrainedPattern p in
       loop p ((false, pattern)::patterns)
     in
     let listPatterns = loop p [] in
@@ -1255,7 +1365,7 @@ let rec goToClosing closingToken state =
         let loc = mkLoc startPos endPos in
         Ast_helper.Pat.array ~loc ~attrs patterns
       | _ ->
-        let pattern = parsePattern p in
+        let pattern = parseConstrainedPattern p in
         begin match p.Parser.token with
         | Comma ->
           Parser.next p;
@@ -1302,10 +1412,13 @@ let rec goToClosing closingToken state =
     Ast_helper.Pat.construct ~loc:(mkLoc startPos endPos) ~attrs constr args
 
   and parseExpr ?(context=OrdinaryExpr) p =
-    let expr = if (context != WhenExpr) && isEs6ArrowExpression ~inTernary:(context=TernaryTrueBranchExpr) p then
-      parseEs6ArrowExpression p
-    else
-      parseBinaryExpr ~allowAttrs:(context != StructureExpr) p 1
+    let expr =
+      if (context != WhenExpr) &&
+         isEs6ArrowExpression ~inTernary:(context=TernaryTrueBranchExpr) p
+      then
+        parseEs6ArrowExpression p
+      else
+        parseBinaryExpr ~allowAttrs:(context != StructureExpr) p 1
     in
     parseTernaryTrueBranchExpr expr p
 
@@ -1313,15 +1426,23 @@ let rec goToClosing closingToken state =
   and parseTernaryTrueBranchExpr leftOperand p =
     match p.Parser.token with
     | Question ->
+      Parser.leaveBreadcrumb p Report.Ternary;
       Parser.next p;
       let trueBranch = parseExpr ~context:TernaryTrueBranchExpr p in
       Parser.expect p Colon;
       let falseBranch = parseExpr p in
-      Ast_helper.Exp.ifthenelse leftOperand trueBranch (Some falseBranch)
+      Parser.eatBreadcrumb p;
+      let loc = {leftOperand.Parsetree.pexp_loc with
+        loc_start = leftOperand.pexp_loc.loc_start;
+        loc_end = falseBranch.Parsetree.pexp_loc.loc_end;
+      } in
+      Ast_helper.Exp.ifthenelse ~loc leftOperand trueBranch (Some falseBranch)
     | _ ->
       leftOperand
 
   and parseEs6ArrowExpression p =
+    let startPos = p.Parser.startPos in
+    Parser.leaveBreadcrumb p Report.Es6ArrowExpr;
     let parameters = parseParameters p in
     let returnType = match p.Parser.token with
     | Colon ->
@@ -1335,14 +1456,22 @@ let rec goToClosing closingToken state =
       let expr = parseExpr p in
       match returnType with
       | Some typ ->
-        Ast_helper.Exp.constraint_ expr typ
+        Ast_helper.Exp.constraint_
+          ~loc:(mkLoc expr.pexp_loc.loc_start typ.Parsetree.ptyp_loc.loc_end) expr typ
       | None -> expr
     in
-    List.fold_right (fun (lbl, defaultExpr, pat) expr ->
-      Ast_helper.Exp.fun_ lbl defaultExpr pat expr
+    Parser.eatBreadcrumb p;
+    let arrowExpr = List.fold_right (fun (attrs, lbl, defaultExpr, pat) expr ->
+      Ast_helper.Exp.fun_ ~attrs lbl defaultExpr pat expr
     ) parameters body
+    in
+    {arrowExpr with pexp_loc = {arrowExpr.pexp_loc with loc_start = startPos}}
 
   and parseParameter p =
+    let startPos = p.Parser.startPos in
+    (* TODO: this is a shift reduce conflict
+     * let f = ( @attr x ) => x + 1; -> on pattern x or on Pexp_fun? *)
+    let attrs = parseAttributes p in
     let (lbl, pat) = match p.Parser.token with
     | Tilde ->
       Parser.next p;
@@ -1350,28 +1479,54 @@ let rec goToClosing closingToken state =
       | Lident ident ->
         Parser.next p;
         ident
-      | _ -> raise (Parser.Expected (p.startPos, "label-name should be lowercase"))
+      | _ -> raise (Parser.ParseError (p.startPos, Report.Message "Function parameters labels should be lowercased like ~a "))
       in
       begin match p.Parser.token with
       | Comma | Equal | Rparen ->
-        (Asttypes.Labelled lblName, Ast_helper.Pat.var (Location.mknoloc lblName))
+        let loc = mkLoc startPos p.prevEndPos in
+        (
+          Asttypes.Labelled lblName,
+          Ast_helper.Pat.var ~loc (Location.mkloc lblName loc)
+        )
+      | Colon ->
+        let lblEnd = p.prevEndPos in
+        Parser.next p;
+        let typ = parseTypExpr p in
+        let loc = mkLoc startPos lblEnd in
+        let pat =
+          let pat = Ast_helper.Pat.var ~loc (Location.mkloc lblName loc) in
+          let loc = mkLoc startPos p.prevEndPos in
+          Ast_helper.Pat.constraint_ ~loc pat typ in
+        (Asttypes.Labelled lblName, pat)
       | As ->
         Parser.next p;
-        let pat = parsePattern p in
+        let pat = parseConstrainedPattern p in
         (Asttypes.Labelled lblName, pat)
-      | _ -> raise (Parser.Expected (p.startPos, "Expectected , or = or as"))
+      | _ -> raise (Parser.ParseError (p.startPos,
+          Report.OneOf [Token.Comma; Token.Equal; Token.As]
+        ))
       end
     | _ ->
-      (Asttypes.Nolabel, parsePattern p)
+      (Asttypes.Nolabel, parseConstrainedPattern p)
     in
-    (* TODO: explicitly passed optional and constraints *)
     match p.Parser.token with
     | Equal ->
       Parser.next p;
-      let expr = parseExpr p in
-      (lbl, Some expr, pat)
+      begin match p.Parser.token with
+      | Question ->
+        Parser.next p;
+        let lbl = match lbl with
+        | Asttypes.Labelled lblName -> Asttypes.Optional lblName
+        | Asttypes.Optional _ as lbl -> lbl
+        | Asttypes.Nolabel -> assert false
+        in
+        (attrs, lbl, None, pat)
+      | _ ->
+        let expr = parseExpr p in
+        (attrs, lbl, Some expr, pat)
+      end
     | _ ->
-      (lbl, None, pat)
+      (attrs, lbl, None, pat)
 
   and parseParameterList p =
     (* ( consumed *)
@@ -1392,29 +1547,42 @@ let rec goToClosing closingToken state =
   (*
    * parameters ::= _
    *             | lident
+   *             | ()
    *             | ( parameter {, parameter} [,] )
    *)
   and parseParameters p =
+    let startPos = p.Parser.startPos in
     match p.Parser.token with
     | Lident ident ->
       Parser.next p;
-      [Asttypes.Nolabel, None, Ast_helper.Pat.var (Location.mknoloc ident)]
+      let loc = mkLoc startPos p.Parser.prevEndPos in
+      [(
+        [],
+        Asttypes.Nolabel,
+        None,
+        Ast_helper.Pat.var ~loc (Location.mkloc ident loc)
+      )]
     | Underscore ->
       Parser.next p;
-      [Asttypes.Nolabel, None, Ast_helper.Pat.any ()]
+      let loc = mkLoc startPos p.Parser.prevEndPos in
+      [[], Asttypes.Nolabel, None, Ast_helper.Pat.any ~loc ()]
     | Lparen ->
       Parser.next p;
       begin match p.Parser.token with
       | Rparen ->
         Parser.next p;
-        let unitPattern = Ast_helper.Pat.construct (Location.mknoloc (Longident.Lident "()")) None in
-        [Asttypes.Nolabel, None, unitPattern]
+        let loc = mkLoc startPos p.Parser.prevEndPos in
+        let unitPattern = Ast_helper.Pat.construct
+          ~loc (Location.mkloc (Longident.Lident "()") loc) None
+        in
+        [[], Asttypes.Nolabel, None, unitPattern]
       | _ -> parseParameterList p
       end
 
     | _ -> raise (Parser.Expected (p.startPos, "Unsupported parameter"))
 
   and parseOperand p =
+    Parser.leaveBreadcrumb p ExprOperand;
     let startPos = p.Parser.startPos in
     let expr = match p.Parser.token with
       | (True | False) as token ->
@@ -1463,28 +1631,27 @@ let rec goToClosing closingToken state =
       | Assert ->
         Parser.next p;
         let expr = parseExpr p in
-        Ast_helper.Exp.assert_ expr
+        let loc = mkLoc startPos p.prevEndPos in
+        Ast_helper.Exp.assert_ ~loc expr
       | Lazy ->
         Parser.next p;
         let expr = parseExpr p in
-        Ast_helper.Exp.lazy_ expr
+        let loc = mkLoc startPos p.prevEndPos in
+        Ast_helper.Exp.lazy_ ~loc expr
       | If ->
-        Parser.next p;
         parseIfExpression p
       | For ->
-        Parser.next p;
         parseForExpression p
       | While ->
-        Parser.next p;
         parseWhileExpression p
       | Switch ->
-        Parser.next p;
         parseSwitchExpression p
       | LessThan ->
         parseJsx p
-      | _ ->
-        raise (Parser.Expected (p.startPos, "unsupported expresion"))
+      | unknownToken ->
+        raise (Parser.ParseError (p.startPos, Report.Unexpected unknownToken))
     in
+    Parser.eatBreadcrumb p;
     expr
     (* {expr with pexp_loc = mkLoc startPos p.startPos} *)
 
@@ -1555,9 +1722,11 @@ let rec goToClosing closingToken state =
   and parseUnaryExpr p =
     match p.Parser.token with
     | (Minus | MinusDot | Plus | PlusDot | Bang) as token ->
+      Parser.leaveBreadcrumb p Report.ExprUnary;
       Parser.next p;
       makeUnaryExpr token (parseUnaryExpr p)
     | Band (* & *) ->
+      Parser.leaveBreadcrumb p Report.ExprUnary;
       let startPos = p.startPos in
       Parser.next p;
       let refAccess =
@@ -1581,13 +1750,17 @@ let rec goToClosing closingToken state =
     let endPos = p.Parser.prevEndPos in
     {unaryExpr with pexp_attributes = attrs; pexp_loc = mkLoc startPos endPos}
 
-  and parseBinaryExpr ?(allowAttrs=true) p prec =
-    let a = if allowAttrs then parseAttributedExpr p else parseUnaryExpr p in
+  and parseBinaryExpr ?(allowAttrs=true) ?a p prec =
+    let a = match a with
+    | Some e -> e
+    | None -> if allowAttrs then parseAttributedExpr p else parseUnaryExpr p
+    in
     let rec loop a =
       let token = p.Parser.token in
       let tokenPrec = Token.precedence token in
       if tokenPrec < prec then a
       else begin
+        Parser.leaveBreadcrumb p Report.ExprBinaryAfterOp;
         let startPos = p.startPos in
         Parser.next p;
         let endPos = p.startPos in
@@ -1669,12 +1842,16 @@ let rec goToClosing closingToken state =
       | Colon ->
         Parser.next p;
         let polyType = parsePolyTypeExpr p in
-        Ast_helper.Pat.constraint_ pat polyType
+        let loc = {pat.ppat_loc with loc_end = polyType.Parsetree.ptyp_loc.loc_end} in
+        Ast_helper.Pat.constraint_ ~loc pat polyType
       | _ -> pat
     in
     Parser.expect p Token.Equal;
     let exp = parseExpr p in
-    Ast_helper.Vb.mk ~attrs pat exp
+    let loc = {pat.ppat_loc with
+      loc_end = exp.Parsetree.pexp_loc.loc_end
+    } in
+    Ast_helper.Vb.mk ~loc ~attrs pat exp
 
   (* definition	::=	let [rec] let-binding  { and let-binding }   *)
   and parseLetBindings ~attrs p =
@@ -1715,7 +1892,8 @@ let rec goToClosing closingToken state =
       let longident = parseModuleLongIdent p in
       let identName = (Longident.Ldot (longident.txt, "createElement")) in
       (identName, longident.loc)
-    | _ -> raise (Parser.Expected (p.startPos, "Expected lident or uident jsx name"))
+    | _ -> raise (Parser.ParseError (p.startPos,
+      Report.Message "A jsx name should start with a lowercase or uppercase identifier, like: div in <div /> or Navbar in <Navbar />"))
     in
     Ast_helper.Exp.ident ~loc (Location.mkloc ident loc)
 
@@ -1726,7 +1904,7 @@ let rec goToClosing closingToken state =
    *    | <element-name {jsx-attribute}> {primary-expr} </element-name>
    *)
   and parseJsx p =
-    let attr = (Location.mknoloc "JSX", Parsetree.PStr []) in
+    Parser.leaveBreadcrumb p Report.Jsx;
     let jsxStartPos = p.Parser.startPos in
     Parser.expect p LessThan;
     match p.Parser.token with
@@ -1749,12 +1927,16 @@ let rec goToClosing closingToken state =
         Parser.expect p LessThan;
         Parser.expect p Forwardslash;
         begin match p.Parser.token with
-        (* TODO: better error messages *)
         | Lident closingIdent | Uident closingIdent ->
-          Parser.next p;
-          Parser.expect p GreaterThan;
-          let loc = mkLoc childrenStartPos childrenEndPos in
-          makeListExpression loc children None
+          if verifyJsxOpeningClosingName name closingIdent then (
+            Parser.next p;
+            Parser.expect p GreaterThan;
+            let loc = mkLoc childrenStartPos childrenEndPos in
+            makeListExpression loc children None
+          ) else
+            let opening = "</" ^ (string_of_pexp_ident name) ^ ">" in
+            let message = "Closing jsx name should be the same as the opening name. Did you mean " ^ opening ^ " ?" in
+            raise (Parser.ParseError (p.startPos, Report.Message message))
         | _ -> raise (Parser.Expected (p.startPos, "Closing jsx element should match"))
         end
       | _ -> raise (Parser.Expected (p.startPos, "jsx opening invalid"))
@@ -1763,24 +1945,27 @@ let rec goToClosing closingToken state =
       let loc = mkLoc jsxStartPos jsxEndPos in
       Ast_helper.Exp.apply
         ~loc
-        ~attrs:[attr]
         name
         (jsxAttrs @ [
           (Asttypes.Labelled "childen", children);
           (Asttypes.Nolabel, Ast_helper.Exp.construct (Location.mknoloc (Longident.Lident "()")) None)
         ])
     | GreaterThan -> (* fragment: <> foo </> *)
-      let childrenStartPos = p.Parser.startPos in
-      Parser.next p;
-      let children = parseJsxChildren p in
-      let childrenEndPos = p.Parser.startPos in
-      Parser.expect p LessThan;
-      Parser.expect p Forwardslash;
-      Parser.expect p GreaterThan;
-      let loc = mkLoc childrenStartPos childrenEndPos in
-      let fragment = makeListExpression loc children None in
-      {fragment with pexp_attributes = [attr]}
-    | _ -> raise (Parser.Expected (p.startPos, "Expected jsx name"))
+      parseJsxFragment p
+    | _ -> parseJsxName p
+
+  and parseJsxFragment p =
+    let childrenStartPos = p.Parser.startPos in
+    Parser.expect p GreaterThan;
+    let children = parseJsxChildren p in
+    let childrenEndPos = p.Parser.startPos in
+    Parser.expect p LessThan;
+    Parser.expect p Forwardslash;
+    Parser.expect p GreaterThan;
+    let loc = mkLoc childrenStartPos childrenEndPos in
+    let fragment = makeListExpression loc children None in
+    let jsxAttr = (Location.mknoloc "JSX", Parsetree.PStr []) in
+    {fragment with pexp_attributes = [jsxAttr]}
 
   (*
    * jsx-attribute ::=
@@ -1788,11 +1973,12 @@ let rec goToClosing closingToken state =
    *   | LIDENT = [?] jsx_expr
    *)
   and parseJsxAttribute p =
+    Parser.leaveBreadcrumb p Report.JsxAttribute;
     let optional = Parser.optional p Question in
     let name = match p.Parser.token with
     | Lident ident -> Parser.next p; ident
     | _ ->
-      raise (Parser.Expected (p.startPos, "jsx attr new should be lowercase"))
+      raise (Parser.ParseError (p.startPos, Report.Lident))
     in
     (* optional punning: <foo ?a /> *)
     if optional then
@@ -1854,14 +2040,14 @@ let rec goToClosing closingToken state =
       | Rbrace ->
         Ast_helper.Exp.ident pathIdent
       | _ ->
-        let firstExpr = parsePrimaryExpr ~operand:(Ast_helper.Exp.ident
-        pathIdent) p in
+        let a = parsePrimaryExpr ~operand:(Ast_helper.Exp.ident pathIdent) p in
+        let e = parseBinaryExpr ~a p 1 in
         begin match p.Parser.token with
         | Semicolon ->
           Parser.next p;
-          parseSeqExpr ~first:firstExpr p
+          parseSeqExpr ~first:e p
         | Rbrace ->
-          firstExpr
+          e
         | _ -> raise (Parser.Expected (p.startPos, "Expeced } or ;"))
         end
       end
@@ -2003,26 +2189,38 @@ let rec goToClosing closingToken state =
         item
 
   and parseIfExpression p =
-    (* If token already consumed *)
-    let conditionExpr = parseExpr p in
+    Parser.leaveBreadcrumb p ExprIf;
+    let startPos = p.Parser.startPos in
+    Parser.expect p If;
+    Parser.leaveBreadcrumb p IfCondition;
+    (* doesn't make sense to try es6 arrow here? *)
+    let conditionExpr = parseExpr ~context:WhenExpr p in
+    Parser.eatBreadcrumb p;
+    Parser.leaveBreadcrumb p IfBranch;
     Parser.expect p Lbrace;
     let thenExpr = parseSeqExpr p in
     Parser.expect p Rbrace;
+    Parser.eatBreadcrumb p;
     let elseExpr = match p.Parser.token with
     | Else ->
+      Parser.leaveBreadcrumb p ElseBranch;
       Parser.next p;
       Parser.expect p Lbrace;
       let elseExpr = parseSeqExpr p in
       Parser.expect p Rbrace;
+      Parser.eatBreadcrumb p;
       Some elseExpr
     | _ ->
       None
     in
-    Ast_helper.Exp.ifthenelse conditionExpr thenExpr elseExpr
+    let loc = mkLoc startPos p.prevEndPos in
+    Parser.eatBreadcrumb p;
+    Ast_helper.Exp.ifthenelse ~loc conditionExpr thenExpr elseExpr
 
   and parseForExpression p =
-    (* For token consumed *)
-    Parser.expect p Lparen;
+    let startPos = p.Parser.startPos in
+    Parser.expect p For;
+    let hasOpeningParen = Parser.optional p Lparen in
     let pattern = parsePattern p in
     Parser.expect p In;
     let e1 = parseExpr p in
@@ -2030,30 +2228,32 @@ let rec goToClosing closingToken state =
     | To -> Asttypes.Upto
     | Downto -> Asttypes.Downto
     | _ ->
-      raise (Parser.Expected (p.startPos, "Expected \"to\" or \"downto\""))
+      raise (Parser.ParseError (p.startPos, Report.OneOf [Token.To; Token.Downto]))
     in
     Parser.next p;
     let e2 = parseExpr p in
-    Parser.expect p Rparen;
+    if hasOpeningParen then Parser.expect p Rparen;
     Parser.expect p Lbrace;
     let bodyExpr = parseSeqExpr p in
     Parser.expect p Rbrace;
-    Ast_helper.Exp.for_ pattern e1 e2 direction bodyExpr
+    let loc = mkLoc startPos p.prevEndPos in
+    Ast_helper.Exp.for_ ~loc pattern e1 e2 direction bodyExpr
 
   and parseWhileExpression p =
-    (* While token consumed *)
+    let startPos = p.Parser.startPos in
+    Parser.expect p While;
     let expr1 = parseExpr p in
     Parser.expect p Lbrace;
     let expr2 = parseSeqExpr p in
     Parser.expect p Rbrace;
-    Ast_helper.Exp.while_ expr1 expr2
+    let loc = mkLoc startPos p.prevEndPos in
+    Ast_helper.Exp.while_ ~loc expr1 expr2
 
   and parsePatternMatching p =
     (* '{' consumed *)
     let rec loop p cases =
       match p.Parser.token with
       | Rbrace ->
-        Parser.next p;
         List.rev cases
       | Bar ->
         Parser.next p;
@@ -2075,10 +2275,14 @@ let rec goToClosing closingToken state =
 
   and parseSwitchExpression p =
     (* Switch token consumed *)
+    let startPos = p.Parser.startPos in
+    Parser.expect p Switch;
     let switchExpr = parseExpr p in
     Parser.expect p Lbrace;
     let cases = parsePatternMatching p in
-    Ast_helper.Exp.match_ switchExpr cases
+    Parser.expect p Rbrace;
+    let loc = mkLoc startPos p.prevEndPos in
+    Ast_helper.Exp.match_ ~loc switchExpr cases
 
   and parseArgument p =
     match p.Parser.token with
@@ -2335,6 +2539,7 @@ let rec goToClosing closingToken state =
     loop p []
 
   and parseTypExpr p =
+    Parser.leaveBreadcrumb p Report.TypeExpression;
     let startPos = p.Parser.startPos in
     let attrs = parseAttributes p in
     let typ = match p.Parser.token with
@@ -2363,15 +2568,17 @@ let rec goToClosing closingToken state =
       let constr = parseValuePath p in
       (* TODO extract this whole block into reusable logic, cf. type equation *)
       begin match p.Parser.token with
-      | Lparen ->
+      | LessThan ->
         Parser.next p;
         let (endPos, args) = parseConstructorTypeArgs p in
         Ast_helper.Typ.constr ~loc:(mkLoc startPos endPos) ~attrs constr args
+      | Lparen ->
+        raise (Parser.ParseError (p.startPos, Report.Message "Type constructor args require diamonds, like: Belt.Map.String.t<int>"))
       | _ ->
         Ast_helper.Typ.constr ~loc:constr.loc ~attrs constr []
       end
-    | _ ->
-      raise (Parser.Expected (p.startPos, "hmm we're going to parse a typexpr"))
+    | t ->
+      raise (Parser.ParseError (p.startPos, Report.Unexpected t))
     in
     (* TODO: check associativity in combination with attributes *)
     match p.Parser.token with
@@ -2415,7 +2622,7 @@ let rec goToClosing closingToken state =
   and parseConstructorTypeArgs p =
     let rec loop p types =
       match p.Parser.token with
-      | Rparen ->
+      | GreaterThan ->
         let endPos = p.endPos in
         Parser.next p;
         (endPos, List.rev types)
@@ -2425,7 +2632,7 @@ let rec goToClosing closingToken state =
         | Comma ->
           Parser.next p;
           loop p (typ::types)
-        | Rparen ->
+        | GreaterThan ->
           let endPos = p.endPos in
           Parser.next p;
           (endPos, List.rev (typ::types))
@@ -3391,7 +3598,6 @@ and parseTypeRepresentation p =
         (structureItem::items, exports)
     ) items ([], [])
 
-
   let parseFile p =
     let rec loop p items =
       begin match p.Parser.token with
@@ -3434,7 +3640,7 @@ and parseTypeRepresentation p =
     let src = read_file filename in
     let p = Parser.make src filename in
     try
-      let ast = parseFile p in
+      let ast = parseStructure p in
       Pprintast.structure Format.std_formatter ast;
       Format.pp_print_flush Format.std_formatter ();
       print_newline();
@@ -3444,11 +3650,36 @@ and parseTypeRepresentation p =
       (* print_newline() *)
     with
     | Parser.Expected (pos, trace) ->
-      Printf.eprintf "%s\n" ("pos_lnum: " ^ (string_of_int pos.pos_lnum));
-      Printf.eprintf "%s\n" ("pos_cnum: " ^ (string_of_int pos.pos_cnum));
+      Printf.eprintf "Line: %d, Column: %d\n" (pos.pos_lnum) (pos.pos_cnum - pos.pos_bol + 1);
       Printf.eprintf "something threw an exception\n";
       Printf.eprintf "current token:\n";
       Printf.eprintf "%s\n" (Token.toString p.Parser.token);
       Printf.eprintf "trace\n";
       Printf.eprintf "%s\n" trace
+    | Parser.ParseError (pos, problem) ->
+      Printf.eprintf "Parse error\n";
+      Printf.eprintf "Line: %d, Column: %d\n" (pos.pos_lnum) (pos.pos_cnum - pos.pos_bol + 1);
+      Printf.eprintf "Problem encountered while parsing %s.\n" (match p.Parser.breadcrumbs with
+        | [] -> "your code"
+        | c::_ -> Report.circumstanceToString c);
+      Printf.eprintf "%s\n"
+      (match problem with
+      | Report.Uident -> "I'm expecting an uppercased identifier like Foo or Bar"
+      | Report.Lident -> "I'm expecting an lowercased identifier like foo or bar"
+      | Report.OneOf tokens ->
+          "I'm expecting one of the following tokens:\n"
+          ^ (String.concat "\n" (List.map (fun t -> "• " ^ (Token.toString t)) tokens))
+      | Message msg -> msg
+      | Unexpected t ->
+          let name = (Token.toString t) in
+          (* TODO: match on circumstance to verify Lident needed ? *)
+          if Token.isKeyword t then
+            name ^ " is a reserved keyword, it cannot be used as an identifier."
+          else
+          "I'm not sure what to parse here when looking at \"" ^
+           name ^ "\"."
+      | Expected t ->
+          "I'm expecting a \"" ^ (Token.toString t) ^ "\" here"
+      )
+
 end

@@ -9,5 +9,8 @@ build-native:
 	mkdir _build
 	ocamlopt -O3 -o _build/native.exe -I _build -I +compiler-libs ocamlcommon.cmxa Lang.ml
 
+bench:
+	./_build/native.exe Bench.re
+
 test: build
 	./_build/prog.exe file.rjs
