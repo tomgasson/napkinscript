@@ -934,6 +934,29 @@ let rec goToClosing closingToken state =
         end
       | _ -> false)
 
+  let isEs6ArrowType p =
+    Parser.lookahead p (fun state ->
+      match state.Parser.token with
+      | Lparen ->
+        Parser.next state;
+        begin match state.Parser.token with
+        | Rparen ->
+          Parser.next state;
+          begin match state.Parser.token with
+          | EqualGreater -> true
+          | _ -> false
+          end
+        | Tilde | Dot -> true
+        | _ ->
+          goToClosing Rparen state;
+          begin match state.Parser.token with
+          | EqualGreater  -> true
+          | _ -> false
+          end
+        end
+      | _ -> false
+    )
+
   let buildLongident words = match List.rev words with
     | [] -> assert false
     | hd::tl -> List.fold_left (fun p s -> Longident.Ldot (p, s)) (Lident hd) tl
@@ -2538,10 +2561,8 @@ let rec goToClosing closingToken state =
     in
     loop p []
 
-  and parseTypExpr p =
-    Parser.leaveBreadcrumb p Report.TypeExpression;
+  and parseAtomicTypExpr ~attrs p =
     let startPos = p.Parser.startPos in
-    let attrs = parseAttributes p in
     let typ = match p.Parser.token with
     | SingleQuote ->
       Parser.next p;
@@ -2580,19 +2601,94 @@ let rec goToClosing closingToken state =
     | t ->
       raise (Parser.ParseError (p.startPos, Report.Unexpected t))
     in
-    (* TODO: check associativity in combination with attributes *)
+    typ
+
+  (* TODO: check associativity in combination with attributes *)
+  and parseTypeAlias p typ =
     match p.Parser.token with
     | As ->
       Parser.next p;
       Parser.expect p SingleQuote;
       begin match p.token with
       | Lident ident ->
-        let endPos = p.endPos in
         Parser.next p;
-        Ast_helper.Typ.alias ~loc:(mkLoc startPos endPos) ~attrs typ ident
+        (* TODO: how do we parse attributes here? *)
+        Ast_helper.Typ.alias ~loc:(mkLoc typ.Parsetree.ptyp_loc.loc_start p.prevEndPos) typ ident
       | _ -> raise (Parser.Expected (p.startPos, "ident plz"))
       end
     | _ -> typ
+
+
+  (* type_parameter ::=
+    *  | type_expr
+    *  | ~ident: type_expr
+    *  | ~ident: type_expr=?
+    *)
+  and parseTypeParameter p =
+    let attrs = parseAttributes p in
+    match p.Parser.token with
+    | Tilde ->
+      Parser.next p;
+      let name = match p.Parser.token with
+      | Lident ident -> Parser.next p; ident
+      | _ ->
+        raise (Parser.ParseError (
+          p.startPos,
+          Report.Message "Parameter name should be lowercase ident, example: ~a"
+        ))
+      in
+      Parser.expect p Colon;
+      let typ = parseTypExpr p in
+      begin match p.Parser.token with
+      | Equal ->
+        Parser.next p;
+        Parser.expect p Question;
+        (attrs, Asttypes.Optional name, typ)
+      | _ -> (attrs, Asttypes.Labelled name, typ)
+      end
+    | _ ->
+      (attrs, Asttypes.Nolabel, parseTypExpr p)
+
+  (* (int, ~x:string, float) *)
+  and parseTypeParameters p =
+    Parser.expect p Lparen;
+    let rec loop p params =
+      match p.Parser.token with
+      | Rparen -> Parser.next p; List.rev params
+      | Comma -> Parser.next p; loop p params
+      | _ ->
+        let param = parseTypeParameter p in
+        loop p (param::params)
+    in
+    loop p []
+
+  and parseEs6ArrowType p =
+    (* let startPos = p.Parser.startPos in *)
+    let parameters = parseTypeParameters p in
+    Parser.expect p EqualGreater;
+    let returnType = parseTypExpr p in
+    List.fold_right (fun (attrs, argLbl, typ) t ->
+      Ast_helper.Typ.arrow ~attrs argLbl typ t
+    ) parameters returnType
+
+  and parseTypExpr p =
+    Parser.leaveBreadcrumb p Report.TypeExpression;
+    let attrs = parseAttributes p in
+    let typ = if isEs6ArrowType p then
+      parseEs6ArrowType p
+    else
+      let typ = parseAtomicTypExpr ~attrs p in
+      (* TODO: loop *)
+      match p.Parser.token with
+      | EqualGreater ->
+        Parser.next p;
+        (* TODO: we're making a decision about shifting/reducing alias es *)
+        let returnType = parseTypExpr p in
+        let loc = mkLoc typ.Parsetree.ptyp_loc.loc_start p.prevEndPos in
+        Ast_helper.Typ.arrow ~loc Asttypes.Nolabel typ returnType
+      | _ -> typ
+    in
+    parseTypeAlias p typ
 
   and parseTupleType p =
     let startPos = p.Parser.startPos in
@@ -2960,7 +3056,7 @@ and parseTypeRepresentation p =
         loop p (s::prims)
       | _ ->
         begin match prims with
-        | [] -> raise (Parser.Expected (p.startPos, "should have at least one string"))
+        | [] -> raise (Parser.ParseError (p.startPos, Report.Message "An external definition should have at least one primitive. Example: \"setTimeout\""))
         | prims -> List.rev prims
         end
     in
