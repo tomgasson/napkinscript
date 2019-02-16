@@ -232,8 +232,8 @@ module Token = struct
     | True -> "true" | False -> "false"
     | Char c -> "'" ^ (Char.escaped c) ^ "'"
     | String s -> s
-    | Lident str -> "Lident " ^ str
-    | Uident str -> "Lident " ^ str
+    | Lident str -> str
+    | Uident str -> str
     | Dot -> "." | DotDot -> ".." | DotDotDot -> "..."
     | Int i -> "int " ^ i
     | Float f -> "Float: " ^ f
@@ -2127,7 +2127,9 @@ let rec goToClosing closingToken state =
           parseSeqExpr ~first:e p
         | Rbrace ->
           e
-        | _ -> raise (Parser.Expected (p.startPos, "Expected } or ;"))
+        | _ ->
+          parseSeqExpr ~first:e p
+            (* raise (Parser.ParseError (p.startPos, Report.OneOf [Rbrace; Semicolon])) *)
         end
       end
     | _ ->
@@ -2220,9 +2222,32 @@ let rec goToClosing closingToken state =
       in
       Ast_helper.Exp.let_ ~loc recFlag letBindings next
     | _ ->
-      parseExpr p
+      let e1 = parseExpr p in
+      ignore (Parser.optional p Semicolon);
+      begin match p.Parser.token with
+      (* seq expr start *)
+      | At | Minus | MinusDot | Plus | PlusDot | Bang | Band
+      | True | False | Int _ | Float _ | String _ | Lident _ | Uident _
+      | Lparen | List | Lbracket | Lbrace | Forwardslash | Assert
+      | Lazy | If | For | While | Switch | Open | Module | Exception | Let
+      | LessThan | Backtick ->
+        let e2 = parseSeqExpr p in
+        Ast_helper.Exp.sequence e1 e2
+      | _ -> e1
+      end
 
   (* TODO; improve? perf? *)
+
+  (* seq_expr ::= expr
+   *           |  expr          ;
+   *           |  expr          ; seq_expr
+   *           |  module    ... ; seq_expr
+   *           |  open      ... ; seq_expr
+   *           |  exception ... ; seq_expr
+   *           |  let       ...
+   *           |  let       ... ;
+   *           |  let       ... ; seq_expr
+   *)
   and parseSeqExpr ?first p =
       Parser.leaveBreadcrumb p Report.SeqExpr;
       let item = match first with
