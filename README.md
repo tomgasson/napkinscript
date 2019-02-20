@@ -1,4 +1,6 @@
-## Development workflow
+## Valparaiso [![Build Status](https://travis-ci.org/IwanKaramazow/Valparaiso.svg?branch=master)](https://travis-ci.org/IwanKaramazow/Valparaiso)
+
+## Dev workflow
 
 Cloning + installing dependencies
 ```
@@ -9,5 +11,6 @@ esy
 
 Dev workflow
 ```
-esy make build
+esy make build-native
+esy test
 ```
