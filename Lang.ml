@@ -894,7 +894,6 @@ module LangParser = struct
       else
         false
 
-    exception Expected of (Lexing.position * string)
     exception ParseError of Report.parseError
 
     (* ?circumstance indicates an optional circumstance
@@ -1109,7 +1108,7 @@ let rec goToClosing closingToken state =
         Parser.next p;
         Parser.expectExn Dot p;
         aux p (Ldot (path, uident))
-      | _ -> raise (Parser.Expected (p.startPos, "value path"))
+      | token -> raise (Parser.ParseError (p.startPos, Report.Unexpected token))
     in
     let ident = match p.Parser.token with
     | Lident ident -> Longident.Lident ident
@@ -1117,7 +1116,7 @@ let rec goToClosing closingToken state =
       Parser.next p;
       Parser.expectExn Dot p;
       aux p (Lident ident)
-    | _ -> raise (Parser.Expected (p.startPos, "value path"))
+    | token -> raise (Parser.ParseError (p.startPos, Report.Unexpected token))
     in
     let endPos = p.endPos in
     Parser.next p;
@@ -1367,8 +1366,7 @@ let rec goToClosing closingToken state =
       | Uident _ | Lident _ ->
         let field = parseRecordPatternField p in
         loop p (field::fields)
-      | _ ->
-        raise (Parser.Expected (p.startPos, "record pattern field should be lident or uident"))
+      | token -> raise (Parser.ParseError (p.startPos, Report.Unexpected token))
     in
     let (fields, closedFlag) = loop p [firstField] in
     let endPos = p.endPos in
@@ -1601,8 +1599,7 @@ let rec goToClosing closingToken state =
         [[], Asttypes.Nolabel, None, unitPattern]
       | _ -> parseParameterList p
       end
-
-    | _ -> raise (Parser.Expected (p.startPos, "Unsupported parameter"))
+    | token -> raise (Parser.ParseError (p.startPos, Report.Unexpected token))
 
   and parseOperand p =
     Parser.leaveBreadcrumb p ExprOperand;
@@ -1833,7 +1830,7 @@ let rec goToClosing closingToken state =
         | Rbrace ->
           Lex.setTemplateMode p.lexbuf;
           Parser.next p
-        | _ -> raise (Parser.Expected (p.startPos, "close with } plz"))
+        | _ -> raise (Parser.ParseError (p.startPos, Report.Expected (Rbrace, None)))
         in
         let str = Ast_helper.Exp.constant (Pconst_string(txt, None)) in
         let next =
@@ -1845,7 +1842,7 @@ let rec goToClosing closingToken state =
             [Nolabel, a; Nolabel, expr]
         in
         loop next p
-      | _ -> raise (Parser.Expected (p.startPos, "invalid template expression stuff"))
+      | token -> raise (Parser.ParseError (p.startPos, Report.Unexpected token))
     in
     Lex.setTemplateMode p.lexbuf;
     Parser.expectExn Backtick p;
@@ -1856,11 +1853,12 @@ let rec goToClosing closingToken state =
     | TemplatePart txt ->
       Parser.next p;
       let expr = parseSeqExpr p in
+      Parser.expectExn Rbrace p;
       let () = match p.Parser.token with
       | Rbrace ->
         Lex.setTemplateMode p.lexbuf;
         Parser.next p
-      | _ -> raise (Parser.Expected (p.startPos, "close with } plz"))
+      | _ -> raise (Parser.ParseError (p.startPos, Report.Expected (Rbrace, None)))
       in
       let str = Ast_helper.Exp.constant (Pconst_string(txt, None)) in
       let next =
@@ -1870,7 +1868,7 @@ let rec goToClosing closingToken state =
           expr
       in
       loop next p
-   | _ -> raise (Parser.Expected (p.startPos, "invalid template expression stuff"))
+   | token -> raise (Parser.ParseError (p.startPos, Report.Unexpected token))
 
   and parseLetBindingBody ~attrs p =
     Parser.leaveBreadcrumb p LetBinding;
@@ -1977,9 +1975,12 @@ let rec goToClosing closingToken state =
             let opening = "</" ^ (string_of_pexp_ident name) ^ ">" in
             let message = "Closing jsx name should be the same as the opening name. Did you mean " ^ opening ^ " ?" in
             raise (Parser.ParseError (p.startPos, Report.Message message))
-        | _ -> raise (Parser.Expected (p.startPos, "Closing jsx element should match"))
+        | _ ->
+          let opening = "</" ^ (string_of_pexp_ident name) ^ ">" in
+          let message = "Closing jsx name should be the same as the opening name. Did you mean " ^ opening ^ " ?" in
+          raise (Parser.ParseError (p.startPos, Report.Message message))
         end
-      | _ -> raise (Parser.Expected (p.startPos, "jsx opening invalid"))
+      | unknownToken -> raise (Parser.ParseError (p.startPos, Report.Unexpected unknownToken))
       in
       let jsxEndPos = p.prevEndPos in
       let loc = mkLoc jsxStartPos jsxEndPos in
@@ -2122,7 +2123,7 @@ let rec goToClosing closingToken state =
         Parser.next p;
         let loc = mkLoc startPos p.prevEndPos in
         Location.mkloc ident loc
-      | _ -> raise (Parser.Expected (p.startPos, "Expected module name"))
+      | _ -> raise (Parser.ParseError (p.startPos, Report.Uident))
       in
       let body = parseModuleBindingBody p in
       Parser.optional p Semicolon |> ignore;
@@ -2380,7 +2381,7 @@ let rec goToClosing closingToken state =
         | _ ->
           (Labelled ident, identExpr)
         end
-      | _ -> raise (Parser.Expected (p.startPos, "label name should be lowercase ident"))
+      | _ -> raise (Parser.ParseError (p.startPos, Report.Lident))
       end
     | _ -> (Nolabel, parseExpr p)
 
@@ -2437,7 +2438,7 @@ let rec goToClosing closingToken state =
         let loc = mkLoc startPos p.startPos in
         let lident = buildLongident (ident::acc) in
         Ast_helper.Exp.ident (Location.mkloc lident loc)
-      | _ -> raise (Parser.Expected (p.startPos, "Trying to parse a value or a constructor"))
+      | token -> raise (Parser.ParseError (p.startPos, Report.Unexpected token))
     in
     aux p []
 
@@ -2535,8 +2536,7 @@ let rec goToClosing closingToken state =
           Parser.next p;
           let var = Location.mkloc ident (mkLoc startPos endPos) in
           loop p (var::vars)
-        | _ ->
-          raise (Parser.Expected (p.startPos, "Expected lowercase ident"))
+        | _ -> raise (Parser.ParseError (p.startPos, Report.Lident))
         end
       | _ ->
         List.rev vars
@@ -2553,7 +2553,7 @@ let rec goToClosing closingToken state =
         let endPos = p.endPos in
         Parser.next p;
         Ast_helper.Typ.var ~loc:(mkLoc startPos endPos) ~attrs ident
-      | _ -> raise (Parser.Expected (p.startPos, "Expected lowercase ident"))
+      | _ -> raise (Parser.ParseError (p.startPos, Report.Lident))
       end
     | Underscore ->
       let endPos = p.endPos in
@@ -2677,27 +2677,9 @@ let rec goToClosing closingToken state =
   and parseTupleType p =
     let startPos = p.Parser.startPos in
     Parser.expectExn Forwardslash p;
-    let rec loop p acc =
-      match p.Parser.token with
-      | Forwardslash ->
-        let endPos = p.endPos in
-        Parser.next p;
-        Ast_helper.Typ.tuple ~loc:(mkLoc startPos endPos) (List.rev acc)
-      | _ ->
-        let typ = parseTypExpr p in
-        begin match p.Parser.token with
-        | Comma ->
-          Parser.next p;
-          loop p (typ::acc)
-        | Forwardslash ->
-        let endPos = p.endPos in
-          Parser.next p;
-          let types = List.rev (typ::acc) in
-          Ast_helper.Typ.tuple ~loc:(mkLoc startPos endPos) types
-        | _ -> raise (Parser.ParseError (p.startPos, Report.OneOf [Forwardslash; Comma]))
-        end
-    in
-    loop p []
+    let types = parseCommaSeparatedList ~closing:Forwardslash ~f:parseTypExpr p in
+    Parser.expect Forwardslash p;
+    Ast_helper.Typ.tuple ~loc:(mkLoc startPos p.prevEndPos) types
 
   and parseConstructorTypeArgs p =
     let rec loop p types =
@@ -2841,12 +2823,12 @@ and parseTypeRepresentation p =
       | Lident ident ->
         Parser.next p;
         (Ast_helper.Typ.var ident, variance)
-      | _ -> raise (Parser.Expected (p.startPos, "type param needs lident"))
+      | _ -> raise (Parser.ParseError (p.startPos, Report.Lident))
       end
     | Underscore ->
       Parser.next p;
       (Ast_helper.Typ.any (), variance)
-    | _ -> raise (Parser.Expected (p.startPos, "invalid type param"))
+    | token -> raise (Parser.ParseError (p.startPos, Report.Unexpected token))
     in
     Parser.expectExn GreaterThan p;
     param
@@ -2896,7 +2878,7 @@ and parseTypeRepresentation p =
            Parser.next p;
            Parser.expectExn Dot p;
            loop p (Longident.Ldot (path, uident))
-         | _ -> raise (Parser.Expected (p.startPos, "value path"))
+         | token -> raise (Parser.ParseError (p.startPos, Report.Unexpected token))
         in
         let typeConstr = Location.mknoloc (loop p (Longident.Lident uident)) in
         let typ = match p.Parser.token with
@@ -3355,11 +3337,8 @@ and parseTypeRepresentation p =
     Ast_helper.Mb.mk ~loc name body
 
   and parseModuleBindingBody p =
-    match p.Parser.token with
-    | Equal ->
-      Parser.next p;
-      parseModuleExpr p
-    | _ -> raise (Parser.ParseError (p.startPos, Report.Expected (Equal, None)))
+    Parser.expect Equal p;
+    parseModuleExpr p
 
   and parseModuleBindings p =
     (* module-name :  module-type =  module-expr *)
@@ -3401,8 +3380,7 @@ and parseTypeRepresentation p =
       spec
     | Module ->
       parseModuleTypeOf p
-    | _ ->
-      raise (Parser.Expected (p.startPos, "need a module type"))
+    | token -> raise (Parser.ParseError (p.startPos, Report.Unexpected token))
     in
     let moduleTypeLoc = mkLoc startPos p.prevEndPos in
     let moduleType = {moduleType with pmty_loc = moduleTypeLoc} in
@@ -3441,7 +3419,7 @@ and parseTypeRepresentation p =
         Parser.next p;
         let lident = parseModuleLongIdent p in
         Parsetree.Pwith_module (modulePath, lident)
-      | _ -> raise (Parser.Expected (p.startPos, "Expected = or :="))
+      | _ -> raise (Parser.ParseError (p.startPos, Report.OneOf [Equal; ColonEqual]))
       end
     | Typ ->
       Parser.next p;
@@ -3471,9 +3449,9 @@ and parseTypeRepresentation p =
             ~cstrs:typeConstraints
             (Location.mkloc (Longident.last typeConstr.txt) typeConstr.loc)
         )
-      | _ -> raise (Parser.Expected (p.startPos, "Expected = or := to complete typeconstr"))
+      | _ -> raise (Parser.ParseError (p.startPos, Report.OneOf [Equal; ColonEqual]))
       end
-    | _ -> raise (Parser.Expected (p.startPos, "Unsupported with mod constraint"))
+    | token -> raise (Parser.ParseError (p.startPos, Report.Unexpected token))
 
   and parseModuleTypeOf p =
     Parser.expectExn Module p;
@@ -3524,16 +3502,16 @@ and parseTypeRepresentation p =
         parseModuleDeclarationOrAlias ~attrs p
       | Typ ->
         parseModuleTypeDeclaration ~attrs p
-      | _ -> raise (Parser.Expected (p.startPos, "need type or uident"))
+      | _ -> raise (Parser.ParseError (p.startPos, Report.Uident))
       end
-    | _ -> raise (Parser.Expected (p.startPos, "signature item"))
+    | token -> raise (Parser.ParseError (p.startPos, Report.Unexpected token))
 
   and parseModuleDeclarationOrAlias ~attrs p =
     let moduleName = match p.Parser.token with
     | Uident ident ->
       Parser.next p;
       Location.mknoloc ident
-    | _ -> raise (Parser.Expected (p.startPos, "Module name should start with uident"))
+    | _ -> raise (Parser.ParseError (p.startPos, Report.Uident))
     in
     let body = match p.Parser.token with
     | Colon ->
@@ -3543,7 +3521,7 @@ and parseTypeRepresentation p =
       Parser.next p;
       let lident = parseModuleLongIdent p in
       Ast_helper.Mty.alias lident
-    | _ -> raise (Parser.Expected (p.startPos, "Expected : or ="))
+    | _ -> raise (Parser.ParseError (p.startPos, Report.OneOf [Colon; Equal]))
     in
     Ast_helper.Sig.module_ (Ast_helper.Md.mk ~attrs moduleName body)
 
@@ -3553,7 +3531,7 @@ and parseTypeRepresentation p =
     | Uident ident ->
       Parser.next p;
       Location.mknoloc ident
-    | _ -> raise (Parser.Expected (p.startPos, "Module type name should be uident"))
+    | _ -> raise (Parser.ParseError (p.startPos, Report.Uident))
     in
     let typ = match p.Parser.token with
     | Equal ->
@@ -3567,8 +3545,11 @@ and parseTypeRepresentation p =
   and parseSignLetDesc p =
     Parser.expectExn Let p;
     let name = match p.Parser.token with
-    | Lident ident -> Parser.next p; Location.mknoloc ident
-    | _ -> raise (Parser.Expected (p.startPos, "name of value should be lowercase"))
+    | Lident ident ->
+      let nameStartPos = p.startPos in
+      Parser.next p;
+      Location.mkloc ident (mkLoc nameStartPos p.prevEndPos)
+    | _ -> raise (Parser.ParseError (p.startPos, Report.Lident))
     in
     Parser.expectExn Colon p;
     let typExpr = parsePolyTypeExpr p in
@@ -3597,7 +3578,7 @@ and parseTypeRepresentation p =
         | Dot -> Parser.next p; loop p (id ^ ".")
         | _ -> id
         end
-      | _ -> raise (Parser.Expected (p.startPos, "Expected uident, lident"))
+      | token -> raise (Parser.ParseError (p.startPos, Report.Unexpected token))
     in
     let id = loop p "" in
     let endPos = p.prevEndPos in
@@ -3660,11 +3641,11 @@ and parseTypeRepresentation p =
       let (var, typ) = match vb.pvb_pat.ppat_desc with
       | Ppat_constraint ({ppat_desc= Ppat_var stringLoc}, coreType) ->
         (stringLoc, coreType)
-      | _ -> raise (Parser.Expected (vb.pvb_loc.loc_start, "TODO"))
+      | _ -> raise (Parser.ParseError (vb.pvb_loc.loc_start, Report.Message "Hey! If you want to export an item, you need to add a type."))
       in
       let vd = Ast_helper.Val.mk var typ in
       Ast_helper.Sig.value ~loc vd
-    | _ -> raise (Parser.Expected (loc.loc_start, "Hey! we don't support exporting here (yet?)"))
+    | _ -> raise (Parser.ParseError (loc.loc_start, Report.Message "Hey! we don't support exporting here (yet?)"))
 
   let parseExportItem p =
     match p.Parser.token with
@@ -3696,7 +3677,7 @@ and parseTypeRepresentation p =
         | String _ | Int _ | Float _ | Lbrace | Lparen | True | False
         | Backtick | Uident _ | Lident _ | Lbracket | Assert | Lazy
         | If | For | While | Switch | LessThan | Export -> ()
-        | _ -> raise (Parser.Expected (p.startPos, "Expected semicolon"))
+        | _ -> Parser.expectExn Semicolon p
         in
         loop p (item::items)
       end
@@ -3742,13 +3723,6 @@ and parseTypeRepresentation p =
         | _ -> "Todo: pretty print parse error")
       ) p.errors;
     with
-    | Parser.Expected (pos, trace) ->
-      Printf.eprintf "Line: %d, Column: %d\n" (pos.pos_lnum) (pos.pos_cnum - pos.pos_bol + 1);
-      Printf.eprintf "something threw an exception\n";
-      Printf.eprintf "current token:\n";
-      Printf.eprintf "%s\n" (Token.toString p.Parser.token);
-      Printf.eprintf "trace\n";
-      Printf.eprintf "%s\n" trace
     | Parser.ParseError (pos, problem) ->
       Printf.eprintf "Parse error\n";
       Printf.eprintf "Line: %d, Column: %d\n" (pos.pos_lnum) (pos.pos_cnum - pos.pos_bol + 1);
@@ -3793,5 +3767,4 @@ and parseTypeRepresentation p =
       | Unbalanced t ->
           "Closing \"" ^ (Token.toString t) ^ "\" seems to be missing."
       )
-
 end
