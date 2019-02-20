@@ -1118,9 +1118,8 @@ let rec goToClosing closingToken state =
       aux p (Lident ident)
     | token -> raise (Parser.ParseError (p.startPos, Report.Unexpected token))
     in
-    let endPos = p.endPos in
     Parser.next p;
-    Location.mkloc ident (mkLoc startPos endPos)
+    Location.mkloc ident (mkLoc startPos p.prevEndPos)
 
   (* Parses module identifiers:
        Foo

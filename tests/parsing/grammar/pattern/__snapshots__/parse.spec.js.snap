@@ -1,0 +1,10 @@
+// Jest Snapshot v1, https://goo.gl/fbAQLP
+
+exports[`any.js 1`] = `
+"let _ = 1
+;;match () with | _ -> ()
+let f _ = ()
+let g a _ = ()
+let g _ a = ()
+"
+`;

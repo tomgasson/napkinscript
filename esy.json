@@ -1,8 +1,8 @@
 {
   "name": "valparaiso",
   "version": "0.0.1",
-  "devDependencies": {
-    "@opam/merlin": "*",
-    "ocaml": "4.6.9"
-  }
+  "scripts": {
+    "test": "jest"
+  },
+  "devDependencies": { "@opam/merlin": "*", "ocaml": "4.6.9", "jest": "^24.1.0", "jest-pnp-resolver": "^1.1.0" }
 }

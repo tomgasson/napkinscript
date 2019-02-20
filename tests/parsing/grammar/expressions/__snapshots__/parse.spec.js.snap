@@ -1,0 +1,11 @@
+// Jest Snapshot v1, https://goo.gl/fbAQLP
+
+exports[`array.js 1`] = `
+"let x = [|1;2;3|]
+"
+`;
+
+exports[`tuple.js 1`] = `
+"let x = (1, 2, 3)
+"
+`;
