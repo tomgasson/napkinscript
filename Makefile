@@ -12,5 +12,5 @@ build-native:
 bench:
 	./_build/native.exe Bench.re
 
-test: build
-	./_build/prog.exe file.rjs
+# test: build
+#	./_build/prog.exe file.rjs
