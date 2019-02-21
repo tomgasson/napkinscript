@@ -2,7 +2,7 @@
   "name": "valparaiso",
   "version": "0.0.1",
   "scripts": {
-    "test": "jest"
+    "test": "make test"
   },
   "devDependencies": { "@opam/merlin": "*", "ocaml": "4.6.9", "jest": "^24.1.0", "jest-pnp-resolver": "^1.1.0" }
 }

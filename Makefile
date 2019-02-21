@@ -14,3 +14,6 @@ bench:
 
 test: build-native
 	esy jest
+
+debug: build
+	./_build/prog.exe file.rjs
