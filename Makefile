@@ -7,13 +7,13 @@ build:
 build-native:
 	rm -rf _build
 	mkdir _build
-	esy	ocamlopt -O3 -o _build/native.exe -I _build -I +compiler-libs ocamlcommon.cmxa Lang.ml
-
-bench:
-	./_build/native.exe Bench.re
+	ocamlopt -O3 -o _build/native.exe -I _build -I +compiler-libs ocamlcommon.cmxa Lang.ml
 
 test: build-native
-	esy jest
+	./node_modules/.bin/jest
 
 debug: build
-	./_build/prog.exe file.rjs
+	./_build/prog.exe file.js
+
+debug2: build
+	./_build/prog.exe file2.js

@@ -17,6 +17,8 @@ arr[0] = a + b
 
 // call expressions
 f()
+f(a)
+f(a,) // trailing comma
 f(x : int)
 f(a, b, c)
 f(a, b, c,) // trailing comma

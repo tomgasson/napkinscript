@@ -794,7 +794,7 @@ module Report = struct
     | ExprUnary
     | ExprSetField
     | ExprBinaryAfterOp of Token.t
-    | SeqExpr
+    | ExprBlock
     | ExprCall
     | ExprArrayAccess
     | ExprArrayMutation
@@ -824,7 +824,7 @@ module Report = struct
     | TypeExpression -> "a type"
     | External -> "an external"
     | PatternMatching -> "the cases of a pattern match"
-    | SeqExpr -> "a block with expressions"
+    | ExprBlock -> "a block with expressions"
     | ExprSetField -> "a record field mutation"
     | ExprCall -> "a function application"
     | ExprArrayAccess -> "an array access expression"
@@ -949,7 +949,6 @@ module LangParser = struct
 
 
 type context =
-  | StructureExpr
   | OrdinaryExpr
   | TernaryTrueBranchExpr
   | WhenExpr
@@ -1200,7 +1199,6 @@ let rec goToClosing closingToken state =
       Asttypes.Fresh
     in
     let modident = parseModuleLongIdent p in
-    Parser.next p;
     let endPos = p.prevEndPos in
     let loc = mkLoc startPos endPos in
     Parser.eatBreadcrumb p;
@@ -1470,15 +1468,16 @@ let rec goToClosing closingToken state =
 
   and parseExpr ?(context=OrdinaryExpr) p =
     let startPos = p.Parser.startPos in
+    let attrs = parseAttributes p in
     let expr = match p.token with
     | Assert ->
       Parser.next p;
-      let expr = parseExpr p in
+      let expr = parseUnaryExpr p in
       let loc = mkLoc startPos p.prevEndPos in
       Ast_helper.Exp.assert_ ~loc expr
     | Lazy ->
       Parser.next p;
-      let expr = parseExpr p in
+      let expr = parseUnaryExpr p in
       let loc = mkLoc startPos p.prevEndPos in
       Ast_helper.Exp.lazy_ ~loc expr
     | If ->
@@ -1494,12 +1493,11 @@ let rec goToClosing closingToken state =
          isEs6ArrowExpression ~inTernary:(context=TernaryTrueBranchExpr) p
       then
         parseEs6ArrowExpression p
-      else if context != StructureExpr then
-        parseAttributedExpr p
       else
         parseUnaryExpr p
     in
-    let expr = parseBinaryExpr ~allowAttrs:(context != StructureExpr) ~a:expr p 1 in
+    let expr = {expr with Parsetree.pexp_attributes = attrs} in
+    let expr = parseBinaryExpr ~a:expr p 1 in
     parseTernaryExpr expr p
 
   (* expr ? expr : expr *)
@@ -1520,14 +1518,17 @@ let rec goToClosing closingToken state =
     | _ ->
       leftOperand
 
-  and parseEs6ArrowExpression p =
+  and parseEs6ArrowExpression ?parameters p =
     let startPos = p.Parser.startPos in
     Parser.leaveBreadcrumb p Report.Es6ArrowExpr;
-    let parameters = parseParameters p in
+    let parameters = match parameters with
+    | Some params -> params
+    | None -> parseParameters p
+    in
     let returnType = match p.Parser.token with
     | Colon ->
       Parser.next p;
-      Some (parseTypExpr p)
+      Some (parseTypExpr ~allowEs6Arrow:false p)
     | _ ->
       None
     in
@@ -1697,10 +1698,7 @@ let rec goToClosing closingToken state =
       | Lbracket ->
         parseArrayExp p
       | Lbrace ->
-        Parser.next p;
-        let e = parseBracedOrRecordExpr p in
-        Parser.expectExn Rbrace p;
-        e
+        parseBracedOrRecordExpr p
       | Forwardslash ->
         parseTupleExpr p
       | LessThan ->
@@ -1819,22 +1817,22 @@ let rec goToClosing closingToken state =
     | _ ->
       parsePrimaryExpr p
 
-  and parseAttributedExpr p =
+  and parseAttributedUnaryExpr p =
     let startPos = p.Parser.startPos in
     let attrs = parseAttributes p in
-    let unaryExpr = parseUnaryExpr p in
+    let expr = parseUnaryExpr p in
     let endPos = p.Parser.prevEndPos in
-    {unaryExpr with pexp_attributes = attrs; pexp_loc = mkLoc startPos endPos}
+    {expr with pexp_attributes = attrs; pexp_loc = mkLoc startPos endPos}
 
   (* a binary expression is an expression that combines two expressions with an
    * operator. Examples:
    * -> a + b
    * -> f(x) |> g(y)
    *)
-  and parseBinaryExpr ?(allowAttrs=true) ?a p prec =
+  and parseBinaryExpr ?a p prec =
     let a = match a with
     | Some e -> e
-    | None -> if allowAttrs then parseAttributedExpr p else parseUnaryExpr p
+    | None -> parseAttributedUnaryExpr p
     in
     let rec loop a =
       let token = p.Parser.token in
@@ -1872,7 +1870,7 @@ let rec goToClosing closingToken state =
           acc
       | TemplatePart txt ->
         Parser.next p;
-        let expr = parseSeqExpr p in
+        let expr = parseExprBlock p in
         let () = match p.Parser.token with
         | Rbrace ->
           Lex.setTemplateMode p.lexbuf;
@@ -1899,7 +1897,7 @@ let rec goToClosing closingToken state =
       Ast_helper.Exp.constant (Pconst_string(txt, None))
     | TemplatePart txt ->
       Parser.next p;
-      let expr = parseSeqExpr p in
+      let expr = parseExprBlock p in
       let () = match p.Parser.token with
       | Rbrace ->
         Lex.setTemplateMode p.lexbuf;
@@ -2135,17 +2133,17 @@ let rec goToClosing closingToken state =
     | _ -> loop p []
 
   and parseBracedOrRecordExpr p =
-    (* opening brace consumed *)
-    match p.Parser.token with
+    let startPos = p.Parser.startPos in
+    Parser.expectExn Lbrace p;
+    let expr = match p.Parser.token with
     | DotDotDot ->
       (* beginning of record spread, parse record *)
       Parser.next p;
-      let spreadExpr = parseExpr p in
+      let spreadExpr = parseConstrainedExpr p in
       Parser.expect Comma p;
       parseRecordExpr ~spread:(Some spreadExpr) [] p
     | Uident _ | Lident _ ->
-      let recordFieldOrPexpIdent = parseValuePath p in
-      let pathIdent = recordFieldOrPexpIdent in
+      let pathIdent = parseValuePath p in
       begin match p.Parser.token with
       | Comma ->
         Parser.next p;
@@ -2153,26 +2151,49 @@ let rec goToClosing closingToken state =
       | Colon ->
         Parser.next p;
         let fieldExpr = parseExpr p in
-        Parser.expect Comma p;
-        parseRecordExpr [(pathIdent, fieldExpr)] p
+        begin match p.token with
+        | Rbrace ->
+          Ast_helper.Exp.record [(pathIdent, fieldExpr)] None
+        | _ ->
+          Parser.expect Comma p;
+          parseRecordExpr [(pathIdent, fieldExpr)] p
+        end
       | Semicolon ->
         Parser.next p;
-        parseSeqExpr ~first:(Ast_helper.Exp.ident pathIdent) p
+        parseExprBlock ~first:(Ast_helper.Exp.ident pathIdent) p
       | Rbrace ->
         Ast_helper.Exp.ident pathIdent
+      | EqualGreater ->
+          let ident = Location.mknoloc (Longident.last pathIdent.txt) in
+          let a = parseEs6ArrowExpression
+            ~parameters:[([], Asttypes.Nolabel, None, Ast_helper.Pat.var ident)] p
+          in
+          let e = parseBinaryExpr ~a p 1 in
+          let e = parseTernaryExpr e p in
+          begin match p.Parser.token with
+          | Semicolon ->
+            Parser.next p;
+            parseExprBlock ~first:e p
+          | Rbrace -> e
+          | _ -> parseExprBlock ~first:e p
+          end
       | _ ->
         let a = parsePrimaryExpr ~operand:(Ast_helper.Exp.ident pathIdent) p in
         let e = parseBinaryExpr ~a p 1 in
+        let e = parseTernaryExpr e p in
         begin match p.Parser.token with
         | Semicolon ->
           Parser.next p;
-          parseSeqExpr ~first:e p
+          parseExprBlock ~first:e p
         | Rbrace -> e
-        | _ -> parseSeqExpr ~first:e p
+        | _ -> parseExprBlock ~first:e p
         end
       end
     | _ ->
-      parseSeqExpr p
+      parseExprBlock p
+    in
+    Parser.expectExn Rbrace p;
+    {expr with pexp_loc = mkLoc startPos p.prevEndPos}
 
   and parseRecordRow p =
     let field = parseValuePath p in
@@ -2186,9 +2207,14 @@ let rec goToClosing closingToken state =
 
   and parseRecordExpr ?(spread=None) rows p =
     let exprs = parseCommaSeparatedList ~closing:Rbrace ~f:parseRecordRow p in
-    Ast_helper.Exp.record (rows @ exprs) spread
+    let rows = rows @ exprs in
+    match rows with
+    | [] ->
+      raise (Parser.ParseError (p.prevEndPos, Report.Message "Record spread needs at least one field that's updated"))
+    | rows ->
+      Ast_helper.Exp.record rows spread
 
-  and parseSeqExprItem p =
+  and parseExprBlockItem p =
     let startPos = p.Parser.startPos in
     match p.Parser.token with
     | Module ->
@@ -2202,24 +2228,24 @@ let rec goToClosing closingToken state =
       in
       let body = parseModuleBindingBody p in
       Parser.optional p Semicolon |> ignore;
-      let expr = parseSeqExpr p in
+      let expr = parseExprBlock p in
       let endPos = p.prevEndPos in
       let loc = mkLoc startPos endPos in
       Ast_helper.Exp.letmodule ~loc name body expr
     | Exception ->
       let extensionConstructor = parseExceptionDef ~attrs:[] p in
       Parser.optional p Semicolon |> ignore;
-      let seqExpr = parseSeqExpr  p in
+      let blockExpr = parseExprBlock  p in
       let endPos = p.prevEndPos in
       let loc = mkLoc startPos endPos in
-      Ast_helper.Exp.letexception ~loc extensionConstructor seqExpr
+      Ast_helper.Exp.letexception ~loc extensionConstructor blockExpr
     | Open ->
       let od = parseOpenDescription ~attrs:[] p in
       Parser.optional p Semicolon |> ignore;
-      let seqExpr = parseSeqExpr p in
+      let blockExpr = parseExprBlock p in
       let endPos = p.prevEndPos in
       let loc = mkLoc startPos endPos in
-      Ast_helper.Exp.open_ ~loc od.popen_override od.popen_lid seqExpr
+      Ast_helper.Exp.open_ ~loc od.popen_override od.popen_lid blockExpr
     | Let ->
       let (recFlag, letBindings) = parseLetBindings ~attrs:[] p in
       let endPos = p.prevEndPos in
@@ -2235,7 +2261,7 @@ let rec goToClosing closingToken state =
         | Lparen | List | Lbracket | Lbrace | Forwardslash | Assert
         | Lazy | If | For | While | Switch | Open | Module | Exception | Let
         | LessThan | Backtick ->
-          parseSeqExpr p
+          parseExprBlock p
         | _ ->
           Ast_helper.Exp.construct (Location.mknoloc (Longident.Lident "()")) None
         end
@@ -2245,7 +2271,7 @@ let rec goToClosing closingToken state =
       | Lparen | List | Lbracket | Lbrace | Forwardslash | Assert
       | Lazy | If | For | While | Switch | Open | Module | Exception | Let
       | LessThan | Backtick ->
-        parseSeqExpr p
+        parseExprBlock p
       | _ ->
         Ast_helper.Exp.construct (Location.mknoloc (Longident.Lident "()")) None
       in
@@ -2260,30 +2286,31 @@ let rec goToClosing closingToken state =
       | Lparen | List | Lbracket | Lbrace | Forwardslash | Assert
       | Lazy | If | For | While | Switch | Open | Module | Exception | Let
       | LessThan | Backtick ->
-        let e2 = parseSeqExpr p in
+        let e2 = parseExprBlock p in
         Ast_helper.Exp.sequence e1 e2
       | _ -> e1
       end
 
-  (* TODO; improve? perf? *)
-
-  (* seq_expr ::= expr
-   *           |  expr          ;
-   *           |  expr          ; seq_expr
-   *           |  module    ... ; seq_expr
-   *           |  open      ... ; seq_expr
-   *           |  exception ... ; seq_expr
-   *           |  let       ...
-   *           |  let       ... ;
-   *           |  let       ... ; seq_expr
+  (* blockExpr ::= expr
+   *            |  expr          ;
+   *            |  expr          ; blockExpr
+   *            |  module    ... ; blockExpr
+   *            |  open      ... ; blockExpr
+   *            |  exception ... ; blockExpr
+   *            |  let       ...
+   *            |  let       ... ;
+   *            |  let       ... ; blockExpr
+   *
+   *  note: semi should be made optional
+   *  a block of expression is always
    *)
-  and parseSeqExpr ?first p =
-      Parser.leaveBreadcrumb p Report.SeqExpr;
+  and parseExprBlock ?first p =
+      Parser.leaveBreadcrumb p Report.ExprBlock;
       let item = match first with
       | Some e -> e
-      | None -> parseSeqExprItem p
+      | None -> parseExprBlockItem p
       in
-      let seqExpr = match p.Parser.token with
+      let blockExpr = match p.Parser.token with
       | Semicolon ->
         Parser.next p;
         begin match p.Parser.token with
@@ -2293,7 +2320,7 @@ let rec goToClosing closingToken state =
         | Lparen | List | Lbracket | Lbrace | Forwardslash | Assert
         | Lazy | If | For | While | Switch | Open | Module | Exception | Let
         | LessThan | Backtick ->
-          let next = parseSeqExprItem p in
+          let next = parseExprBlockItem p in
           ignore(Parser.optional p Semicolon);
           Ast_helper.Exp.sequence item next
         | _ -> item
@@ -2316,7 +2343,7 @@ let rec goToClosing closingToken state =
           | Lparen | List | Lbracket | Lbrace | Forwardslash | Assert
           | Lazy | If | For | While | Switch | Open | Module | Exception | Let
           | LessThan | Backtick ->
-            let next = parseSeqExprItem p in
+            let next = parseExprBlockItem p in
             ignore(Parser.optional p Semicolon);
             Ast_helper.Exp.sequence item next
           | _ -> item
@@ -2325,7 +2352,7 @@ let rec goToClosing closingToken state =
         item
       in
       Parser.eatBreadcrumb p;
-      seqExpr
+      blockExpr
 
   and parseIfExpression p =
     Parser.leaveBreadcrumb p ExprIf;
@@ -2337,7 +2364,7 @@ let rec goToClosing closingToken state =
     Parser.eatBreadcrumb p;
     Parser.leaveBreadcrumb p IfBranch;
     Parser.expectExn Lbrace p;
-    let thenExpr = parseSeqExpr p in
+    let thenExpr = parseExprBlock p in
     Parser.expectExn Rbrace p;
     Parser.eatBreadcrumb p;
     let elseExpr = match p.Parser.token with
@@ -2345,7 +2372,7 @@ let rec goToClosing closingToken state =
       Parser.leaveBreadcrumb p ElseBranch;
       Parser.next p;
       Parser.expectExn  Lbrace p;
-      let elseExpr = parseSeqExpr p in
+      let elseExpr = parseExprBlock p in
       Parser.expectExn Rbrace p;
       Parser.eatBreadcrumb p;
       Some elseExpr
@@ -2373,7 +2400,7 @@ let rec goToClosing closingToken state =
     let e2 = parseExpr p in
     if hasOpeningParen then Parser.expectExn Rparen p;
     Parser.expectExn Lbrace p;
-    let bodyExpr = parseSeqExpr p in
+    let bodyExpr = parseExprBlock p in
     Parser.expectExn Rbrace p;
     let loc = mkLoc startPos p.prevEndPos in
     Ast_helper.Exp.for_ ~loc pattern e1 e2 direction bodyExpr
@@ -2383,7 +2410,7 @@ let rec goToClosing closingToken state =
     Parser.expectExn While p;
     let expr1 = parseExpr ~context:WhenExpr p in
     Parser.expectExn Lbrace p;
-    let expr2 = parseSeqExpr p in
+    let expr2 = parseExprBlock p in
     Parser.expectExn Rbrace p;
     let loc = mkLoc startPos p.prevEndPos in
     Ast_helper.Exp.while_ ~loc expr1 expr2
@@ -2406,7 +2433,7 @@ let rec goToClosing closingToken state =
           None
         in
         Parser.expectExn EqualGreater p;
-        let rhs = parseSeqExpr p in
+        let rhs = parseExprBlock p in
         let case = Ast_helper.Exp.case lhs ?guard rhs in
         loop p (case::cases)
       | token -> raise (Parser.ParseError (p.startPos, Report.Unexpected token))
@@ -2747,7 +2774,6 @@ let rec goToClosing closingToken state =
     loop p []
 
   and parseEs6ArrowType p =
-    (* let startPos = p.Parser.startPos in *)
     let parameters = parseTypeParameters p in
     Parser.expectExn EqualGreater p;
     let returnType = parseTypExpr p in
@@ -2755,16 +2781,15 @@ let rec goToClosing closingToken state =
       Ast_helper.Typ.arrow ~attrs argLbl typ t
     ) parameters returnType
 
-  and parseTypExpr p =
+  and parseTypExpr ?(allowEs6Arrow=true) p =
     Parser.leaveBreadcrumb p Report.TypeExpression;
     let attrs = parseAttributes p in
-    let typ = if isEs6ArrowType p then
+    let typ = if allowEs6Arrow && isEs6ArrowType p then
       parseEs6ArrowType p
     else
       let typ = parseAtomicTypExpr ~attrs p in
-      (* TODO: loop *)
       match p.Parser.token with
-      | EqualGreater ->
+      | EqualGreater when allowEs6Arrow == true ->
         Parser.next p;
         (* TODO: we're making a decision about shifting/reducing alias es *)
         let returnType = parseTypExpr p in
@@ -2843,11 +2868,12 @@ let rec goToClosing closingToken state =
        Parser.expectExn Rparen p;
        Parsetree.Pcstr_record recordDecl
      | _ ->
-       let (_, args) = parseConstructorTypeArgs p in
+       let args = parseCommaSeparatedList ~closing:Rparen ~f:parseTypExpr p in
+       Parser.expectExn Rparen p;
        Parsetree.Pcstr_tuple args
       end
     | Lbrace ->
-     Parsetree.Pcstr_record (parseRecordDeclaration p)
+       Parsetree.Pcstr_record (parseRecordDeclaration p)
     | _ ->
      Pcstr_tuple []
     in
@@ -3210,7 +3236,7 @@ and parseTypeRepresentation p =
       Ast_helper.Str.include_ (parseIncludeStatement ~attrs p)
     | Module -> parseModuleOrModuleTypeImpl p
     | _ ->
-      Ast_helper.Str.eval ~attrs (parseExpr ~context:StructureExpr p)
+      Ast_helper.Str.eval ~attrs (parseExpr p)
     in
     let endPos = p.prevEndPos in
     let loc = mkLoc startPos endPos in
@@ -3228,10 +3254,8 @@ and parseTypeRepresentation p =
     let startPos = p.Parser.startPos in
     match p.Parser.token with
     | Uident ident ->
-      Parser.next p;
-      let endPos = p.prevEndPos in
-      let loc = mkLoc startPos endPos in
-      Ast_helper.Mod.ident ~loc (Location.mkloc (Longident.Lident ident) loc)
+      let longident = parseModuleLongIdent p in
+      Ast_helper.Mod.ident ~loc:longident.loc longident
     | Lbrace ->
       Parser.next p;
       let structure = Ast_helper.Mod.structure (parseStructure p) in
@@ -3843,7 +3867,7 @@ and parseTypeRepresentation p =
           begin match p.breadcrumbs with
           | (ExprOperand, _)::breadcrumbs ->
               begin match breadcrumbs, p.token with
-              | (SeqExpr, _) :: _, Rbrace ->
+              | (ExprBlock, _) :: _, Rbrace ->
                 "It seems that this expression block is empty"
               | (ExprSetField, _) :: _, _ ->
                 "It seems that this record field mutation misses an expression"

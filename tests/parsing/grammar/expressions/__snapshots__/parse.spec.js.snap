@@ -7,6 +7,69 @@ let x = [|(1 : int);(2 : int);(3 : int)|]
 "
 `;
 
+exports[`block.js 1`] = `
+"let b =
+  let module Array = Belt.Array in
+    ([|1;2|] |. (Array.map (fun x -> x + 1))) |. Js.log
+let b = let open Belt.Array in ([|1;2|] |. (map (fun x -> x + 1))) |. Js.log
+let b = let exception QuitEarly  in raise QuitEarly
+let b = let a = 1 in let b = 2 in a + b
+let b = let _ = sideEffect () in ()
+let b = let _ = sideEffect () in ()
+let b = a (); b (); c ()
+let b = a (); b (); (let a = 1 in f a)
+let b = let a = 1 in let b = 2 in ()
+let b =
+  let module Array = Belt.Array in
+    let open Array in
+      let exception Terminate of int  in
+        let a = 1 in
+        let b = 2 in
+        sideEffect ();
+        (let x = (1 + 2) |. (fun x -> x + 1) in raise (Terminate x))
+let b = f (); g (); h (); (let arr = [|1;2;3|] in ())
+let res =
+  let a = \\"a starts out as\\" in
+  (print_string a; (let a = 20 in print_int a)); print_string a
+let res =
+  let a = \\"first its a string\\" in
+  let a = 20 in print_int a; print_int a; print_int a
+let res =
+  let a = \\"a is always a string\\" in
+  print_string a; (let b = 30 in print_int b)
+let nestedLet = let _ = 1 () in ()
+let nestedLet = let _ = 1 in 2
+"
+`;
+
+exports[`bracedOrRecord.js 1`] = `
+"let r = { expr with pexp_attributes = [||] }
+let r = { a }
+let r = { a = expr }
+let r = { a = expr }
+let r = { a = expr; b = expr2 }
+let r = { f = (fun x -> x + b) }
+let e = a
+let e = a
+let e = a; b ()
+let e = - a
+let e = a + b
+let e = if a then true else false
+let e = if a |> computation then true else false
+let e = a.(0)
+let e = f b
+let e = (a.b).c
+let e = arr.(x) <- 20
+let e x = (x + 1) |> (doStuff config)
+let e = (fun x -> x + 1) |> (doStuff config)
+let e = if fun x -> x + 1 then true else false
+let e = (fun x -> x + 1) |> sideEffect; logToAnalytics Shady.ml
+let f event = (event.target).value
+let f event = ((event.target).value : string)
+let x = let a = 1 in let b = 2 in a + b
+"
+`;
+
 exports[`constants.js 1`] = `
 "let x = true
 let y = false
@@ -53,7 +116,8 @@ let ifThenElse = if foo then lala else doStuff x y z
 `;
 
 exports[`list.js 1`] = `
-"let x = [1; 2; 3]
+"let x = []
+let x = [1; 2; 3]
 let x = [1; 2; 3]
 let x = [(1 : int); (2 : int); (3 : int)]
 let x = 4 :: 5 :: y
@@ -98,11 +162,29 @@ let x = arr.(0)
 let x = arr.((x : int))
 ;;arr.(0) <- (a + b)
 ;;f ()
+;;f a
+;;f a
 ;;f (x : int)
 ;;f a b c
 ;;f a b c
 ;;f ~a ~b:bArg ?c ?d:expr
 ;;f ~a:(x : int) ?b:(y : int)
+"
+`;
+
+exports[`record.js 1`] = `
+"let r = { a = expr }
+let r = { a = expr }
+let r = { Parsetree.pexp_attributes = [||]; Parsetree.loc = loc }
+let r = { a; b; c }
+let r = { Parsetree.pexp_attributes; Parsetree.loc }
+let r = { Parsetree.pexp_attributes; Parsetree.loc }
+let r = { a = (expr : int); b = (x : string) }
+let r = { expr with pexp_attributes = [||] }
+let r = { expr with pexp_attributes = [||]; pexp_loc = loc }
+let r = { expr with pexp_attributes = [||] }
+let r = { (make () : myRecord) with foo = bar }
+let r = { (make () : myRecord) with foo = bar }
 "
 `;
 

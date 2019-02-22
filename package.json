@@ -1,0 +1,27 @@
+{
+  "name": "valparaiso",
+  "version": "0.0.1",
+  "description": "",
+  "main": "./src/Lang.ml",
+  "directories": {
+    "test": "tests"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "jest": "^24.1.0",
+    "jest-snapshot-serializer-raw": "^1.1.0"
+  },
+  "scripts": {
+    "test": "make test"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/IwanKaramazow/Valparaiso.git"
+  },
+  "author": "Iwan ",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/IwanKaramazow/Valparaiso/issues"
+  },
+  "homepage": "https://github.com/IwanKaramazow/Valparaiso#readme"
+}
