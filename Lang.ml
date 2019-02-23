@@ -765,7 +765,7 @@ module Lex = struct
     let cb lexbuf =
       let (_, _, token) = lex lexbuf in
       match token with
-      | Int _ | Lident _ | Uident _ | Lparen | Lbrace | Minus | Plus
+      | Int _ | Lident _ | Uident _ | Lparen | Minus | Plus
       | Lazy | If | For | While | Switch | At -> Token.Forwardslash
       | _ -> TupleEnding
     in
@@ -1548,6 +1548,22 @@ let rec goToClosing closingToken state =
     in
     {arrowExpr with pexp_loc = {arrowExpr.pexp_loc with loc_start = startPos}}
 
+	(*
+	 * parameter ::=
+	 *   | pattern
+   *   | pattern : type
+	 *   | ~ labelName
+	 *   | ~ labelName as pattern
+	 *   | ~ labelName as pattern : type
+	 *   | ~ labelName = expr
+	 *   | ~ labelName as pattern = expr
+	 *   | ~ labelName as pattern : type = expr
+	 *   | ~ labelName = ?
+	 *   | ~ labelName as pattern = ?
+	 *   | ~ labelName as pattern : type = ?
+	 *
+	 * labelName ::= lident
+   *)
   and parseParameter p =
     let startPos = p.Parser.startPos in
     (* TODO: this is a shift reduce conflict, we reduce here :)
@@ -1593,14 +1609,14 @@ let rec goToClosing closingToken state =
     match p.Parser.token with
     | Equal ->
       Parser.next p;
+			let lbl = match lbl with
+			| Asttypes.Labelled lblName -> Asttypes.Optional lblName
+			| Asttypes.Optional _ as lbl -> lbl
+			| Asttypes.Nolabel -> assert false
+			in
       begin match p.Parser.token with
       | Question ->
         Parser.next p;
-        let lbl = match lbl with
-        | Asttypes.Labelled lblName -> Asttypes.Optional lblName
-        | Asttypes.Optional _ as lbl -> lbl
-        | Asttypes.Nolabel -> assert false
-        in
         (attrs, lbl, None, pat)
       | _ ->
         let expr = parseExpr p in
@@ -2701,9 +2717,8 @@ let rec goToClosing closingToken state =
       (* TODO extract this whole block into reusable logic, cf. type equation *)
       begin match p.Parser.token with
       | LessThan ->
-        Parser.next p;
-        let (endPos, args) = parseConstructorTypeArgs p in
-        Ast_helper.Typ.constr ~loc:(mkLoc startPos endPos) ~attrs constr args
+        let args = parseConstructorTypeArgs p in
+        Ast_helper.Typ.constr ~loc:(mkLoc startPos p.prevEndPos) ~attrs constr args
       | Lparen ->
         raise (Parser.ParseError (p.startPos, Report.Message "Type constructor args require diamonds, like: Belt.Map.String.t<int>"))
       | _ ->
@@ -2809,26 +2824,12 @@ let rec goToClosing closingToken state =
     Ast_helper.Typ.tuple ~loc:(mkLoc startPos p.prevEndPos) types
 
   and parseConstructorTypeArgs p =
-    let rec loop p types =
-      match p.Parser.token with
-      | GreaterThan ->
-        let endPos = p.endPos in
-        Parser.next p;
-        (endPos, List.rev types)
-      | _ ->
-        let typ = parseTypExpr p in
-        begin match p.Parser.token with
-        | Comma ->
-          Parser.next p;
-          loop p (typ::types)
-        | GreaterThan ->
-          let endPos = p.endPos in
-          Parser.next p;
-          (endPos, List.rev (typ::types))
-        | _ -> raise (Parser.ParseError (p.startPos, Report.OneOf [Lparen; Comma]))
-        end
-    in
-    loop p []
+		Parser.expectExn LessThan p;
+		let typeArgs =
+			parseCommaSeparatedList ~closing:GreaterThan ~f:parseTypExpr p
+		in
+		Parser.expect GreaterThan p;
+		typeArgs
 
   and parseFieldDeclaration p =
     let startPos = p.Parser.startPos in
@@ -3012,7 +3013,7 @@ and parseTypeRepresentation p =
         let typ = match p.Parser.token with
         | Lparen ->
           Parser.next p;
-          let (_endPos, args) = parseConstructorTypeArgs p in
+          let args = parseConstructorTypeArgs p in
           Ast_helper.Typ.constr typeConstr args
         | _ ->
           Ast_helper.Typ.constr typeConstr []
@@ -3836,9 +3837,9 @@ and parseTypeRepresentation p =
       Pprintast.structure Format.std_formatter ast;
       Format.pp_print_flush Format.std_formatter ();
       print_newline();
-      (* Printast.implementation Format.std_formatter ast; *)
-      (* Format.pp_print_flush Format.std_formatter (); *)
-      (* print_newline(); *)
+			(* Printast.implementation Format.std_formatter ast; *)
+			(* Format.pp_print_flush Format.std_formatter (); *)
+			(* print_newline(); *)
       List.iter (fun (pos, problem) ->
         Printf.eprintf "Parse error\n";
         Printf.eprintf "Line: %d, Column: %d\n" (pos.Lexing.pos_lnum) (pos.pos_cnum - pos.pos_bol + 1);
