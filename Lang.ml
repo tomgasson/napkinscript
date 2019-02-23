@@ -1266,7 +1266,7 @@ let rec goToClosing closingToken state =
      (* ∣	 [| pattern  { ; pattern }  [ ; ] |]   *)
      (* ∣	 char-literal ..  char-literal *)
      (*	∣	 exception pattern  *)
-  let rec parsePattern p =
+  let rec parsePattern ?(alias=true) p =
     let startPos = p.Parser.startPos in
     let attrs = parseAttributes p in
     let pat = match p.Parser.token with
@@ -1310,7 +1310,7 @@ let rec goToClosing closingToken state =
       let constr = parseModuleLongIdent p in
       begin match p.Parser.token with
       | Lparen ->
-        parseConstructorPatternWithArgs p constr startPos attrs
+        parseConstructorPatternArgs p constr startPos attrs
       | _ ->
         Ast_helper.Pat.construct ~loc:constr.loc ~attrs constr None
       end
@@ -1319,12 +1319,12 @@ let rec goToClosing closingToken state =
      * exception Foo *)
     | Exception ->
       Parser.next p;
-      let pat = parsePattern p in
+      let pat = parsePattern ~alias:false p in
       let loc = mkLoc startPos p.prevEndPos in
       Ast_helper.Pat.exception_ ~loc ~attrs pat
     | Lazy ->
       Parser.next p;
-      let pat = parsePattern p in
+      let pat = parsePattern ~alias:false p in
       let loc = mkLoc startPos pat.ppat_loc.loc_end in
       Ast_helper.Pat.lazy_ ~loc ~attrs pat
     | List ->
@@ -1333,7 +1333,7 @@ let rec goToClosing closingToken state =
       raise (Parser.ParseError (p.startPos, Report.Unexpected unknownToken))
     in
     begin match p.token with
-    | As ->
+    | As when alias = true ->
       Parser.next p;
       let startLoc = p.startPos in
       begin match p.token with
@@ -1357,7 +1357,16 @@ let rec goToClosing closingToken state =
       Ast_helper.Pat.constraint_ ~loc pat typ
     | _ -> pat
 
-  (* field  [: typexpr]  [: pattern] *)
+	(* field ::=
+	 *   | longident
+	 *   | longident : pattern
+	 *   | longident as lident
+   *
+	 *  row ::=
+	 *	 | field ,
+	 *	 | field , _
+	 *	 | field , _,
+	 *)
   and parseRecordPatternField p =
     let startPos = p.Parser.startPos in
     let label = parseValuePath p in
@@ -1370,10 +1379,27 @@ let rec goToClosing closingToken state =
         ~loc:label.loc
         (Location.mkloc (Longident.last label.txt) label.loc)
     in
+		match p.token with
+		| As ->
+			Parser.next p;
+			begin match p.token with
+			| Lident ident ->
+				let startPosIdent = p.startPos in
+				Parser.next p;
+				let locIdent = mkLoc startPosIdent p.prevEndPos in
+				let aliasPattern =
+					Ast_helper.Pat.alias
+						~loc:(mkLoc startPos locIdent.loc_end)
+						pattern
+						(Location.mkloc ident locIdent)
+				in
+				(Location.mkloc label.txt (mkLoc startPos aliasPattern.ppat_loc.loc_end), aliasPattern)
+			| _ -> raise (Parser.ParseError (p.startPos, Report.Lident))
+			end
+		| _ ->
     (Location.mkloc label.txt (mkLoc startPos pattern.ppat_loc.loc_end), pattern)
 
 
-   (* { field  [: typexpr]  [= pattern] { ; field  [: typexpr]  [= pattern] }  [; _ ] [ ; ] }  *)
   and parseRecordPattern ~attrs p =
     let startPos = p.startPos in
     Parser.expectExn Lbrace p;
@@ -1456,7 +1482,7 @@ let rec goToClosing closingToken state =
     let loc = mkLoc startPos p.prevEndPos in
     Ast_helper.Pat.array ~loc ~attrs patterns
 
-  and parseConstructorPatternWithArgs p constr startPos attrs =
+  and parseConstructorPatternArgs p constr startPos attrs =
     let lparen = p.startPos in
     Parser.expectExn Lparen p;
     let args = match
@@ -2405,8 +2431,25 @@ let rec goToClosing closingToken state =
   and parseForExpression p =
     let startPos = p.Parser.startPos in
     Parser.expectExn For p;
-    let hasOpeningParen = Parser.optional p Lparen in
-    let pattern = parsePattern p in
+		let (hasOpeningParen, pattern) = match p.token with
+		| Lparen ->
+			Parser.next p;
+			let lparen = p.prevEndPos in
+			begin match p.token with
+			| Rparen ->
+				Parser.next p;
+				let unitPattern =
+					let loc = mkLoc lparen p.prevEndPos in
+					let lid = Location.mkloc (Longident.Lident "()") loc in
+					Ast_helper.Pat.construct lid None
+				in
+				(false, unitPattern)
+			| _ ->
+				(true, parsePattern p)
+			end
+		| _ ->
+			(false, parsePattern p)
+		in
     Parser.expectExn In p;
     let e1 = parseExpr p in
     let direction = match p.Parser.token with
@@ -3842,9 +3885,9 @@ and parseTypeRepresentation p =
       Pprintast.structure Format.std_formatter ast;
       Format.pp_print_flush Format.std_formatter ();
       print_newline();
-			(* Printast.implementation Format.std_formatter ast; *)
-			(* Format.pp_print_flush Format.std_formatter (); *)
-			(* print_newline(); *)
+      (* Printast.implementation Format.std_formatter ast; *)
+      (* Format.pp_print_flush Format.std_formatter (); *)
+      (* print_newline(); *)
       List.iter (fun (pos, problem) ->
         Printf.eprintf "Parse error\n";
         Printf.eprintf "Line: %d, Column: %d\n" (pos.Lexing.pos_lnum) (pos.pos_cnum - pos.pos_bol + 1);
