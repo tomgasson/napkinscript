@@ -362,7 +362,7 @@ module Token = struct
 end
 
 module Lex = struct
-  type mode = Normal | Template | Tuple | Jsx
+  type mode = Normal | Template | Tuple | Jsx | Diamond
 
   type lexbuf = {
     filename: string;
@@ -377,6 +377,9 @@ module Lex = struct
 
   let setNormalMode lexbuf =
     lexbuf.mode <- Normal
+
+	let setDiamondMode lexbuf =
+		lexbuf.mode <- Diamond
 
   let setTemplateMode lexbuf =
     lexbuf.mode <- Template
@@ -708,7 +711,7 @@ module Lex = struct
           Token.Plus
         )
       else if ch == CharacterCodes.greaterThan then
-        if lexbuf.ch == CharacterCodes.equal then(
+        if lexbuf.ch == CharacterCodes.equal && lexbuf.mode != Diamond then (
           next lexbuf;
           Token.GreaterEqual
         ) else (
@@ -2824,11 +2827,13 @@ let rec goToClosing closingToken state =
     Ast_helper.Typ.tuple ~loc:(mkLoc startPos p.prevEndPos) types
 
   and parseConstructorTypeArgs p =
+		Lex.setDiamondMode p.lexbuf;
 		Parser.expectExn LessThan p;
 		let typeArgs =
 			parseCommaSeparatedList ~closing:GreaterThan ~f:parseTypExpr p
 		in
 		Parser.expect GreaterThan p;
+		Lex.setNormalMode p.lexbuf;
 		typeArgs
 
   and parseFieldDeclaration p =

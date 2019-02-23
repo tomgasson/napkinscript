@@ -61,7 +61,7 @@ let f = (~a as x=?, ~b as y=?, c) => switch /x, y/ {
 }
 
 // ~ labelName as pattern : type = ?
-let f = (~a as x : option<int> =?, ~b as y : option<int> =?, c) => switch /x, y/ {
+let f = (~a as x : option<int>=?, ~b as y : option<int>=?, c) => switch /x, y/ {
 | /Some(a), Some(b)/ => a + b + c
 | _ => 3
 }
