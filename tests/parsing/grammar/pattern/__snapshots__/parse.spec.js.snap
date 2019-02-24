@@ -2,9 +2,24 @@
 
 exports[`any.js 1`] = `
 "let _ = 1
+let _|_ = 1
 let (_ : int) = 1
+let ((_|_) : int) = 1
+let ((_|_) : int) = 1
+let (_ : unit)|(_ : unit) = 1
 let _ as _x = 1
-;;match () with | _ -> () | _ as _x -> () | (_ : unit) -> ()
+let _|_ as _x = 1
+let _|_ as _x = 1
+let _|_ as _x = 1
+let _ as _y|_ as _x = 1
+let _ as _y|_ as _x = 1
+;;match () with
+  | _ -> ()
+  | _|_ -> ()
+  | _ as _x -> ()
+  | _ as _x|_ as _x -> ()
+  | (_ : unit) -> ()
+  | (_ : unit)|(_ : unit) -> ()
 let f _ = ()
 let f (_ as _x) = ()
 let f (_ : unit) = ()
@@ -228,6 +243,8 @@ let (lazy (x : int)) = ()
 let ((lazy x) : int Lazy.t) = ()
 let ((lazy x) : int Lazy.t) as l = ()
 let ((lazy (x as l)) : int Lazy.t) = ()
+let (lazy exception x) = ()
+let (lazy exception x) = ()
 ;;match x with
   | (lazy foo) -> ()
   | (lazy foo) as l -> ()
@@ -332,6 +349,19 @@ let f (x::xs : int list) = ()
     ()
   done
 ;;for (x::xs : int list) = x to y do () done
+"
+`;
+
+exports[`or.js 1`] = `
+";;match x with
+  | Blue|Red -> ()
+  | Blue|Red as colour -> ()
+  | Blue as c1|Red as c2 -> ()
+  | Blue as c1|Red as c2 -> ()
+  | exception Exit|exception Continue -> ()
+  | exception (Exit|exception Continue) -> ()
+  | (lazy x)|(lazy y) -> ()
+  | (lazy (x|(lazy y))) -> ()
 "
 `;
 

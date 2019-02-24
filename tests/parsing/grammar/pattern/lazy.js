@@ -11,6 +11,9 @@ let (lazy x: Lazy.t<int>) = ()
 let (lazy x: Lazy.t<int>) as l = ()
 let (lazy (x as l): Lazy.t<int>) = ()
 
+let lazy exception x = ()
+let lazy (exception x) = ()
+
 switch x {
 | lazy foo => ()
 | lazy foo as l => ()

@@ -1,11 +1,23 @@
 let _ = 1;
+let _ | _ = 1;
 let (_ : int) = 1;
+let (_ | _ : int) = 1;
+let ((_ | _) : int) = 1; // note: same ast as line above
+let (_ :unit) | (_ : unit) = 1;
 let _ as _x = 1;
+let _ | _ as _x = 1;
+let _ | (_ as _x) = 1;
+let (_ | _) as _x = 1;
+let _ as _y | _ as _x = 1;
+let (_ as _y) | (_ as _x) = 1; // note: same ast as line above
 
 switch () {
 | _ => ()
+| _ | _ => ()
 | _ as _x => ()
+| _ as _x | _ as _x => ()
 | (_ : unit) => ()
+| (_ : unit) | (_ : unit) => ()
 }
 
 let f = (_) => ()

@@ -1266,7 +1266,7 @@ let rec goToClosing closingToken state =
      (* ∣	 [| pattern  { ; pattern }  [ ; ] |]   *)
      (* ∣	 char-literal ..  char-literal *)
      (*	∣	 exception pattern  *)
-  let rec parsePattern ?(alias=true) p =
+  let rec parsePattern ?(alias=true) ?(or_=true) p =
     let startPos = p.Parser.startPos in
     let attrs = parseAttributes p in
     let pat = match p.Parser.token with
@@ -1319,12 +1319,12 @@ let rec goToClosing closingToken state =
      * exception Foo *)
     | Exception ->
       Parser.next p;
-      let pat = parsePattern ~alias:false p in
+      let pat = parsePattern ~alias:false ~or_:false p in
       let loc = mkLoc startPos p.prevEndPos in
       Ast_helper.Pat.exception_ ~loc ~attrs pat
     | Lazy ->
       Parser.next p;
-      let pat = parsePattern ~alias:false p in
+      let pat = parsePattern ~alias:false ~or_:false p in
       let loc = mkLoc startPos pat.ppat_loc.loc_end in
       Ast_helper.Pat.lazy_ ~loc ~attrs pat
     | List ->
@@ -1332,10 +1332,8 @@ let rec goToClosing closingToken state =
     | unknownToken ->
       raise (Parser.ParseError (p.startPos, Report.Unexpected unknownToken))
     in
-    if alias = true then
-      parseAliasPattern ~attrs pat p
-    else
-      pat
+    let pat = if alias then parseAliasPattern ~attrs pat p else pat in
+    if or_ then parseOrPattern pat p else pat
 
   (* alias ::= pattern as lident *)
   and parseAliasPattern ~attrs pattern p =
@@ -1355,6 +1353,18 @@ let rec goToClosing closingToken state =
       | _ -> raise (Parser.ParseError (p.startPos, Report.Lident))
       end
     | _ -> pattern
+
+  (* or ::= pattern | pattern *)
+  and parseOrPattern pattern1  p =
+    match p.Parser.token with
+    | Bar ->
+      Parser.next p;
+      let pattern2 = parsePattern p in
+      let loc = {
+        pattern1.Parsetree.ppat_loc with loc_end = pattern2.ppat_loc.loc_end
+      } in
+      Ast_helper.Pat.or_ ~loc pattern1 pattern2
+    | _ -> pattern1
 
   and parseConstrainedPattern p =
     let pat = parsePattern p in
