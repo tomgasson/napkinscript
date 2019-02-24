@@ -1332,20 +1332,29 @@ let rec goToClosing closingToken state =
     | unknownToken ->
       raise (Parser.ParseError (p.startPos, Report.Unexpected unknownToken))
     in
-    begin match p.token with
-    | As when alias = true ->
+    if alias = true then
+      parseAliasPattern ~attrs pat p
+    else
+      pat
+
+  (* alias ::= pattern as lident *)
+  and parseAliasPattern ~attrs pattern p =
+    match p.Parser.token with
+    | As ->
       Parser.next p;
-      let startLoc = p.startPos in
       begin match p.token with
       | Lident ident ->
+        let identStart = p.startPos in
         Parser.next p;
-        let endLoc = p.startPos in
-        let loc = mkLoc startLoc endLoc in
-        Ast_helper.Pat.alias ~attrs pat (Location.mkloc ident loc)
+        let loc = mkLoc identStart p.prevEndPos in
+        Ast_helper.Pat.alias
+          ~loc:({pattern.ppat_loc with loc_end = p.prevEndPos})
+          ~attrs
+           pattern
+           (Location.mkloc ident loc)
       | _ -> raise (Parser.ParseError (p.startPos, Report.Lident))
       end
-    | _ -> pat
-    end
+    | _ -> pattern
 
   and parseConstrainedPattern p =
     let pat = parsePattern p in
@@ -2443,7 +2452,7 @@ let rec goToClosing closingToken state =
 					let lid = Location.mkloc (Longident.Lident "()") loc in
 					Ast_helper.Pat.construct lid None
 				in
-				(false, unitPattern)
+				(false, parseAliasPattern ~attrs:[] unitPattern p)
 			| _ ->
 				(true, parsePattern p)
 			end

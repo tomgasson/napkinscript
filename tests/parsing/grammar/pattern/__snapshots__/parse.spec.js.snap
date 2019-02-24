@@ -263,65 +263,99 @@ let f ((lazy x) : int Lazy.t) = ()
 
 exports[`list.js 1`] = `
 "let [] = ()
+let [] as l = ()
 let x::[] = ()
+let (x as p1)::[] as l = ()
 let x::xs = ()
+let x::(xs as tail) = ()
 let x::y::tail = ()
 let x::y::[] = ()
+let (x as p1)::(y as p2)::[] = ()
 let x::y::[] = ()
 let x::xs = ()
 let x::y::tail = ()
 let x::(y::ys)::xs = ()
+let (x as p1)::((y as p2)::(ys as tail1) as l2)::(xs as tail2) = ()
+let (x : int)::((y : int)::(ys : int list))::xs = ()
 let ((x::xs) : int list) = ()
+let (x::xs : int list) as constrainedList = ()
+let (x::xs : int list) as clist = ()
+let ((x::xs : int list) : int list) = ()
 ;;match x with
   | [] -> ()
-  | x::[] -> ()
+  | [] as l -> ()
+  | (x as p1)::[] -> ()
+  | (x : int)::[] -> ()
   | x::xs -> ()
+  | ((x : int)::(xs : int list) : int list) -> ()
+  | (x as p1)::(xs as p2) as l -> ()
   | x::y::tail -> ()
   | x::y::[] -> ()
   | x::y::[] -> ()
   | x::xs -> ()
   | x::y::tail -> ()
   | x::(y::ys)::xs -> ()
+  | (x as p1)::((y as p2)::(ys as tail1))::(xs as tail2) as l -> ()
   | (x::xs : int list) -> ()
 let f [] = ()
+let f ([] as p) = ()
 let f (x::[]) = ()
+let f (((x : int) as p)::[]) = ()
+let f ((x as p)::[] as p2) = ()
 let f (x::xs) = ()
+let f (x::(xs as tail)) = ()
 let f (x::y::tail) = ()
 let f (x::y::[]) = ()
 let f (x::y::[]) = ()
 let f (x::xs) = ()
 let f (x::y::tail) = ()
 let f (x::(y::ys)::xs) = ()
+let f ((x as p1)::((y as p2)::(ys as tail1))::(xs as tail2) as l) = ()
 let f (x::xs : int list) = ()
 ;;for [] = x to y do () done
+;;for [] as l = x to y do () done
 ;;for [] = x to y do () done
+;;for [] as l = x to y do () done
 ;;for [] = x to y do () done
+;;for [] as l = x to y do () done
+;;for [] as l = x to y do () done
 ;;for x::[] = x to y do () done
+;;for (x as p)::[] = x to y do () done
+;;for ((x : int) as p)::[] = x to y do () done
+;;for ((x as p) : int)::[] = x to y do () done
 ;;for x::[] = x to y do () done
 ;;for x::[] = x to y do () done
 ;;for x::xs = x to y do () done
 ;;for x::xs = x to y do () done
 ;;for x::xs = x to y do () done
+;;for (x as p1)::((y as p2)::(ys as tail1))::(xs as tail2) as l = x to y do
+    ()
+  done
 ;;for (x::xs : int list) = x to y do () done
 "
 `;
 
 exports[`record.js 1`] = `
 "let { a } = x
+let { a } as p = x
 let { a } = x
 let { a; b } = x
+let { a = (a as p1); b = (b as p2) } = x
 let { a; b } = x
 let { ReasonReact.state = state } = x
 let { ReasonReact.state = (state as prevState) } = x
 let { ReasonReact.state = (state as theState) } = x
 let { a = u } = x
 let { a = (u : int) } = x
+let { a = ((u as p) : int) } = x
 let { a = { x; y } } = x
+let { a = { x = (x as p1); y = (y as p2) } } = x
 let { a;_} = x
 let { a;_} = x
 let ({ a } : myRecord) = x
 ;;match x with
   | { a } -> ()
+  | { a } as r -> ()
   | { a } -> ()
   | { a; b } -> ()
   | { a; b } -> ()
@@ -330,11 +364,14 @@ let ({ a } : myRecord) = x
   | { ReasonReact.state = (state as theState) } -> ()
   | { a = u } -> ()
   | { a = (u : int) } -> ()
+  | { a = (((u as p) : int) as p2) } as p3 -> ()
   | { a = { x; y } } -> ()
+  | { a = ({ x = (x as p1); y = (y as p2) } as p3) } -> ()
   | { a;_} -> ()
   | { a;_} -> ()
   | ({ a } : myRecord) -> ()
 let f { a } = ()
+let f ({ a } as r) = ()
 let f { a } = ()
 let f { a; b } = ()
 let f { a; b } = ()
@@ -343,14 +380,20 @@ let f { ReasonReact.state = (state as prevState) } = ()
 let f { ReasonReact.state = (state as theState) } = ()
 let f { a = u } = ()
 let f { a = (u : int) } = ()
+let f { a = (((u as x) : int) as r) } = ()
 let f { a = { x; y } } = ()
+let f { a = { x = (x as r); y = (y as r2) } } = ()
 let f { a;_} = ()
 let f { a;_} = ()
 let f ({ a } : myRecord) = ()
 let f ({ a } : myRecord) = ()
+let f (({ a } : myRecord) as p) = ()
 ;;for { a } = 0 to 10 do () done
+;;for { a } as p = 0 to 10 do () done
 ;;for { a } = 0 to 10 do () done
+;;for { a } as p = 0 to 10 do () done
 ;;for { a } = 0 to 10 do () done
+;;for { a } as p = 0 to 10 do () done
 ;;for { ReasonReact.state = state } = 0 to 10 do () done
 ;;for { ReasonReact.state = state } = 0 to 10 do () done
 ;;for { ReasonReact.state = state } = 0 to 10 do () done
@@ -364,10 +407,13 @@ let f ({ a } : myRecord) = ()
 ;;for { a = u } = 0 to 10 do () done
 ;;for { a = u } = 0 to 10 do () done
 ;;for { a = (u : int) } = 0 to 10 do () done
+;;for { a = (((u as sp) : int) as p) } = 0 to 10 do () done
 ;;for { a = (u : int) } = 0 to 10 do () done
 ;;for { a = (u : int) } = 0 to 10 do () done
 ;;for { a = { x; y } } = 0 to 10 do () done
+;;for { a = ({ x = (x as p1); y = (y as p2) } as p3) } = 0 to 10 do () done
 ;;for { a = { x; y } } = 0 to 10 do () done
+;;for { a = { x; y } } as p as p2 = 0 to 10 do () done
 ;;for { a = { x; y } } = 0 to 10 do () done
 ;;for { a;_} = 0 to 10 do () done
 ;;for { a;_} = 0 to 10 do () done
@@ -378,22 +424,40 @@ let f ({ a } : myRecord) = ()
 
 exports[`tuple.js 1`] = `
 "let (1, 2) = ()
+let (1, 2) as tup = ()
+let ((1 as p1), (2 as p2)) = ()
 let (1, 2) = ()
 let ((1 : int), (2 : int)) = ()
+let ((1 : int), (2 : int)) as tup = ()
 let (((1 : int), (2 : int)) : (int * int)) = ()
+let ((((1 : int), (2 : int)) as tup) : (int * int)) = ()
+let (((1 : int), (2 : int)) : (int * int)) as tup = ()
 ;;match x with
   | (1, 2) -> ()
+  | (1, 2) as tup -> ()
   | (1, 2) -> ()
   | ((1 : int), (2 : int)) -> ()
+  | (((1 as p1) : int), ((2 as p2) : int)) as tup -> ()
   | (((1 : int), (2 : int)) : (int * int)) -> ()
+  | (((1 : int), (2 : int)) : (int * int)) as tup -> ()
+let f (x) = ()
 let f (x) = ()
 let f (x, y) = x + y
+let f (((x as p1), (y as p2)) as tup) = x + y
 let f ((x, y) : (int * int)) = ()
 let f ((x, y) : (int * int)) = ()
+let f ((((x, y) as tup1) : (int * int)) as tup) = ()
 ;;for (x, y) = 0 to 10 do () done
+;;for (x, y) as tup = 0 to 10 do () done
 ;;for (x, y) = 0 to 10 do () done
+;;for ((x as p1), (y as p2)) = 0 to 10 do () done
+;;for (x, y) as tup = 0 to 10 do () done
 ;;for (x, y) = 0 to 10 do () done
+;;for (x, y) as tup = 0 to 10 do () done
+;;for ((x as p1), (y as p2)) as tup = 0 to 10 do () done
 ;;for ((x, y) : (int * int)) = 0 to 10 do () done
+;;for ((x, y) : (int * int)) as ctup = 0 to 10 do () done
+;;for ((x, y) : (int * int)) as ctup = 0 to 10 do () done
 "
 `;
 
@@ -416,14 +480,25 @@ let (() : unit) as x = ()
   | (() : unit) as _u -> ()
   | (() : unit) as _u -> ()
 ;;for () = () to () do () done
+;;for () as _u = () to () do () done
 ;;for () = () to () do () done
+;;for () as _u = () to () do () done
 ;;for () = () to () do () done
-;;for () = () to () do () done
+;;for () as _u = () to () do () done
+;;for () as _u = () to () do () done
 ;;for (() : unit) = () to () do () done
+;;for (() : unit) as _u = () to () do () done
+;;for ((() as _u) : unit) = () to () do () done
+;;for (() : unit) as _u = () to () do () done
 let f () = ()
 let f () = ()
+let f (() as _u) = ()
 let f () () = ()
+let f (() as _u) (() as _u) = ()
 let f (() : unit) = ()
+let f ((() as _u) : unit) = ()
+let f ((() : unit) as _u) = ()
 let f (() : unit) = ()
+let f ((() : unit) as _u) = ()
 "
 `;

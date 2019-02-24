@@ -19,13 +19,24 @@ switch x {
 }
 
 for () in () to () { () }
-for () in () to () { () }
+for () as _u in () to () { () }
 for (() in () to ()) { () }
+for (() as _u in () to ()) { () }
 for ((()) in () to ()) { () }
+for ((() as _u) in () to ()) { () }
+for ((()) as _u in () to ()) { () }
 for (((): unit) in () to ()) { () }
+for (((): unit) as _u in () to ()) { () }
+for ((() as _u: unit) in () to ()) { () }
+for (((() : unit) as _u) in () to ()) { () }
 
 let f = () => ()
 let f = (()) => ()
+let f = (() as _u) => ()
 let f = ((), ()) => ()
+let f = (() as _u, () as _u) => ()
 let f = (() : unit) => ()
+let f = (() as _u : unit) => ()
+let f = ((() : unit) as _u) => ()
 let f = ((() : unit)) => ()
+let f = (((() : unit) as _u)) => ()
