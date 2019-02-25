@@ -1,0 +1,8 @@
+// Jest Snapshot v1, https://goo.gl/fbAQLP
+
+exports[`standaloneAttribute.js 1`] = `
+"[@@@standaloneAttribute ]
+[@@@standaloneAttribute \\"with payload\\"]
+[@@@standaloneAttribute fun x -> x + 1]
+"
+`;

@@ -207,6 +207,7 @@ module Token = struct
     | LessEqual | GreaterEqual
     | ColonEqual
     | At
+    | AtAt
     | Comment of string
     | List
     | TemplateTail of string
@@ -295,6 +296,7 @@ module Token = struct
     | GreaterEqual -> ">=" | LessEqual -> "<="
     | ColonEqual -> ":="
     | At -> "@"
+    | AtAt -> "@@"
     | Comment text -> "Comment(" ^ text ^ ")"
     | List -> "list"
     | TemplatePart text -> text ^ "${"
@@ -752,7 +754,12 @@ module Lex = struct
       else if ch == CharacterCodes.question then
         Token.Question
       else if ch == CharacterCodes.at then
-        Token.At
+        if lexbuf.ch == CharacterCodes.at then (
+          next lexbuf;
+          Token.AtAt
+        ) else (
+          Token.At
+        )
       else if ch == CharacterCodes.backtick  then
         Token.Backtick
       else if ch == -1 then
@@ -3303,6 +3310,9 @@ and parseTypeRepresentation p =
     | Include ->
       Ast_helper.Str.include_ (parseIncludeStatement ~attrs p)
     | Module -> parseModuleOrModuleTypeImpl p
+    | AtAt ->
+      let (loc, attr) = parseStandaloneAttribute p in
+      Ast_helper.Str.attribute ~loc attr
     | _ ->
       Ast_helper.Str.eval ~attrs (parseExpr p)
     in
@@ -3660,7 +3670,7 @@ and parseTypeRepresentation p =
       let item = parseSignatureItem p in
       let () = match p.Parser.token with
       | Semicolon -> Parser.next p
-      | Let | Typ | External | Exception | Open | Include | Module | Eof -> ()
+      | Let | Typ | AtAt | External | Exception | Open | Include | Module | Rbrace | Eof -> ()
       | _ -> Parser.expectExn Semicolon p
       in
       let spec = (item::spec) in
@@ -3668,7 +3678,7 @@ and parseTypeRepresentation p =
       | Rbrace | Eof -> spec
       | _ -> loop p spec
     in
-    Ast_helper.Mty.signature (loop p [])
+    Ast_helper.Mty.signature (List.rev (loop p []))
 
   and parseSignatureItem p =
     let attrs = parseAttributes p in
@@ -3698,6 +3708,9 @@ and parseTypeRepresentation p =
         parseModuleTypeDeclaration ~attrs p
       | _ -> raise (Parser.ParseError (p.startPos, Report.Uident))
       end
+    | AtAt ->
+      let (loc, attr) = parseStandaloneAttribute p in
+      Ast_helper.Sig.attribute ~loc attr
     | token -> raise (Parser.ParseError (p.startPos, Report.Unexpected token))
 
   and parseModuleDeclarationOrAlias ~attrs p =
@@ -3817,6 +3830,21 @@ and parseTypeRepresentation p =
         List.rev attrs
     in
     loop p []
+
+  (*
+   * standalone-attribute ::=
+   *  | @@ atribute-id
+   *  | @@ attribute-id ( structure-item )
+   *)
+  and parseStandaloneAttribute p =
+    let startPos = p.Parser.startPos in
+    Parser.expectExn AtAt p;
+    let attrId = parseAttributeId p in
+    let cnumEndAttrId = p.Parser.prevEndPos.pos_cnum - 1 in
+    let payload = parsePayload cnumEndAttrId p in
+    let attribute = (attrId, payload) in
+    let loc = mkLoc startPos p.prevEndPos in
+    (loc, attribute)
 
   let extractExportedType structureItem =
     let loc = structureItem.Parsetree.pstr_loc in
