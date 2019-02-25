@@ -27,6 +27,7 @@ module CharacterCodes = struct
   let ampersand = 0x26
   let at = 0x40
   let dollar = 0x24
+  let percent = 0x25
 
   let lparen = 0x28
   let rparen = 0x29
@@ -206,8 +207,8 @@ module Token = struct
     | BangEqual | BangEqualEqual
     | LessEqual | GreaterEqual
     | ColonEqual
-    | At
-    | AtAt
+    | At | AtAt
+    | Percent | PercentPercent
     | Comment of string
     | List
     | TemplateTail of string
@@ -295,8 +296,8 @@ module Token = struct
     | BangEqual -> "!=" | BangEqualEqual -> "!=="
     | GreaterEqual -> ">=" | LessEqual -> "<="
     | ColonEqual -> ":="
-    | At -> "@"
-    | AtAt -> "@@"
+    | At -> "@" | AtAt -> "@@"
+    | Percent -> "%" | PercentPercent -> "%%"
     | Comment text -> "Comment(" ^ text ^ ")"
     | List -> "list"
     | TemplatePart text -> text ^ "${"
@@ -760,6 +761,13 @@ module Lex = struct
         ) else (
           Token.At
         )
+    else if ch == CharacterCodes.percent then
+      if lexbuf.ch == CharacterCodes.percent then (
+        next lexbuf;
+        Token.PercentPercent
+      ) else (
+        Token.Percent
+      )
       else if ch == CharacterCodes.backtick  then
         Token.Backtick
       else if ch == -1 then
@@ -1336,6 +1344,9 @@ let rec goToClosing closingToken state =
       Ast_helper.Pat.lazy_ ~loc ~attrs pat
     | List ->
       parseListPattern ~attrs p
+    | Percent ->
+      let (loc, extension) = parseExtension p in
+      Ast_helper.Pat.extension ~loc ~attrs extension
     | unknownToken ->
       raise (Parser.ParseError (p.startPos, Report.Unexpected unknownToken))
     in
@@ -1774,6 +1785,9 @@ let rec goToClosing closingToken state =
         parseTupleExpr p
       | LessThan ->
         parseJsx p
+      | Percent ->
+        let (loc, extension) = parseExtension p in
+        Ast_helper.Exp.extension ~loc extension
       | unknownToken ->
         raise (Parser.ParseError (p.startPos, Report.Unexpected unknownToken))
     in
@@ -2796,6 +2810,9 @@ let rec goToClosing closingToken state =
       | _ ->
         Ast_helper.Typ.constr ~loc:constr.loc ~attrs constr []
       end
+    | Percent ->
+      let (loc, extension) = parseExtension p in
+      Ast_helper.Typ.extension ~loc extension
     | t ->
       raise (Parser.ParseError (p.startPos, Report.Unexpected t))
     in
@@ -3313,6 +3330,9 @@ and parseTypeRepresentation p =
     | AtAt ->
       let (loc, attr) = parseStandaloneAttribute p in
       Ast_helper.Str.attribute ~loc attr
+    | PercentPercent ->
+      let (loc, extension) = parseExtension ~moduleLanguage: true p in
+      Ast_helper.Str.extension ~loc extension
     | _ ->
       Ast_helper.Str.eval ~attrs (parseExpr p)
     in
@@ -3342,6 +3362,9 @@ and parseTypeRepresentation p =
       {structure with pmod_loc = mkLoc startPos endPos}
     | Lparen ->
       parseParenthesizedOrFunctorModuleExpr p
+    | Percent ->
+      let (loc, extension) = parseExtension p in
+      Ast_helper.Mod.extension ~loc extension
     | unknownToken -> raise (Parser.ParseError (p.startPos, Report.Unexpected unknownToken))
 
   and parseParenthesizedOrFunctorModuleExpr p =
@@ -3584,6 +3607,9 @@ and parseTypeRepresentation p =
       spec
     | Module ->
       parseModuleTypeOf p
+    | Percent ->
+      let (loc, extension) = parseExtension p in
+      Ast_helper.Mty.extension ~loc extension
     | token -> raise (Parser.ParseError (p.startPos, Report.Unexpected token))
     in
     let moduleTypeLoc = mkLoc startPos p.prevEndPos in
@@ -3670,7 +3696,7 @@ and parseTypeRepresentation p =
       let item = parseSignatureItem p in
       let () = match p.Parser.token with
       | Semicolon -> Parser.next p
-      | Let | Typ | AtAt | External | Exception | Open | Include | Module | Rbrace | Eof -> ()
+      | Let | Typ | AtAt | PercentPercent | External | Exception | Open | Include | Module | Rbrace | Eof -> ()
       | _ -> Parser.expectExn Semicolon p
       in
       let spec = (item::spec) in
@@ -3711,6 +3737,9 @@ and parseTypeRepresentation p =
     | AtAt ->
       let (loc, attr) = parseStandaloneAttribute p in
       Ast_helper.Sig.attribute ~loc attr
+    | PercentPercent ->
+      let (loc, extension) = parseExtension ~moduleLanguage:true p in
+      Ast_helper.Sig.extension ~loc extension
     | token -> raise (Parser.ParseError (p.startPos, Report.Unexpected token))
 
   and parseModuleDeclarationOrAlias ~attrs p =
@@ -3845,6 +3874,52 @@ and parseTypeRepresentation p =
     let attribute = (attrId, payload) in
     let loc = mkLoc startPos p.prevEndPos in
     (loc, attribute)
+
+  (* extension	::=	% attr-id  attr-payload
+   *              | %% attr-id(
+   *  expr	::=	 ...
+   *    ∣	 extension
+   *
+   *  typexpr	::=	 ...
+   *    ∣	 extension
+   *
+   *  pattern	::=	 ...
+   *    ∣	 extension
+   *
+   *  module-expr	::=	 ...
+   *    ∣	 extension
+   *
+   *  module-type	::=	 ...
+   *    ∣	 extension
+   *
+   *  class-expr	::=	 ...
+   *    ∣	 extension
+   *
+   *  class-type	::=	 ...
+   *    ∣	 extension
+   *
+   *
+   * item extension nodes usable in structures and signature
+   *
+   * item-extension ::= %% attr-id
+   *                  | %% attr-id(structure-item)
+   *
+   *  attr-payload ::= structure-item
+   *
+   *  ~moduleLanguage represents whether we're on the module level or not
+   *)
+  and parseExtension ?(moduleLanguage=false) p =
+    let startPos = p.Parser.startPos in
+    if moduleLanguage then
+      Parser.expectExn PercentPercent p
+    else
+      Parser.expectExn Percent p;
+    let attrId = parseAttributeId p in
+    let cnumEndAttrId = p.Parser.prevEndPos.pos_cnum - 1 in
+    let payload = parsePayload cnumEndAttrId p in
+    let loc = mkLoc startPos p.prevEndPos in
+    (loc, (attrId, payload))
+
 
   let extractExportedType structureItem =
     let loc = structureItem.Parsetree.pstr_loc in

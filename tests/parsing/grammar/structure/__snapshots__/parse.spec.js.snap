@@ -1,5 +1,29 @@
 // Jest Snapshot v1, https://goo.gl/fbAQLP
 
+exports[`itemExtension.js 1`] = `
+"[%%itemExtension ]
+[%%item.extension ]
+[%%item.extension.with.args \\"argument\\"]
+[%%item.extension.with.args fun x -> f x]
+"
+`;
+
+exports[`modExprExtension.js 1`] = `
+"module A = [%modExprExtension ]
+module B = [%mod.expr.extension ]
+module C = [%mod.expr.extension.with.args \\"argument\\"]
+module D = [%mod.expr.extension.with.args fun x -> f x]
+"
+`;
+
+exports[`moduleTypeExtension.js 1`] = `
+"module type A  = [%modTypeExtension ]
+module type B  = [%mod.type.extension ]
+module type C  = [%mod.type.extension.with.args \\"argument\\"]
+module type D  = [%mod.type.extension.with.args fun x -> f x]
+"
+`;
+
 exports[`standaloneAttribute.js 1`] = `
 "[@@@standaloneAttribute ]
 [@@@standaloneAttribute \\"with payload\\"]

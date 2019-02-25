@@ -1,5 +1,15 @@
 // Jest Snapshot v1, https://goo.gl/fbAQLP
 
+exports[`itemExtension.js 1`] = `
+"module type Ext  =
+  sig
+    [%%item.extension ]
+    [%%item.extension.with.args \\"argument\\"]
+    [%%item.extension.with.args fun x -> f x]
+  end
+"
+`;
+
 exports[`standAloneAttribute.js 1`] = `
 "module type StandaloneAttribute  =
   sig
