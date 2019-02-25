@@ -1,4 +1,4 @@
-## Valparaiso [![Build Status](https://travis-ci.org/IwanKaramazow/Valparaiso.svg?branch=master)](https://travis-ci.org/IwanKaramazow/Valparaiso)
+# Valparaiso [![Build Status](https://travis-ci.org/IwanKaramazow/Valparaiso.svg?branch=master)](https://travis-ci.org/IwanKaramazow/Valparaiso) [![Build status](https://ci.appveyor.com/api/projects/status/a8d1hx0xi17tk14j?svg=true)](https://ci.appveyor.com/project/IwanKaramazow/valparaiso)
 
 ## Setup
 
