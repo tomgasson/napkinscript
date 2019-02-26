@@ -1,0 +1,113 @@
+// Jest Snapshot v1, https://goo.gl/fbAQLP
+
+exports[`alias.js 1`] = `
+"type nonrec t = string as 's
+type nonrec t = _ as 'underscore
+type nonrec t = parenthesizedType as 'parens
+type nonrec t = (int -> unit) as 'arrow
+type nonrec t = int -> unit as 'unitAlias
+type nonrec t = (int -> float -> unit) as 'arrowAlias
+type nonrec t = int -> float -> unit as 'unitAlias
+type nonrec t = int as 'myNumber
+type nonrec t = Mod.Sub.t as 'longidentAlias
+type nonrec t = (int as 'r, int as 'g, int as 'b) color as 'rgb
+type nonrec t = (int as 'r, int as 'g, int as 'b) Color.t as 'rgb
+type nonrec t = [%t ] as 'extension
+type nonrec t = [%t.typ ] as 'extension
+type nonrec t = [%ext.foo \\"raw\\"] as 'extension
+type nonrec tup = ((int as 'x) * (int as 'y)) as 'tupleAlias
+let (t : string as 's) = ()
+let (t : _ as 'underscore) = ()
+let (t : parenthesizedType as 'parens) = ()
+let (t : (int -> unit) as 'arrow) = ()
+let (t : int -> unit as 'unitAlias) = ()
+let (t : (int -> float -> unit) as 'arrowAlias) = ()
+let (t : int -> float -> unit as 'unitAlias) = ()
+let (t : int as 'myNumber) = ()
+let (t : Mod.Sub.t as 'longidentAlias) = ()
+let (t : (int as 'r, int as 'g, int as 'b) color as 'rgb) = ()
+let (t : (int as 'r, int as 'g, int as 'b) Color.t as 'rgb) = ()
+let (t : [%t ] as 'extension) = ()
+let (t : [%t.typ ] as 'extension) = ()
+let (t : [%ext.foo \\"raw\\"] as 'extension) = ()
+let (t : ((int as 'x) * (int as 'y)) as 'tupleAlias) = ()
+"
+`;
+
+exports[`any.js 1`] = `
+"type nonrec t = _
+let (t : _) = x
+"
+`;
+
+exports[`es6Arrow.js 1`] = `
+"type nonrec t = x -> unit
+type nonrec t = x -> unit
+type nonrec t = int -> string -> unit
+type nonrec t = a:int -> b:int -> int
+type nonrec t = ?a:int -> ?b:int -> int
+type nonrec t = int -> int -> int -> int
+type nonrec t = a:int -> b:int -> c:int -> int
+let (f : x -> unit) = xf
+let (f : x -> unit) = xf
+let (f : int -> string -> unit) = xf
+let (t : a:int -> b:int -> int) = xf
+let (t : ?a:int -> ?b:int -> int) = xf
+let (t : int -> int -> int -> int) = xf
+let (t : a:int -> b:int -> c:int -> int) = xf
+"
+`;
+
+exports[`extension.js 1`] = `
+"type nonrec t = [%typ ]
+type nonrec t = [%raw.typ ]
+type nonrec t = [%raw.typ \\"existential\\"]
+let (t : [%typ ]) = x
+let (t : [%raw.typ ]) = x
+let (t : [%raw.typ \\"ex\\"]) = x
+"
+`;
+
+exports[`tuple.js 1`] = `
+"type nonrec t = (string * int)
+type nonrec t = (int option * string option)
+let (t : (string * int)) = x
+let (t : (int option * string option)) = x
+"
+`;
+
+exports[`typeconstr.js 1`] = `
+"type nonrec t = string
+type nonrec t = Parser.t
+type nonrec t = Lang.Parser.t
+type nonrec t = string option
+type nonrec t = string option
+type nonrec t = string Option.t
+type nonrec t = string Option.t
+type nonrec t = (a, b, c) Mod.Sub.t
+type nonrec t = (a, b, c) Mod.Sub.t
+type nonrec t = list
+type nonrec t = string list
+let (t : string) = x
+let (t : Parser.t) = x
+let (t : Lang.Parser.t) = x
+let (t : string option) = x
+let (t : string option) = x
+let (t : string Option.t) = x
+let (t : string Option.t) = x
+let (t : (a, b, c) Mod.Sub.t) = x
+let (t : (a, b, c) Mod.Sub.t) = x
+let (t : list) = x
+let (t : string list) = x
+let (t : string list) = x
+"
+`;
+
+exports[`var.js 1`] = `
+"type nonrec t = 'a
+let (t : 'a) = x
+let t : 'a . t = x
+let t : 'a 'b . t = x
+let t : 'a 'b 'c . t = x
+"
+`;

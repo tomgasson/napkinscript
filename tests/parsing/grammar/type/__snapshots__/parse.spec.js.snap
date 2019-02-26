@@ -1,7 +1,0 @@
-// Jest Snapshot v1, https://goo.gl/fbAQLP
-
-exports[`tuple.js 1`] = `
-"type nonrec t = (string * int)
-type nonrec t = (int option * string option)
-"
-`;

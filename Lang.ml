@@ -1594,7 +1594,7 @@ let rec goToClosing closingToken state =
     let returnType = match p.Parser.token with
     | Colon ->
       Parser.next p;
-      Some (parseTypExpr ~allowEs6Arrow:false p)
+      Some (parseTypExpr ~es6Arrow:false p)
     | _ ->
       None
     in
@@ -1608,8 +1608,9 @@ let rec goToClosing closingToken state =
       | None -> expr
     in
     Parser.eatBreadcrumb p;
-    let arrowExpr = List.fold_right (fun (attrs, lbl, defaultExpr, pat) expr ->
-      Ast_helper.Exp.fun_ ~attrs lbl defaultExpr pat expr
+    let endPos = p.prevEndPos in
+    let arrowExpr = List.fold_right (fun (attrs, lbl, defaultExpr, pat, startPos) expr ->
+      Ast_helper.Exp.fun_ ~loc:(mkLoc startPos endPos) ~attrs lbl defaultExpr pat expr
     ) parameters body
     in
     {arrowExpr with pexp_loc = {arrowExpr.pexp_loc with loc_start = startPos}}
@@ -1683,13 +1684,13 @@ let rec goToClosing closingToken state =
       begin match p.Parser.token with
       | Question ->
         Parser.next p;
-        (attrs, lbl, None, pat)
+        (attrs, lbl, None, pat, startPos)
       | _ ->
         let expr = parseExpr p in
-        (attrs, lbl, Some expr, pat)
+        (attrs, lbl, Some expr, pat, startPos)
       end
     | _ ->
-      (attrs, lbl, None, pat)
+      (attrs, lbl, None, pat, startPos)
 
   and parseParameterList p =
     let parameters = parseCommaSeparatedList ~closing:Rparen ~f:parseParameter p in
@@ -1712,12 +1713,13 @@ let rec goToClosing closingToken state =
         [],
         Asttypes.Nolabel,
         None,
-        Ast_helper.Pat.var ~loc (Location.mkloc ident loc)
+        Ast_helper.Pat.var ~loc (Location.mkloc ident loc),
+        startPos
       )]
     | Underscore ->
       Parser.next p;
       let loc = mkLoc startPos p.Parser.prevEndPos in
-      [[], Asttypes.Nolabel, None, Ast_helper.Pat.any ~loc ()]
+      [[], Asttypes.Nolabel, None, Ast_helper.Pat.any ~loc (), startPos]
     | Lparen ->
       Parser.next p;
       begin match p.Parser.token with
@@ -1727,7 +1729,7 @@ let rec goToClosing closingToken state =
         let unitPattern = Ast_helper.Pat.construct
           ~loc (Location.mkloc (Longident.Lident "()") loc) None
         in
-        [[], Asttypes.Nolabel, None, unitPattern]
+        [[], Asttypes.Nolabel, None, unitPattern, startPos]
       | _ -> parseParameterList p
       end
     | token -> raise (Parser.ParseError (p.startPos, Report.Unexpected token))
@@ -2229,6 +2231,7 @@ let rec goToClosing closingToken state =
       parseRecordExpr ~spread:(Some spreadExpr) [] p
     | Uident _ | Lident _ ->
       let pathIdent = parseValuePath p in
+      let identEndPos = p.prevEndPos in
       begin match p.Parser.token with
       | Comma ->
         Parser.next p;
@@ -2249,9 +2252,13 @@ let rec goToClosing closingToken state =
       | Rbrace ->
         Ast_helper.Exp.ident pathIdent
       | EqualGreater ->
-          let ident = Location.mknoloc (Longident.last pathIdent.txt) in
+          let loc = mkLoc startPos identEndPos in
+          let ident = Location.mkloc (Longident.last pathIdent.txt) loc in
           let a = parseEs6ArrowExpression
-            ~parameters:[([], Asttypes.Nolabel, None, Ast_helper.Pat.var ident)] p
+            ~parameters:[
+              ([], Asttypes.Nolabel, None, Ast_helper.Pat.var ident, startPos)
+              ]
+             p
           in
           let e = parseBinaryExpr ~a p 1 in
           let e = parseTernaryExpr e p in
@@ -2732,6 +2739,7 @@ let rec goToClosing closingToken state =
   (* TODO: check attributes in the case of poly type vars,
    * might be context dependend: parseFieldDeclaration (see ocaml) *)
   and parsePolyTypeExpr p =
+    let startPos = p.Parser.startPos in
     match p.Parser.token with
     | SingleQuote ->
       let vars = parseTypeVarList p in
@@ -2739,13 +2747,15 @@ let rec goToClosing closingToken state =
       | _v1::_v2::_ ->
         Parser.expectExn Dot p;
         let typ = parseTypExpr p in
-        Ast_helper.Typ.poly vars typ
+        let loc = mkLoc startPos p.prevEndPos in
+        Ast_helper.Typ.poly ~loc vars typ
       | [var] ->
         begin match p.Parser.token with
         | Dot ->
           Parser.next p;
           let typ = parseTypExpr p in
-          Ast_helper.Typ.poly vars typ
+          let loc = mkLoc startPos p.prevEndPos in
+          Ast_helper.Typ.poly ~loc vars typ
         | _ ->
           Ast_helper.Typ.var ~loc:var.loc var.txt
         end
@@ -2803,7 +2813,7 @@ let rec goToClosing closingToken state =
       (* TODO extract this whole block into reusable logic, cf. type equation *)
       begin match p.Parser.token with
       | LessThan ->
-        let args = parseConstructorTypeArgs p in
+        let args = parseTypeConstructorArgs p in
         Ast_helper.Typ.constr ~loc:(mkLoc startPos p.prevEndPos) ~attrs constr args
       | Lparen ->
         raise (Parser.ParseError (p.startPos, Report.Message "Type constructor args require diamonds, like: Belt.Map.String.t<int>"))
@@ -2840,6 +2850,7 @@ let rec goToClosing closingToken state =
     *  | ~ident: type_expr=?
     *)
   and parseTypeParameter p =
+    let startPos = p.Parser.startPos in
     let attrs = parseAttributes p in
     match p.Parser.token with
     | Tilde ->
@@ -2858,50 +2869,65 @@ let rec goToClosing closingToken state =
       | Equal ->
         Parser.next p;
         Parser.expectExn Question p;
-        (attrs, Asttypes.Optional name, typ)
-      | _ -> (attrs, Asttypes.Labelled name, typ)
+        (attrs, Asttypes.Optional name, typ, startPos)
+      | _ ->
+        (attrs, Asttypes.Labelled name, typ, startPos)
       end
     | _ ->
-      (attrs, Asttypes.Nolabel, parseTypExpr p)
+      (attrs, Asttypes.Nolabel, parseTypExpr p, startPos)
 
   (* (int, ~x:string, float) *)
   and parseTypeParameters p =
     Parser.expectExn Lparen p;
-    let rec loop p params =
-      match p.Parser.token with
-      | Rparen -> Parser.next p; List.rev params
-      | Comma -> Parser.next p; loop p params
-      | _ ->
-        let param = parseTypeParameter p in
-        loop p (param::params)
+    let params =
+      parseCommaSeparatedList ~closing:Rparen ~f:parseTypeParameter p
     in
-    loop p []
+    Parser.expect Rparen p;
+    params
 
   and parseEs6ArrowType p =
     let parameters = parseTypeParameters p in
     Parser.expectExn EqualGreater p;
-    let returnType = parseTypExpr p in
-    List.fold_right (fun (attrs, argLbl, typ) t ->
-      Ast_helper.Typ.arrow ~attrs argLbl typ t
+    let returnType = parseTypExpr ~alias:false p in
+    let endPos = p.prevEndPos in
+    List.fold_right (fun (attrs, argLbl, typ, startPos) t ->
+      Ast_helper.Typ.arrow ~loc:(mkLoc startPos endPos) ~attrs argLbl typ t
     ) parameters returnType
 
-  and parseTypExpr ?(allowEs6Arrow=true) p =
+  (*
+   * typexpr ::= 'ident
+   *          |  _
+   *          |  (typexpr)
+   *          | typexpr => typexpr            --> es6 arrow
+   *          | (typexpr, typexpr) => typexpr --> es6 arrow
+   *          | / typexpr, typexpr, typexpr/  --> tuple
+   *          | typeconstr
+   *          | typeconstr<typexpr>
+   *          | typeconstr<typexpr, typexpr,>
+   *          | typexpr as 'ident
+   *          | %attr-id                      --> extension
+   *          | %attr-id(payload)             --> extension
+   *
+   * typeconstr ::= lident
+   *             |  uident.lident
+   *             |  uident.uident.lident     --> long module path
+   *)
+  and parseTypExpr ?(es6Arrow=true) ?(alias=true) p =
     Parser.leaveBreadcrumb p Report.TypeExpression;
     let attrs = parseAttributes p in
-    let typ = if allowEs6Arrow && isEs6ArrowType p then
+    let typ = if es6Arrow && isEs6ArrowType p then
       parseEs6ArrowType p
     else
       let typ = parseAtomicTypExpr ~attrs p in
       match p.Parser.token with
-      | EqualGreater when allowEs6Arrow == true ->
+      | EqualGreater when es6Arrow == true ->
         Parser.next p;
-        (* TODO: we're making a decision about shifting/reducing alias es *)
-        let returnType = parseTypExpr p in
+        let returnType = parseTypExpr ~alias:false p in
         let loc = mkLoc typ.Parsetree.ptyp_loc.loc_start p.prevEndPos in
         Ast_helper.Typ.arrow ~loc Asttypes.Nolabel typ returnType
       | _ -> typ
     in
-    let typ = parseTypeAlias p typ in
+    let typ = if alias then parseTypeAlias p typ else typ in
     Parser.eatBreadcrumb p;
     typ
 
@@ -2912,8 +2938,18 @@ let rec goToClosing closingToken state =
     Parser.expect Forwardslash p;
     Ast_helper.Typ.tuple ~loc:(mkLoc startPos p.prevEndPos) types
 
-  and parseConstructorTypeArgs p =
+  and parseTypeConstructorArgs p =
 		Lex.setDiamondMode p.lexbuf;
+		Parser.expectExn LessThan p;
+		let typeArgs =
+			parseCommaSeparatedList ~closing:GreaterThan ~f:parseTypExpr p
+		in
+		Parser.expect GreaterThan p;
+		Lex.setNormalMode p.lexbuf;
+		typeArgs
+
+  and parseConstructorTypeArgs p =
+		Lex.setDiamondMode p.Parser.lexbuf;
 		Parser.expectExn LessThan p;
 		let typeArgs =
 			parseCommaSeparatedList ~closing:GreaterThan ~f:parseTypExpr p
@@ -3102,14 +3138,13 @@ and parseTypeRepresentation p =
         in
         let typeConstr = Location.mknoloc (loop p (Longident.Lident uident)) in
         let typ = match p.Parser.token with
-        | Lparen ->
-          Parser.next p;
-          let args = parseConstructorTypeArgs p in
+        | LessThan ->
+          let args = parseTypeConstructorArgs p in
           Ast_helper.Typ.constr typeConstr args
         | _ ->
           Ast_helper.Typ.constr typeConstr []
         in
-        (Some typ, Parsetree.Ptype_abstract)
+        (Some (parseTypeAlias p typ), Parsetree.Ptype_abstract)
       | _ ->
         Parser.next p;
         let (args, res) = parseConstrDeclArgs p in
@@ -3167,7 +3202,7 @@ and parseTypeRepresentation p =
 
 
 (*
-  type-definition	::=	type [nonrec] typedef  { and typedef }
+  type-definition	::=	type [rec] typedef  { and typedef }
 
   typedef	::=	[type-params]  typeconstr-name  type-information
 
