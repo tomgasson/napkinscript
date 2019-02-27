@@ -180,7 +180,7 @@ module Token = struct
     | Forwardslash | ForwardslashDot | TupleEnding
     | Asterisk | AsteriskDot | Exponentiation
     | Minus | MinusDot
-    | Plus | PlusDot | PlusPlus
+    | Plus | PlusDot | PlusPlus | PlusEqual
     | GreaterThan
     | LessThan
     | LessThanSlash
@@ -257,7 +257,7 @@ module Token = struct
     | Colon -> ":"
     | Comma -> ","
     | Minus -> "-" | MinusDot -> "-."
-    | Plus -> "+" | PlusDot -> "+." | PlusPlus -> "++"
+    | Plus -> "+" | PlusDot -> "+." | PlusPlus -> "++" | PlusEqual -> "+="
     | Backslash -> "\\"
     | Forwardslash -> "/" | ForwardslashDot -> "/."
     | TupleEnding -> "/ (tuple ending)"
@@ -710,6 +710,9 @@ module Lex = struct
         ) else if lexbuf.ch == CharacterCodes.plus then (
           next lexbuf;
           Token.PlusPlus
+        ) else if lexbuf.ch == CharacterCodes.equal then (
+          next lexbuf;
+          Token.PlusEqual
         ) else (
           Token.Plus
         )
@@ -2895,22 +2898,24 @@ let rec goToClosing closingToken state =
     ) parameters returnType
 
   (*
-   * typexpr ::= 'ident
-   *          |  _
-   *          |  (typexpr)
-   *          | typexpr => typexpr            --> es6 arrow
-   *          | (typexpr, typexpr) => typexpr --> es6 arrow
-   *          | / typexpr, typexpr, typexpr/  --> tuple
-   *          | typeconstr
-   *          | typeconstr<typexpr>
-   *          | typeconstr<typexpr, typexpr,>
-   *          | typexpr as 'ident
-   *          | %attr-id                      --> extension
-   *          | %attr-id(payload)             --> extension
+   * typexpr ::=
+   *  | 'ident
+   *  |  _
+   *  |  (typexpr)
+   *  | typexpr => typexpr            --> es6 arrow
+   *  | (typexpr, typexpr) => typexpr --> es6 arrow
+   *  | /typexpr, typexpr, typexpr/  --> tuple
+   *  | typeconstr
+   *  | typeconstr<typexpr>
+   *  | typeconstr<typexpr, typexpr,>
+   *  | typexpr as 'ident
+   *  | %attr-id                      --> extension
+   *  | %attr-id(payload)             --> extension
    *
-   * typeconstr ::= lident
-   *             |  uident.lident
-   *             |  uident.uident.lident     --> long module path
+   * typeconstr ::=
+   *  | lident
+   *  |  uident.lident
+   *  |  uident.uident.lident     --> long module path
    *)
   and parseTypExpr ?(es6Arrow=true) ?(alias=true) p =
     Parser.leaveBreadcrumb p Report.TypeExpression;
@@ -2958,6 +2963,7 @@ let rec goToClosing closingToken state =
 		Lex.setNormalMode p.lexbuf;
 		typeArgs
 
+  (* field-decl	::=	[mutable] field-name : poly-typexpr *)
   and parseFieldDeclaration p =
     let startPos = p.Parser.startPos in
     let attrs = parseAttributes p in
@@ -2973,11 +2979,16 @@ let rec goToClosing closingToken state =
       Location.mkloc ident loc
     | _ -> raise (Parser.ParseError (p.startPos, Report.Lident))
     in
-    Parser.expectExn Colon p;
+    Parser.expect Colon p;
     let typ = parsePolyTypeExpr p in
     let loc = mkLoc startPos typ.ptyp_loc.loc_end in
     Ast_helper.Type.field ~attrs ~loc ~mut name typ
 
+  (* record-decl ::=
+   *  | { field-decl }
+   *  | { field-decl, field-decl }
+   *  | { field-decl, field-decl, field-decl, }
+   *)
   and parseRecordDeclaration p =
     Parser.expectExn Lbrace p;
     let rows =
@@ -2986,24 +2997,32 @@ let rec goToClosing closingToken state =
     Parser.expect Rbrace p;
     rows
 
+  (* constr-args ::=
+   *  | (typexpr)
+   *  | (typexpr, typexpr)
+   *  | (typexpr, typexpr, typexpr,)
+   *  | (record-decl)
+   *
+   * TODO: should we overparse inline-records in every position?
+   * Give a good error message afterwards?
+   *)
   and parseConstrDeclArgs p =
-    let args = match p.Parser.token with
+    let constrArgs = match p.Parser.token with
     | Lparen ->
-     Parser.next p;
-     begin match p.Parser.token with
-     | Lbrace ->
-       let recordDecl = parseRecordDeclaration p in
-       Parser.expectExn Rparen p;
-       Parsetree.Pcstr_record recordDecl
-     | _ ->
-       let args = parseCommaSeparatedList ~closing:Rparen ~f:parseTypExpr p in
-       Parser.expectExn Rparen p;
-       Parsetree.Pcstr_tuple args
-      end
-    | Lbrace ->
-       Parsetree.Pcstr_record (parseRecordDeclaration p)
-    | _ ->
-     Pcstr_tuple []
+      Parser.next p;
+      begin match p.Parser.token with
+      | Lbrace ->
+        let recordDecl = parseRecordDeclaration p in
+        Parser.optional p Comma |> ignore;
+        Parser.expectExn Rparen p;
+        Parsetree.Pcstr_record recordDecl
+      | _ ->
+        let args = parseCommaSeparatedList ~closing:Rparen ~f:parseTypExpr p in
+        Parser.expectExn Rparen p;
+        Parsetree.Pcstr_tuple args
+       end
+    | Lbrace -> Parsetree.Pcstr_record (parseRecordDeclaration p)
+    | _ -> Pcstr_tuple []
     in
     let res = match p.Parser.token with
     | Colon ->
@@ -3011,14 +3030,20 @@ let rec goToClosing closingToken state =
       Some (parseTypExpr p)
     | _ -> None
     in
-    (args, res)
+    (constrArgs, res)
 
-  and parseTypeConstructorDeclaration p =
+  (* constr-decl ::=
+   *  | constr-name
+   *  | attrs constr-name
+   *  | constr-name const-args
+   *  | attrs constr-name const-args *)
+   and parseTypeConstructorDeclaration p =
+     let attrs = parseAttributes p in
      match p.Parser.token with
      | Uident uident ->
        Parser.next p;
        let (args, res) = parseConstrDeclArgs p in
-       Ast_helper.Type.constructor ?res ~args (Location.mknoloc uident)
+       Ast_helper.Type.constructor ~attrs ?res ~args (Location.mknoloc uident)
      | _ -> raise (Parser.ParseError (p.startPos, Report.Uident))
 
    (* [|] constr-decl  { | constr-decl }   *)
@@ -3043,11 +3068,15 @@ let rec goToClosing closingToken state =
 
   (*
    * type-representation ::=
-      ∣	 = private [ | ] constr-decl  { | constr-decl }
-      ∣	 = private record-decl
-      |  = ..
-  *)
-and parseTypeRepresentation p =
+   *  ∣	 = [ | ] constr-decl  { | constr-decl }
+   *  ∣	 = private [ | ] constr-decl  { | constr-decl }
+   *  |  = |
+   *  ∣	 = private |
+   *  ∣	 = record-decl
+   *  ∣	 = private record-decl
+   *  |  = ..
+   *)
+  and parseTypeRepresentation p =
     (* = consumed *)
     let privateFlag =
       if Parser.optional p Token.Private
@@ -3066,59 +3095,86 @@ and parseTypeRepresentation p =
     in
     (privateFlag, kind)
 
+  (* type-param	::=
+   *  | variance 'lident
+   *  | variance _
+   *
+   * variance ::=
+   *   | +
+   *   | -
+   *   | (* empty *)
+   *)
   and parseTypeParam p =
     let variance = match p.Parser.token with
     | Plus -> Parser.next p; Asttypes.Covariant
     | Minus -> Parser.next p; Contravariant
     | _ -> Invariant
     in
-    let param = match p.Parser.token with
+    match p.Parser.token with
     | SingleQuote ->
       Parser.next p;
       begin match p.Parser.token with
       | Lident ident ->
+        let startPos = p.startPos in
         Parser.next p;
-        (Ast_helper.Typ.var ident, variance)
+        let loc = mkLoc startPos p.prevEndPos in
+        (Ast_helper.Typ.var ~loc ident, variance)
       | _ -> raise (Parser.ParseError (p.startPos, Report.Lident))
       end
     | Underscore ->
+      let loc = mkLoc p.startPos p.endPos in
       Parser.next p;
-      (Ast_helper.Typ.any (), variance)
+      (Ast_helper.Typ.any ~loc (), variance)
     | token -> raise (Parser.ParseError (p.startPos, Report.Unexpected token))
-    in
-    Parser.expectExn GreaterThan p;
-    param
 
+  (* type-params	::=
+   *  | <type-param>
+ 	 *  ∣	<type-param, type-param>
+ 	 *  ∣	<type-param, type-param, type-param>
+ 	 *  ∣	<type-param, type-param, type-param,> *)
   and parseTypeParams p =
-    let params = match p.Parser.token with
-    | LessThan -> Parser.next p; [parseTypeParam p]
+    match p.Parser.token with
+    | LessThan ->
+      Parser.next p;
+      let params =
+        parseCommaSeparatedList ~closing:GreaterThan ~f:parseTypeParam p
+      in
+      Parser.expect GreaterThan p;
+      params
     | _ -> []
-    in
-    params
 
+  (* type-constraint	::=	constraint ' ident =  typexpr *)
   and parseTypeConstraint p =
     Parser.expectExn SingleQuote p;
     begin match p.Parser.token with
     | Lident ident ->
       Parser.next p;
-      Parser.expectExn Equal p;
+      Parser.expect Equal p;
       let typ = parseTypExpr p in
       (Ast_helper.Typ.var ident, typ, Location.none)
     | _ -> raise (Parser.ParseError (p.startPos, Report.Lident))
     end
 
+  (* type-constraints ::=
+   *  | (* empty *)
+   *  | type-constraint
+   *  | type-constraint type-constraint
+   *  | type-constraint type-constraint type-constraint (* 0 or more *)
+   *)
   and parseTypeConstraints p =
     let rec loop p constraints =
       match p.Parser.token with
       | Constraint ->
         Parser.next p;
         let constraint_ = parseTypeConstraint p in
-        (constraint_::constraints)
-      | _ -> List.rev constraints
+        loop p (constraint_::constraints)
+      | _ ->
+        List.rev constraints
     in
     loop p []
 
   and parseTypeEquationOrConstrDecl p =
+    let uidentStartPos = p.Parser.startPos in
     match p.Parser.token with
     | Uident uident ->
       Parser.next p;
@@ -3137,21 +3193,32 @@ and parseTypeRepresentation p =
          | token -> raise (Parser.ParseError (p.startPos, Report.Unexpected token))
         in
         let typeConstr = Location.mknoloc (loop p (Longident.Lident uident)) in
-        let typ = match p.Parser.token with
+        let typ = parseTypeAlias p (match p.Parser.token with
         | LessThan ->
           let args = parseTypeConstructorArgs p in
           Ast_helper.Typ.constr typeConstr args
         | _ ->
           Ast_helper.Typ.constr typeConstr []
-        in
-        (Some (parseTypeAlias p typ), Parsetree.Ptype_abstract)
+        ) in
+        begin match p.token with
+        | Equal ->
+          Parser.next p;
+          let (priv, kind) = parseTypeRepresentation p in
+          (Some typ, priv, kind)
+        | _ -> (Some typ, Asttypes.Public, Parsetree.Ptype_abstract)
+        end
       | _ ->
-        Parser.next p;
+        let uidentEndPos = p.endPos in
         let (args, res) = parseConstrDeclArgs p in
         let first = Some (
-          Ast_helper.Type.constructor ?res ~args (Location.mknoloc uident)
+          let uidentLoc = mkLoc uidentStartPos uidentEndPos in
+          Ast_helper.Type.constructor
+            ~loc:(mkLoc uidentStartPos p.prevEndPos)
+            ?res
+            ~args
+            (Location.mkloc uident uidentLoc)
         ) in
-        (None, Parsetree.Ptype_variant (parseTypeConstructorDeclarations p ?first))
+        (None, Asttypes.Public, Parsetree.Ptype_variant (parseTypeConstructorDeclarations p ?first))
       end
     | _ -> raise (Parser.ParseError (p.startPos, Report.Uident))
 
@@ -3160,15 +3227,11 @@ and parseTypeRepresentation p =
     | Equal ->
       Parser.next p;
       begin match p.Parser.token with
-      | Uident ident ->
-        let (manifest, kind) = parseTypeEquationOrConstrDecl p in
-        (manifest, Asttypes.Public, kind)
-      (* start of type representation, beware Uident
-       * type t = Foo.t indicates type-equation, not representation! *)
-      | Bar | Lbrace | Private | Dot ->
-        let manifest = None in
+      | Uident _ ->
+        parseTypeEquationOrConstrDecl p
+      | Bar | Lbrace | Private | DotDot ->
         let (priv, kind) = parseTypeRepresentation p in
-        (manifest, priv, kind)
+        (None, priv, kind)
       | _ ->
         let manifest = Some (parseTypExpr p) in
         begin match p.Parser.token with
@@ -3204,17 +3267,15 @@ and parseTypeRepresentation p =
 (*
   type-definition	::=	type [rec] typedef  { and typedef }
 
-  typedef	::=	[type-params]  typeconstr-name  type-information
+  typedef	::=	typeconstr-name [type-params] type-information
 
   type-information	::=	[type-equation]  [type-representation]  { type-constraint }
 
   type-equation	::=	= typexpr
-
-  type-representation	::=	= [|] constr-decl  { | constr-decl }
-    ∣	 = record-decl
-    ∣	 = |
 *)
 
+
+  (* typedef	::=	typeconstr-name [type-params] type-information *)
   and parseTypeDef ?attrs p =
     let startPos = p.Parser.startPos in
     let attrs = match attrs with | Some attrs -> attrs | None -> parseAttributes p in
@@ -3227,9 +3288,10 @@ and parseTypeRepresentation p =
     in
     let params = parseTypeParams p in
     match p.Parser.token with
-    (* | Plus -> *)
+    (* | PlusEqual -> *)
       (* Parser.next p; *)
       (* let (priv, kind) = parseTypeExtensionDef p in *)
+      (* Ast_helper.Te. *)
       (* Ast_helper.Type.mk ~priv ~kind typeConstrName *)
     | _ ->
       let (manifest, priv, kind) = parseTypeEquationAndRepresentation p in
@@ -4056,7 +4118,7 @@ and parseTypeRepresentation p =
       ) p.errors;
     with
     | Parser.ParseError (pos, problem) ->
-      Printf.eprintf "Parse error\n";
+      Printf.eprintf "Parse error: %s\n" (p.lexbuf.filename);
       Printf.eprintf "Line: %d, Column: %d\n" (pos.pos_lnum) (pos.pos_cnum - pos.pos_bol + 1);
       Printf.eprintf "Problem encountered while trying to parse %s.\n"
       (Report.parseContext p.breadcrumbs);
