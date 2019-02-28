@@ -2549,28 +2549,7 @@ let rec goToClosing closingToken state =
     Parser.eatBreadcrumb p;
     Ast_helper.Exp.ifthenelse ~loc conditionExpr thenExpr elseExpr
 
-  and parseForExpression p =
-    let startPos = p.Parser.startPos in
-    Parser.expectExn For p;
-		let (hasOpeningParen, pattern) = match p.token with
-		| Lparen ->
-			Parser.next p;
-			let lparen = p.prevEndPos in
-			begin match p.token with
-			| Rparen ->
-				Parser.next p;
-				let unitPattern =
-					let loc = mkLoc lparen p.prevEndPos in
-					let lid = Location.mkloc (Longident.Lident "()") loc in
-					Ast_helper.Pat.construct lid None
-				in
-				(false, parseAliasPattern ~attrs:[] unitPattern p)
-			| _ ->
-				(true, parsePattern p)
-			end
-		| _ ->
-			(false, parsePattern p)
-		in
+  and parseForRest hasOpeningParen pattern startPos p =
     Parser.expectExn In p;
     let e1 = parseExpr p in
     let direction = match p.Parser.token with
@@ -2587,6 +2566,43 @@ let rec goToClosing closingToken state =
     Parser.expectExn Rbrace p;
     let loc = mkLoc startPos p.prevEndPos in
     Ast_helper.Exp.for_ ~loc pattern e1 e2 direction bodyExpr
+
+  and parseForExpression p =
+    let startPos = p.Parser.startPos in
+    Parser.expectExn For p;
+		match p.token with
+		| Lparen ->
+			Parser.next p;
+			let lparen = p.prevEndPos in
+			begin match p.token with
+			| Rparen ->
+				Parser.next p;
+				let unitPattern =
+					let loc = mkLoc lparen p.prevEndPos in
+					let lid = Location.mkloc (Longident.Lident "()") loc in
+					Ast_helper.Pat.construct lid None
+				in
+        parseForRest false (parseAliasPattern ~attrs:[] unitPattern p) startPos p
+      | Let ->
+        let (recFlag, letBindings) = parseLetBindings ~attrs:[] p in
+        Parser.expect Semicolon p;
+        let condition = parseExpr p in
+        Parser.expect Semicolon p;
+        let after = parseExpr p in
+        Parser.expect Rparen p;
+        Parser.expectExn Lbrace p;
+        let block = parseExprBlock p in
+        Parser.expectExn Rbrace p;
+        let while_ = Ast_helper.Exp.while_ condition (
+          Ast_helper.Exp.sequence block after
+        ) in
+        Ast_helper.Exp.let_ recFlag letBindings while_
+			| _ ->
+        parseForRest true (parsePattern p) startPos p
+			end
+		| _ ->
+      parseForRest false (parsePattern p) startPos p
+
 
   and parseWhileExpression p =
     let startPos = p.Parser.startPos in
