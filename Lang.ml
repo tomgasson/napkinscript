@@ -893,7 +893,7 @@ module LangParser = struct
 
   module Parser = struct
     type t = {
-      lexbuf: Lex.lexbuf;
+      mutable lexbuf: Lex.lexbuf;
       mutable token: Token.t;
       mutable startPos: Lexing.position;
       mutable endPos: Lexing.position;
@@ -925,6 +925,15 @@ module LangParser = struct
       } in
       next parserState;
       parserState
+
+    let restore p1 p2 =
+      p1.lexbuf <- p2.lexbuf;
+      p1.token <- p2.token;
+      p1.startPos <- p2.startPos;
+      p1.prevEndPos <- p2.prevEndPos;
+      p1.endPos <- p2.endPos;
+      p1.breadcrumbs <- p2.breadcrumbs;
+      p1.errors <- p1.errors
 
     let leaveBreadcrumb p circumstance =
       let crumb = (circumstance, p.startPos) in
@@ -1031,6 +1040,36 @@ let rec goToClosing closingToken state =
           end
         end
       | _ -> false)
+
+
+  let isEs6ArrowFunctor p =
+    Parser.lookahead p (fun state ->
+      match state.Parser.token with
+      | Uident _ | Underscore ->
+        Parser.next state;
+        begin match state.Parser.token with
+        | EqualGreater -> true
+        | _ -> false
+        end
+      | Lparen ->
+        Parser.next state;
+        begin match state.token with
+        | Rparen ->
+          Parser.next state;
+          begin match state.token with
+          | Colon | EqualGreater -> true
+          | _ -> false
+          end
+        | _ ->
+          goToClosing Rparen state;
+          begin match state.Parser.token with
+          | EqualGreater | Lbrace -> true
+          | Colon -> true
+          | _ -> false
+          end
+        end
+      | _ -> false
+    )
 
   let isEs6ArrowType p =
     Parser.lookahead p (fun state ->
@@ -1210,6 +1249,9 @@ let rec goToClosing closingToken state =
     (* Parser.eatBreadcrumb p; *)
     moduleIdent
 
+  (* open-def ::=
+   *   | open module-path
+   *   | open! module-path *)
   let parseOpenDescription ~attrs p =
     Parser.leaveBreadcrumb p Report.OpenDescription;
     let startPos = p.Parser.startPos in
@@ -1220,8 +1262,7 @@ let rec goToClosing closingToken state =
       Asttypes.Fresh
     in
     let modident = parseModuleLongIdent p in
-    let endPos = p.prevEndPos in
-    let loc = mkLoc startPos endPos in
+    let loc = mkLoc startPos p.prevEndPos in
     Parser.eatBreadcrumb p;
     Ast_helper.Opn.mk ~loc ~attrs ~override modident
 
@@ -1565,7 +1606,7 @@ let rec goToClosing closingToken state =
       else
         parseUnaryExpr p
     in
-    let expr = {expr with Parsetree.pexp_attributes = attrs} in
+    let expr = {expr with Parsetree.pexp_attributes = expr.pexp_attributes @ attrs} in
     let expr = parseBinaryExpr ~a:expr p 1 in
     parseTernaryExpr expr p
 
@@ -1869,7 +1910,7 @@ let rec goToClosing closingToken state =
       | _ -> expr
     in
     let expr = loop p e1 in
-    {expr with pexp_loc = mkLoc startPos p.startPos}
+    {expr with pexp_loc = mkLoc startPos p.prevEndPos}
 
 
   (* a unary expression is an expression with only one operand and
@@ -2025,6 +2066,35 @@ let rec goToClosing closingToken state =
     Parser.eatBreadcrumb p;
     vb
 
+  (* TODO: find a better way? Is it possible?
+   * let a = 1
+   * @attr
+   * and b = 2
+   *
+   * The problem is that without semi we need a lookahead to determine
+   * if the attr is on the letbinding or the start of a new thing
+   *
+   * let a = 1
+   * @attr
+   * let b = 1
+   *
+   * Here @attr should attach to something "new": `let b = 1`
+   * The parser state is forked, which is quite expensive…
+   *)
+  and parseAttributesAndBinding p =
+    Parser.lookahead p (fun state ->
+      match state.Parser.token with
+      | At ->
+        let attrs = parseAttributes state in
+        begin match state.Parser.token with
+        | And ->
+          Parser.restore p state;
+          attrs
+        | _ -> []
+        end
+      | _ -> []
+    )
+
   (* definition	::=	let [rec] let-binding  { and let-binding }   *)
   and parseLetBindings ~attrs p =
     Parser.expectExn Let p;
@@ -2036,10 +2106,11 @@ let rec goToClosing closingToken state =
     let first = parseLetBindingBody ~attrs p in
 
     let rec loop p bindings =
-      let attrs = parseAttributes p in
+      let attrs = parseAttributesAndBinding p in
       match p.Parser.token with
       | And ->
         Parser.next p;
+        ignore(Parser.optional p Let); (* overparse for fault tolerance *)
         let letBinding = parseLetBindingBody ~attrs p in
         loop p (letBinding::bindings)
       | _ ->
@@ -3334,6 +3405,7 @@ let rec goToClosing closingToken state =
     in
     loop p []
 
+  (* external value-name : typexp = external-declaration *)
   and parseExternalDef ~attrs p =
     Parser.leaveBreadcrumb p Report.External;
     let startPos = p.Parser.startPos in
@@ -3347,10 +3419,9 @@ let rec goToClosing closingToken state =
     in
     Parser.expectExn ~circumstance:(Report.TypeExpression) Colon p;
     let typExpr = parseTypExpr p in
-    Parser.expectExn Equal p;
+    Parser.expect Equal p;
     let prim = parsePrimitive p in
-    let endPos = p.prevEndPos in
-    let loc = mkLoc startPos endPos in
+    let loc = mkLoc startPos p.prevEndPos in
     let vb = Ast_helper.Val.mk ~loc ~attrs ~prim name typExpr in
     Parser.eatBreadcrumb p;
     vb
@@ -3376,12 +3447,19 @@ let rec goToClosing closingToken state =
     in
     (name, kind)
 
+  (*
+   * exception-definition	::=
+   *  | exception constr-decl
+   *  ∣	exception constr-name = constr
+   *
+   *  constr-name ::= uident
+   *  constr ::= long_uident
+  *)
   and parseExceptionDef ~attrs p =
     let startPos = p.Parser.startPos in
     Parser.expectExn Token.Exception p;
     let (name, kind) = parseConstrDeclOrName p in
-    let endPos = p.Parser.prevEndPos in
-    let loc = mkLoc startPos endPos in
+    let loc = mkLoc startPos p.prevEndPos in
     Ast_helper.Te.constructor ~loc ~attrs name kind
 
   and parseStructure p =
@@ -3423,13 +3501,13 @@ let rec goToClosing closingToken state =
       Ast_helper.Str.exception_ (parseExceptionDef ~attrs p)
     | Include ->
       Ast_helper.Str.include_ (parseIncludeStatement ~attrs p)
-    | Module -> parseModuleOrModuleTypeImpl p
+    | Module -> parseModuleOrModuleTypeImpl ~attrs p
     | AtAt ->
       let (loc, attr) = parseStandaloneAttribute p in
       Ast_helper.Str.attribute ~loc attr
     | PercentPercent ->
       let (loc, extension) = parseExtension ~moduleLanguage: true p in
-      Ast_helper.Str.extension ~loc extension
+      Ast_helper.Str.extension ~attrs ~loc extension
     | _ ->
       Ast_helper.Str.eval ~attrs (parseExpr p)
     in
@@ -3437,15 +3515,15 @@ let rec goToClosing closingToken state =
     let loc = mkLoc startPos endPos in
     {item with pstr_loc = loc}
 
+  (* include-statement ::= include module-expr *)
   and parseIncludeStatement ~attrs p =
     let startPos = p.Parser.startPos in
     Parser.expectExn Token.Include p;
     let modExpr = parseModuleExpr p in
-    let endPos = p.prevEndPos in
-    let loc = mkLoc startPos endPos in
+    let loc = mkLoc startPos p.prevEndPos in
     Ast_helper.Incl.mk ~loc ~attrs modExpr
 
-  and parseModuleOperand p =
+  and parseAtomicModuleExpr p =
     let startPos = p.Parser.startPos in
     match p.Parser.token with
     | Uident ident ->
@@ -3458,165 +3536,151 @@ let rec goToClosing closingToken state =
       let endPos = p.prevEndPos in
       {structure with pmod_loc = mkLoc startPos endPos}
     | Lparen ->
-      parseParenthesizedOrFunctorModuleExpr p
+      Parser.next p;
+      let modExpr = parseConstrainedModExpr p in
+      Parser.expect Rparen p;
+      modExpr
     | Percent ->
       let (loc, extension) = parseExtension p in
       Ast_helper.Mod.extension ~loc extension
     | unknownToken -> raise (Parser.ParseError (p.startPos, Report.Unexpected unknownToken))
 
-  and parseParenthesizedOrFunctorModuleExpr p =
+  and parsePrimaryModExpr p =
     let startPos = p.Parser.startPos in
-    Parser.expectExn Lparen p;
-    match p.Parser.token with
-    | Underscore -> (* functor arg name, parse functor *)
-      parseFunctorModuleExpr p []
-    | Rparen ->
-      Parser.next p;
-      let rparenEnd = p.prevEndPos in
-      Parser.expectExn EqualGreater p;
-      let rhs = parseModuleExpr p in
-      let loc = mkLoc startPos p.prevEndPos in
-      let arg = Location.mkloc "*" (mkLoc startPos rparenEnd) in
-      Ast_helper.Mod.functor_ ~loc arg None rhs
-    | _ ->
-      let moduleExpression = parseModuleExpr p in
-      begin match p.Parser.token with
-      | Colon ->
-        Parser.next p;
-        let moduleType = parseModuleType p in
-        begin match p.Parser.token with
-        | Comma -> (* comma hints possible es6 style arrow: (A: Foo, ) => module_expr *)
-          Parser.next p;
-          let argName = match moduleExpression.pmod_desc with
-            | Parsetree.Pmod_ident ({Location.txt} as lident) ->
-              {lident with txt = Longident.last txt}
-            | _ -> raise (Parser.ParseError (p.startPos,
-              Report.Message "A functor arg should be a module name, like List
-              or Array"
-              ))
-            in
-          let arg = (
-            argName,
-            Some moduleType
-          ) in
-          parseFunctorModuleExpr p [arg]
-        | Rparen ->
-          Parser.next p;
-          let rparenEnd = p.prevEndPos in
-          begin match p.Parser.token with
-          | EqualGreater ->
-            Parser.next p;
-            let rhs = parseModuleExpr p in
-            let argName = match moduleExpression.pmod_desc with
-            | Parsetree.Pmod_ident ({Location.txt} as lident) ->
-              {lident with txt = Longident.last txt}
-            | _ -> raise (Parser.ParseError (p.startPos,
-              Report.Message "A functor arg should be a module name, like List
-              or Array"
-              ))
-            in
-            let loc = mkLoc startPos rhs.pmod_loc.loc_end in
-            Ast_helper.Mod.functor_ ~loc argName (Some moduleType) rhs
-          | _ ->
-            let loc = mkLoc startPos rparenEnd in
-            Ast_helper.Mod.constraint_ ~loc moduleExpression moduleType
-          end
-        | _ -> raise (Parser.ParseError (p.startPos, Report.OneOf [Rparen; Comma]))
-        end
-      | Rparen ->
-        Parser.next p;
-        let rparenEnd = p.prevEndPos in
-        begin match p.Parser.token with
-        | EqualGreater ->
-          raise (Parser.ParseError (
-            p.startPos,
-            Report.Message "A functor arg needs a module type"
-          ))
-        | _ ->
-          {moduleExpression with pmod_loc = mkLoc startPos rparenEnd}
-        end
-      | _ -> raise (Parser.ParseError (p.startPos, Report.OneOf [Rparen; Comma]))
-      end
-
-  and parseFunctorArgName p =
-    let startPos = p.Parser.startPos in
-    let ident = match p.Parser.token with
-    | Uident ident -> ident
-    | Underscore -> "_"
-    | _ -> raise (Parser.ParseError (p.startPos,
-      Report.Message "a functor arg name should be Uident or _"
-      ))
-    in
-    Parser.next p;
-    Location.mkloc ident (mkLoc startPos p.prevEndPos)
-
-  and parseFunctorArgs p args =
-    let rec loop p args =
-      match p.Parser.token with
-      | Rparen -> Parser.next p; args
-      | _ ->
-        let functorArgName = parseFunctorArgName p in
-        Parser.expectExn Colon p;
-        let moduleType = parseModuleType p in
-        let arg = (functorArgName, Some moduleType) in
-        begin match p.Parser.token with
-        | Comma ->
-          Parser.next p;
-          loop p (arg::args)
-        | Rparen ->
-          Parser.next p;
-          (arg::args)
-        | _ -> raise (Parser.ParseError (p.startPos, Report.OneOf [Rparen; Comma]))
-        end
-    in
-    loop p args
-
-  and parseFunctorModuleExpr p args =
-    let args = parseFunctorArgs p args in
-    Parser.expectExn EqualGreater p;
-    let rhsModuleExpr = parseModuleExpr p in
-    List.fold_left (fun acc (name, moduleType) ->
-      Ast_helper.Mod.functor_ name moduleType acc
-    ) rhsModuleExpr args
-
-  and parseModuleExpr p =
-    let modExpr = parseModuleOperand p in
+    let modExpr = parseAtomicModuleExpr p in
     let rec loop p modExpr =
       match p.Parser.token with
       | Lparen ->
         loop p (parseModuleApplication p modExpr)
-      | EqualGreater ->
-        Parser.next p;
-        let arg = match modExpr.Parsetree.pmod_desc with
-        | Parsetree.Pmod_ident {Location.loc; txt} ->
-          {Location.loc; txt = Longident.last txt}
-        | _ -> raise (Parser.ParseError (p.startPos,
-          Report.Message "A functor arg should be a lowercased module identifier"
-          ))
-        in
-        let functorBody = parseModuleExpr p in
-        let loc = mkLoc modExpr.pmod_loc.loc_start p.Parser.prevEndPos in
-        Ast_helper.Mod.functor_ ~loc arg None functorBody
-      | _ ->
-        modExpr
-    in loop p modExpr
+      | _ -> modExpr
+    in
+    let modExpr = loop p modExpr in
+    {modExpr with pmod_loc = mkLoc startPos p.prevEndPos}
+
+  and parseFunctorArgName p =
+    let startPos = p.Parser.startPos in
+    let ident = match p.Parser.token with
+    | Uident ident ->
+      Parser.next p;
+      ident
+    | Underscore ->
+      Parser.next p;
+      "_"
+    | _ -> raise (Parser.ParseError (p.startPos,
+      Report.Message "a functor arg name should be module name or _"
+      ))
+    in
+    Location.mkloc ident (mkLoc startPos p.prevEndPos)
+
+  (*
+   * functor-arg ::=
+   *  | uident : modtype
+   *  | _ : modtype
+   *  | attributes uident : modtype
+   *  | attributes _ : modtype
+   *  Reason has this sugar, TODO: decide if we're gonna implement
+   *  Not sure if it's worth the extra trouble
+   *  | modtype           --> sugar for _ : modtype
+   *)
+  and parseFunctorArg p =
+    let startPos = p.Parser.startPos in
+    let attrs = parseAttributes p in
+    let functorArgName = parseFunctorArgName p in
+    Parser.expectExn Colon p;
+    let moduleType = parseModuleType p in
+    (attrs, functorArgName, Some moduleType, startPos)
+
+  and parseFunctorArgs p =
+    let startPos = p.Parser.startPos in
+    Parser.expect Lparen p;
+    let args =
+      parseCommaSeparatedList ~closing:Rparen ~f:parseFunctorArg p
+    in
+    Parser.expect Rparen p;
+    match args with
+    | [] ->
+      [[], Location.mkloc "*" (mkLoc startPos p.prevEndPos), None, startPos]
+    | args -> args
+
+  and parseFunctorModuleExpr p =
+    let args = parseFunctorArgs p in
+    let returnType = match p.Parser.token with
+    | Colon ->
+      Parser.next p;
+      Some (parseModuleType p)
+    | _ -> None
+    in
+    Parser.expectExn EqualGreater p;
+    let rhsModuleExpr =
+      let modExpr = parseModuleExpr p in
+      match returnType with
+      | Some modType ->
+        Ast_helper.Mod.constraint_
+          ~loc:(mkLoc modExpr.pmod_loc.loc_start modType.Parsetree.pmty_loc.loc_end)
+          modExpr modType
+      | None -> modExpr
+    in
+    let endPos = p.prevEndPos in
+    List.fold_right (fun (attrs, name, moduleType, startPos) acc ->
+      Ast_helper.Mod.functor_
+        ~loc:(mkLoc startPos endPos)
+        ~attrs
+        name moduleType acc
+    ) args rhsModuleExpr
+
+  (* module-expr	::=
+   *  | module-path
+   *  ∣	{ structure-items }
+   *  ∣	(functorArgs) =>  module-expr
+   *  ∣	module-expr(module-expr)
+   *  ∣	( module-expr )
+   *  ∣	( module-expr : module-type ) *)
+  and parseModuleExpr ?(attrs=[]) p =
+    let attrs = parseAttributes p in
+    let modExpr = if isEs6ArrowFunctor p then
+        parseFunctorModuleExpr p
+      else
+        parsePrimaryModExpr p
+    in
+    {modExpr with pmod_attributes = modExpr.pmod_attributes @ attrs}
+
+  and parseConstrainedModExpr p =
+    let modExpr = parseModuleExpr p in
+    match p.Parser.token with
+    | Colon ->
+      Parser.next p;
+      let modType = parseModuleType p in
+      let loc = mkLoc modExpr.pmod_loc.loc_start modType.pmty_loc.loc_end in
+      Ast_helper.Mod.constraint_ ~loc modExpr modType
+    | _ -> modExpr
 
   and parseModuleApplication p modExpr =
+    let startPos = p.Parser.startPos in
     Parser.expectExn Lparen p;
-    let arg = parseModuleExpr p in
+    let args =
+      parseCommaSeparatedList ~closing:Rparen ~f:parseConstrainedModExpr p
+    in
     Parser.expectExn Rparen p;
-    let endPos = p.prevEndPos in
-    let loc = mkLoc modExpr.pmod_loc.loc_start endPos in
-    Ast_helper.Mod.apply ~loc modExpr arg
+    let args = match args with
+    | [] ->
+      let loc = mkLoc startPos p.prevEndPos in
+      [Ast_helper.Mod.structure ~loc []]
+    | args -> args
+    in
+    List.fold_left (fun modExpr arg ->
+      Ast_helper.Mod.apply
+        ~loc:(mkLoc modExpr.Parsetree.pmod_loc.loc_start arg.Parsetree.pmod_loc.loc_end)
+        modExpr arg
+    ) modExpr args
 
-  and parseModuleOrModuleTypeImpl p =
+  and parseModuleOrModuleTypeImpl ~attrs p =
     let startPos = p.Parser.startPos in
     Parser.expectExn Module p;
     match p.Parser.token with
-    | Typ -> parseModuleTypeImpl startPos p
-    | _ -> parseMaybeRecModuleBinding p
+    | Typ -> parseModuleTypeImpl ~attrs startPos p
+    | _ -> parseMaybeRecModuleBinding ~attrs p
 
-  and parseModuleTypeImpl startPos p =
+  and parseModuleTypeImpl ~attrs startPos p =
     Parser.expectExn Typ p;
     let nameStart = p.Parser.startPos in
     let name = match p.Parser.token with
@@ -3630,6 +3694,7 @@ let rec goToClosing closingToken state =
     let moduleType = parseModuleType p in
     let moduleTypeDeclaration =
       Ast_helper.Mtd.mk
+        ~attrs
         ~loc:(mkLoc name.loc.loc_start p.prevEndPos)
         ~typ:moduleType
         name
@@ -3640,13 +3705,13 @@ let rec goToClosing closingToken state =
   (* definition	::=
     ∣	 module rec module-name :  module-type =  module-expr   { and module-name :  module-type =  module-expr }
     |  module module-name  { ( module-name :  module-type ) }  [ : module-type ]  =  module-expr *)
-  and parseMaybeRecModuleBinding p =
+  and parseMaybeRecModuleBinding ~attrs p =
     if Parser.optional p Token.Rec then
-      Ast_helper.Str.rec_module (parseModuleBindings p)
+      Ast_helper.Str.rec_module (parseModuleBindings ~attrs p)
     else
-      Ast_helper.Str.module_ (parseModuleBinding p)
+      Ast_helper.Str.module_ (parseModuleBinding ~attrs p)
 
-  and parseModuleBinding p =
+  and parseModuleBinding ~attrs p =
     let startPos = p.Parser.startPos in
     let name = match p.Parser.token with
     | Uident ident ->
@@ -3656,42 +3721,53 @@ let rec goToClosing closingToken state =
     | _ -> raise (Parser.ParseError (p.startPos, Report.Uident))
     in
     let body = parseModuleBindingBody p in
-    let endPos = p.prevEndPos in
-    let loc = mkLoc startPos endPos in
-    Ast_helper.Mb.mk ~loc name body
+    let loc = mkLoc startPos p.prevEndPos in
+    Ast_helper.Mb.mk ~attrs ~loc name body
 
   and parseModuleBindingBody p =
+    (* TODO: make required with good error message when rec module binding *)
+    let returnModType = match p.Parser.token with
+    | Colon ->
+      Parser.next p;
+      Some (parseModuleType p)
+    | _ -> None
+    in
     Parser.expect Equal p;
-    parseModuleExpr p
+    let modExpr = parseModuleExpr p in
+    match returnModType with
+    | Some modType ->
+      Ast_helper.Mod.constraint_
+        ~loc:(mkLoc modExpr.pmod_loc.loc_start modType.Parsetree.pmty_loc.loc_end)
+        modExpr modType
+    | None -> modExpr
 
-  and parseModuleBindings p =
-    (* module-name :  module-type =  module-expr *)
-    (* { and module-name :  module-type =  module-expr } *)
+
+  (* module-name :  module-type =  module-expr
+   * { and module-name :  module-type =  module-expr } *)
+  and parseModuleBindings ~attrs p =
     let rec loop p acc =
+      let attrs = parseAttributesAndBinding p in
       match p.Parser.token with
       | And ->
         Parser.next p;
-        let modBinding = parseModuleBinding p in
+        ignore(Parser.optional p Module); (* over-parse for fault-tolerance *)
+        let modBinding = parseModuleBinding ~attrs p in
         loop p (modBinding::acc)
       | _ -> List.rev acc
     in
-    let first = parseModuleBinding p in
-    match p.Parser.token with
-    | And -> loop p [first]
-    | _ -> [first]
-
-  (* Ocaml allows module types to end with lowercase: module Foo : bar = { ... }
-   * lets go with uppercase terminal for now *)
-   and parseModuleTypePath p =
-    Ast_helper.Mty.ident (parseModuleLongIdent p)
+    let first = parseModuleBinding ~attrs p in
+    loop p [first]
 
   (* Module types are the module-level equivalent of type expressions: they
    * specify the general shape and type properties of modules. *)
- and parseModuleType p =
+   and parseModuleType p =
     let startPos = p.Parser.startPos in
     let moduleType = match p.Parser.token with
     | Uident _ ->
-      parseModuleTypePath p
+      (* Ocaml allows module types to end with lowercase: module Foo : bar = { ... }
+       * lets go with uppercase terminal for now *)
+      let moduleLongIdent = parseModuleLongIdent p in
+      Ast_helper.Mty.ident ~loc:moduleLongIdent.loc moduleLongIdent
     | Lparen ->
       Parser.next p;
       let mty = parseModuleType p in

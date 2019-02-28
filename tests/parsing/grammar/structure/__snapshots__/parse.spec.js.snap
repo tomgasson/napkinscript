@@ -1,10 +1,50 @@
 // Jest Snapshot v1, https://goo.gl/fbAQLP
 
+exports[`exceptionDefinition.js 1`] = `
+"exception ExitEarly 
+exception ExitEarly of int 
+exception ExitEarly of {
+  x: int } 
+exception ExitEarly of {
+  x: int } 
+exception ExitEarly [@onConstructor ]
+exception ExitEarly of int [@onConstructor ]
+exception Exit = Terminate
+exception Exit = Lib.Terminate
+exception Exit = Ns.Lib.Terminate
+exception Exit[@onConstructor ] = Terminate
+exception Exit[@onConstructor ] = Lib.Terminate
+"
+`;
+
+exports[`externalDefinition.js 1`] = `
+"external clear : t -> int -> unit = \\"\\"
+external add_nat : nat -> int = \\"add_nat_bytecode\\" \\"add_nat_native\\"
+external attachShader :
+  t -> program:webGlProgram -> shader:webGlShader -> unit = \\"\\"[@@bs.send ]
+"
+`;
+
+exports[`includeStatement.js 1`] = `
+"include Belt.Array
+include Belt.Array[@@onInclude ]
+"
+`;
+
 exports[`itemExtension.js 1`] = `
 "[%%itemExtension ]
 [%%item.extension ]
 [%%item.extension.with.args \\"argument\\"]
 [%%item.extension.with.args fun x -> f x]
+[%%itemExtension ][@@attrOnExtension ]
+"
+`;
+
+exports[`letBinding.js 1`] = `
+"let a = 1
+let a = 1[@@onFirstBinding ]
+let a = 1[@@onFirstBinding ]
+and b = 2[@@onSecondBinding ]
 "
 `;
 
@@ -16,6 +56,18 @@ module D = [%mod.expr.extension.with.args fun x -> f x]
 "
 `;
 
+exports[`modType.js 1`] = `
+"module type X  = Foo
+module type X  = Foo[@@attr ]
+"
+`;
+
+exports[`module.js 1`] = `
+"module A : Map = struct let m = 2 end 
+module A = struct let m = 2 end
+"
+`;
+
 exports[`moduleTypeExtension.js 1`] = `
 "module type A  = [%modTypeExtension ]
 module type B  = [%mod.type.extension ]
@@ -24,9 +76,37 @@ module type D  = [%mod.type.extension.with.args fun x -> f x]
 "
 `;
 
+exports[`openDescription.js 1`] = `
+"open Belt
+open! Belt
+open Belt[@@onOpen ]
+open Belt.Array
+open! Belt.Array
+open! Belt.Array[@@onOpen ]
+"
+`;
+
+exports[`recursiveModules.js 1`] = `
+"module rec A:Map = struct let m = 2 end  and B:Set = struct let s = 1 end
+module rec A:Map = struct let m = 2 end[@@onFirstBinding ]
+ and B:Set = struct let s = 1 end[@@onSecondBinding ]
+module rec A:Map = struct let m = 2 end[@@onFirstBindingOfNext ]
+ and B:Set = struct let s = 1 end[@@onSecondBindingOfNext ]
+"
+`;
+
 exports[`standaloneAttribute.js 1`] = `
 "[@@@standaloneAttribute ]
 [@@@standaloneAttribute \\"with payload\\"]
 [@@@standaloneAttribute fun x -> x + 1]
+"
+`;
+
+exports[`typeDefinition.js 1`] = `
+"type nonrec t = string
+type nonrec t = string[@@onStructureItem ]
+module X =
+  struct type nonrec t = string
+         type nonrec t = string[@@onStructureItem ] end
 "
 `;
