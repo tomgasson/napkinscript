@@ -341,6 +341,7 @@ module Token = struct
       "asr", Asr;
       "list", List;
       "export", Export;
+      "with", With;
     |] in
     let t = Hashtbl.create 50 in
     Array.iter (fun (k, v) ->
@@ -353,7 +354,7 @@ module Token = struct
     | Exception | Assert | Lazy | If | Else | For | In | To
     | Downto | While | Switch | When | External | Typ | Private
     | Mutable | Constraint | Include | Module | Of | Mod
-    | Land | Lor | Lxor | Lsl | Lsr | Asr | List | Export -> true
+    | Land | Lor | Lxor | Lsl | Lsr | Asr | List | Export | With -> true
     | _ -> false
 
   let lookupKeyword str =
@@ -1045,12 +1046,12 @@ let rec goToClosing closingToken state =
   let isEs6ArrowFunctor p =
     Parser.lookahead p (fun state ->
       match state.Parser.token with
-      | Uident _ | Underscore ->
-        Parser.next state;
-        begin match state.Parser.token with
-        | EqualGreater -> true
-        | _ -> false
-        end
+      (* | Uident _ | Underscore -> *)
+        (* Parser.next state; *)
+        (* begin match state.Parser.token with *)
+        (* | EqualGreater -> true *)
+        (* | _ -> false *)
+        (* end *)
       | Lparen ->
         Parser.next state;
         begin match state.token with
@@ -1213,26 +1214,29 @@ let rec goToClosing closingToken state =
     Parser.next p;
     Location.mkloc ident (mkLoc startPos p.prevEndPos)
 
+  let parseModuleLongIdentTail p startPos ident =
+    let rec loop p acc =
+      match p.Parser.token with
+      | Uident ident ->
+        Parser.next p;
+        let endPos = p.prevEndPos in
+        let lident = (Longident.Ldot (acc, ident)) in
+        begin match p.Parser.token with
+        | Dot ->
+          Parser.next p;
+          loop p lident
+        | _ -> Location.mkloc lident (mkLoc startPos endPos)
+        end
+      | _ -> raise (Parser.ParseError (p.startPos, Report.Uident))
+    in
+    loop p ident
+
   (* Parses module identifiers:
        Foo
        Foo.Bar *)
   let parseModuleLongIdent p =
     (* Parser.leaveBreadcrumb p Report.ModuleLongIdent; *)
     let startPos = p.Parser.startPos in
-    let rec aux p acc =
-      match p.Parser.token with
-      | Uident ident ->
-        let endPos = p.endPos in
-        Parser.next p;
-        let lident = (Longident.Ldot (acc, ident)) in
-        begin match p.Parser.token with
-        | Dot ->
-          Parser.next p;
-          aux p lident
-        | _ -> Location.mkloc lident (mkLoc startPos endPos)
-        end
-      | _ -> raise (Parser.ParseError (p.startPos, Report.Uident))
-    in
     let moduleIdent = match p.Parser.token with
     | Uident ident ->
       let lident = Longident.Lident ident in
@@ -1241,7 +1245,7 @@ let rec goToClosing closingToken state =
       begin match p.Parser.token with
       | Dot ->
         Parser.next p;
-        aux p lident
+        parseModuleLongIdentTail p startPos lident
       | _ -> Location.mkloc lident (mkLoc startPos endPos)
       end
     | _ -> raise (Parser.ParseError (p.startPos, Report.Uident))
@@ -3621,19 +3625,49 @@ let rec goToClosing closingToken state =
    * functor-arg ::=
    *  | uident : modtype
    *  | _ : modtype
-   *  | attributes uident : modtype
-   *  | attributes _ : modtype
-   *  Reason has this sugar, TODO: decide if we're gonna implement
-   *  Not sure if it's worth the extra trouble
-   *  | modtype           --> sugar for _ : modtype
+   *  | modtype           --> "punning" for _ : modtype
+   *  | attributes functor-arg
    *)
   and parseFunctorArg p =
     let startPos = p.Parser.startPos in
     let attrs = parseAttributes p in
-    let functorArgName = parseFunctorArgName p in
-    Parser.expectExn Colon p;
-    let moduleType = parseModuleType p in
-    (attrs, functorArgName, Some moduleType, startPos)
+    match p.Parser.token with
+    | Uident ident ->
+      Parser.next p;
+      let uidentEndPos = p.prevEndPos in
+      begin match p.Parser.token with
+      | Colon ->
+        Parser.next p;
+        let moduleType = parseModuleType p in
+        let loc = mkLoc startPos uidentEndPos in
+        let argName = Location.mkloc ident loc in
+        (attrs, argName, Some moduleType, startPos)
+      | Dot ->
+        Parser.next p;
+        let moduleType =
+          let moduleLongIdent =
+            parseModuleLongIdentTail p startPos (Longident.Lident ident) in
+          Ast_helper.Mty.ident ~loc:moduleLongIdent.loc moduleLongIdent
+        in
+        let argName = Location.mknoloc "_" in
+        (attrs, argName, Some moduleType, startPos)
+      | _ ->
+        let loc = mkLoc startPos uidentEndPos in
+        let modIdent = Location.mkloc (Longident.Lident ident) loc in
+        let moduleType = Ast_helper.Mty.ident ~loc modIdent in
+        let argName = Location.mknoloc "_" in
+        (attrs, argName, Some moduleType, startPos)
+      end
+    | Underscore ->
+      Parser.next p;
+      let argName = Location.mkloc "_" (mkLoc startPos p.prevEndPos) in
+      Parser.expectExn Colon p;
+      let moduleType = parseModuleType p in
+      (attrs, argName, Some moduleType, startPos)
+    | _ ->
+      let moduleType = parseModuleType p in
+      let argName = Location.mknoloc "_" in
+      (attrs, argName, Some moduleType, startPos)
 
   and parseFunctorArgs p =
     let startPos = p.Parser.startPos in
@@ -3652,7 +3686,7 @@ let rec goToClosing closingToken state =
     let returnType = match p.Parser.token with
     | Colon ->
       Parser.next p;
-      Some (parseModuleType p)
+      Some (parseModuleType ~es6Arrow:false p)
     | _ -> None
     in
     Parser.expectExn EqualGreater p;
@@ -3676,7 +3710,7 @@ let rec goToClosing closingToken state =
   (* module-expr	::=
    *  | module-path
    *  ∣	{ structure-items }
-   *  ∣	(functorArgs) =>  module-expr
+   *  ∣	functorArgs =>  module-expr
    *  ∣	module-expr(module-expr)
    *  ∣	( module-expr )
    *  ∣	( module-expr : module-type ) *)
@@ -3740,7 +3774,7 @@ let rec goToClosing closingToken state =
     let moduleTypeDeclaration =
       Ast_helper.Mtd.mk
         ~attrs
-        ~loc:(mkLoc name.loc.loc_start p.prevEndPos)
+        ~loc:(mkLoc nameStart p.prevEndPos)
         ~typ:moduleType
         name
     in
@@ -3803,9 +3837,7 @@ let rec goToClosing closingToken state =
     let first = parseModuleBinding ~attrs p in
     loop p [first]
 
-  (* Module types are the module-level equivalent of type expressions: they
-   * specify the general shape and type properties of modules. *)
-   and parseModuleType p =
+  and parseAtomicModuleType p =
     let startPos = p.Parser.startPos in
     let moduleType = match p.Parser.token with
     | Uident _ ->
@@ -3817,13 +3849,13 @@ let rec goToClosing closingToken state =
       Parser.next p;
       let mty = parseModuleType p in
       Parser.expectExn Rparen p;
-      mty
+      {mty with pmty_loc = mkLoc startPos p.prevEndPos}
     | Lbrace ->
       Parser.next p;
       let spec = parseSpecification p in
       Parser.expectExn Rbrace p;
       spec
-    | Module ->
+    | Module -> (* TODO: check if this is still atomic when implementing first class modules*)
       parseModuleTypeOf p
     | Percent ->
       let (loc, extension) = parseExtension p in
@@ -3831,36 +3863,86 @@ let rec goToClosing closingToken state =
     | token -> raise (Parser.ParseError (p.startPos, Report.Unexpected token))
     in
     let moduleTypeLoc = mkLoc startPos p.prevEndPos in
-    let moduleType = {moduleType with pmty_loc = moduleTypeLoc} in
+    {moduleType with pmty_loc = moduleTypeLoc}
+
+  and parseFunctorModuleType p =
+    let args = parseFunctorArgs p in
+    Parser.expect EqualGreater p;
+    let rhs = parseModuleType p in
+    let endPos = p.prevEndPos in
+    List.fold_right (fun (attrs, name, moduleType, startPos) acc ->
+      Ast_helper.Mty.functor_
+        ~loc:(mkLoc startPos endPos)
+        ~attrs
+        name moduleType acc
+    ) args rhs
+
+  (* Module types are the module-level equivalent of type expressions: they
+   * specify the general shape and type properties of modules.
+   *
+   * module-type ::=
+   *  | modtype-path
+   *  | { signature }
+   *  | ( module-type )               --> parenthesized module-type
+   *  | functor-args => module-type   --> functor
+   *  | module type of module-expr
+   *  | attributes module-type
+   *)
+   and parseModuleType ?(es6Arrow=true) ?(with_=true) p =
+    let attrs = parseAttributes p in
+    let modty = if es6Arrow && isEs6ArrowFunctor p then
+      parseFunctorModuleType p
+    else
+      let modty = parseAtomicModuleType p in
+      match p.Parser.token with
+      | EqualGreater when es6Arrow == true ->
+        Parser.next p;
+        let rhs = parseModuleType ~with_:false p in
+        let str = Location.mknoloc "_" in
+        let loc = mkLoc modty.pmty_loc.loc_start p.prevEndPos in
+        Ast_helper.Mty.functor_ ~loc str (Some modty) rhs
+      | _ -> modty
+    in
+    let moduleType = { modty with
+      pmty_attributes = modty.pmty_attributes @ attrs
+    } in
+    if with_ then
+      parseWithConstraints moduleType p
+    else moduleType
+
+
+  and parseWithConstraints moduleType p =
     match p.Parser.token with
     | With ->
-      let constraints = parseWithConstraints p in
-      let loc = mkLoc startPos p.prevEndPos in
+      Parser.next p;
+      let first = parseWithConstraint p in
+      let rec loop p acc =
+        match p.Parser.token with
+        | And ->
+          Parser.next p;
+          loop p ((parseWithConstraint p)::acc)
+        | _ ->
+          List.rev acc
+      in
+      let constraints = loop p [first] in
+      let loc = mkLoc moduleType.pmty_loc.loc_start p.prevEndPos in
       Ast_helper.Mty.with_ ~loc moduleType constraints
     | _ ->
       moduleType
 
-  and parseWithConstraints p =
-    Parser.expectExn With p;
-    let first = parseWithConstraint p in
-    let rec loop p acc =
-      match p.Parser.token with
-      | And ->
-        Parser.next p;
-        loop p ((parseWithConstraint p)::acc)
-      | _ ->
-        List.rev acc
-    in loop p [first]
-
+  (* mod-constraint	::=
+   *  |  type typeconstr<type-params> type-equation type-constraints?
+   *  ∣	 type typeconstr-name<type-params> := typexpr
+   *  ∣	 module module-path = extended-module-path
+   *  ∣	 module module-path :=  extended-module-path *)
   and parseWithConstraint p =
     match p.Parser.token with
     | Module ->
       Parser.next p;
       let modulePath = parseModuleLongIdent p in
       begin match p.Parser.token with
-      | Colon ->
+      | ColonEqual ->
         Parser.next p;
-        Parser.expectExn Equal p;
         let lident = parseModuleLongIdent p in
         Parsetree.Pwith_modsubst (modulePath, lident)
       | Equal ->
@@ -3874,13 +3956,13 @@ let rec goToClosing closingToken state =
       let typeConstr = parseValuePath p in
       let params = parseTypeParams p in
       begin match p.Parser.token with
-      | Colon ->
+      | ColonEqual ->
         Parser.next p;
-        Parser.expectExn Equal p;
         let typExpr = parseTypExpr p in
         Parsetree.Pwith_typesubst (
           typeConstr,
           Ast_helper.Type.mk
+            ~loc:typeConstr.loc
             ~params
             ~manifest:typExpr
             (Location.mkloc (Longident.last typeConstr.txt) typeConstr.loc)
@@ -3892,6 +3974,7 @@ let rec goToClosing closingToken state =
         Parsetree.Pwith_type (
           typeConstr,
           Ast_helper.Type.mk
+            ~loc:typeConstr.loc
             ~params
             ~manifest:typExpr
             ~cstrs:typeConstraints
@@ -3902,11 +3985,12 @@ let rec goToClosing closingToken state =
     | token -> raise (Parser.ParseError (p.startPos, Report.Unexpected token))
 
   and parseModuleTypeOf p =
+    let startPos = p.Parser.startPos in
     Parser.expectExn Module p;
     Parser.expectExn Typ p;
     Parser.expectExn Of p;
     let moduleExpr = parseModuleExpr p in
-    Ast_helper.Mty.typeof_ moduleExpr
+    Ast_helper.Mty.typeof_ ~loc:(mkLoc startPos p.prevEndPos) moduleExpr
 
   and parseSpecification p =
     (* { consumed *)
@@ -3980,6 +4064,7 @@ let rec goToClosing closingToken state =
     Ast_helper.Sig.module_ (Ast_helper.Md.mk ~attrs moduleName body)
 
   and parseModuleTypeDeclaration ~attrs p =
+    let startPos = p.Parser.startPos in
     Parser.expectExn Typ p;
     let moduleName = match p.Parser.token with
     | Uident ident ->
@@ -3994,7 +4079,7 @@ let rec goToClosing closingToken state =
     | _ -> None
     in
     let moduleDecl = Ast_helper.Mtd.mk ~attrs ?typ moduleName in
-    Ast_helper.Sig.modtype moduleDecl
+    Ast_helper.Sig.modtype ~loc:(mkLoc startPos p.prevEndPos) moduleDecl
 
   and parseSignLetDesc p =
     Parser.expectExn Let p;
@@ -4005,7 +4090,7 @@ let rec goToClosing closingToken state =
       Location.mkloc ident (mkLoc nameStartPos p.prevEndPos)
     | _ -> raise (Parser.ParseError (p.startPos, Report.Lident))
     in
-    Parser.expectExn Colon p;
+    Parser.expect Colon p;
     let typExpr = parsePolyTypeExpr p in
     let valueDesc = Ast_helper.Val.mk name typExpr in
     Ast_helper.Sig.value valueDesc
