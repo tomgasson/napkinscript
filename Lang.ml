@@ -1840,7 +1840,73 @@ let rec goToClosing closingToken state =
     Parser.eatBreadcrumb p;
     expr
 
-  (* TODO: is this "operand"-arg a clear API? probably not with positions… *)
+  and parseBracketAccess p expr startPos =
+    Parser.leaveBreadcrumb p ExprArrayAccess;
+    let lbracket = p.startPos in
+    Parser.next p;
+    match p.Parser.token with
+    | String s ->
+      Parser.next p;
+      Parser.expect Rbracket p;
+      let e = Ast_helper.Exp.apply
+        (Ast_helper.Exp.ident (Location.mknoloc (Longident.Lident "##")))
+        [Nolabel, expr; Nolabel, (Ast_helper.Exp.ident (Location.mknoloc (Longident.Lident s)))]
+      in
+      let e = parsePrimaryExpr ~operand:e p in
+      begin match p.token with
+      | Equal ->
+        Parser.next p;
+        let rhsExpr = parseExpr p in
+        Ast_helper.Exp.apply
+          (Ast_helper.Exp.ident (Location.mknoloc (Longident.Lident "#=")))
+          [Nolabel, e; Nolabel, rhsExpr]
+      | _ -> e
+      end
+    | _ ->
+      let accessExpr = parseConstrainedExpr p in
+      Parser.expect Rbracket p;
+      let rbracket = p.prevEndPos in
+      let arrayLoc = mkLoc lbracket rbracket in
+      begin match p.token with
+      | Equal ->
+        Parser.leaveBreadcrumb p ExprArrayMutation;
+        Parser.next p;
+        let rhsExpr = parseExpr p in
+        let arraySet = Location.mkloc
+          (Longident.Ldot(Lident "Array", "set"))
+          arrayLoc
+        in
+        let endPos = p.prevEndPos in
+        let arraySet = Ast_helper.Exp.apply
+          ~loc:(mkLoc startPos endPos)
+          (Ast_helper.Exp.ident ~loc:arrayLoc arraySet)
+          [Nolabel, expr; Nolabel, accessExpr; Nolabel, rhsExpr]
+        in
+        Parser.eatBreadcrumb p;
+        arraySet
+      | _ ->
+        let endPos = p.prevEndPos in
+        let e =
+          Ast_helper.Exp.apply
+            ~loc:(mkLoc startPos endPos)
+            (Ast_helper.Exp.ident
+              ~loc:arrayLoc
+              (Location.mkloc (Longident.Ldot(Lident "Array", "get")) arrayLoc)
+              )
+            [Nolabel, expr; Nolabel, accessExpr]
+        in
+        Parser.eatBreadcrumb p;
+        parsePrimaryExpr ~operand:e p
+      end
+
+  (* * A primary expression represents
+   *  - atomic-expr
+   *  - john.age
+   *  - array[0]
+   *  - applyFunctionTo(arg1, arg2)
+   *
+   *  The "operand" represents the expression that is operated on
+   *)
   and parsePrimaryExpr ?operand ?(noCall=false) p =
     let startPos = p.Parser.startPos in
     let e1 = match operand with
@@ -1867,44 +1933,7 @@ let rec goToClosing closingToken state =
           loop p (Ast_helper.Exp.field ~loc expr lident)
         end
       | Lbracket when noCall = false ->
-        Parser.leaveBreadcrumb p ExprArrayAccess;
-        let lbracket = p.startPos in
-        Parser.next p;
-        let accessExpr = parseConstrainedExpr p in
-        Parser.expectExn Rbracket p;
-        let rbracket = p.prevEndPos in
-        let arrayLoc = mkLoc lbracket rbracket in
-        begin match p.token with
-        | Equal ->
-          Parser.leaveBreadcrumb p ExprArrayMutation;
-          Parser.next p;
-          let rhsExpr = parseExpr p in
-          let arraySet = Location.mkloc
-            (Longident.Ldot(Lident "Array", "set"))
-            arrayLoc
-          in
-          let endPos = p.prevEndPos in
-          let arraySet = Ast_helper.Exp.apply
-            ~loc:(mkLoc startPos endPos)
-            (Ast_helper.Exp.ident ~loc:arrayLoc arraySet)
-            [Nolabel, expr; Nolabel, accessExpr; Nolabel, rhsExpr]
-          in
-          Parser.eatBreadcrumb p;
-          arraySet
-        | _ ->
-          let endPos = p.prevEndPos in
-          let e = loop p
-            (Ast_helper.Exp.apply
-              ~loc:(mkLoc startPos endPos)
-              (Ast_helper.Exp.ident
-                ~loc:arrayLoc
-                (Location.mkloc (Longident.Ldot(Lident "Array", "get")) arrayLoc)
-              )
-              [Nolabel, expr; Nolabel, accessExpr])
-          in
-          Parser.eatBreadcrumb p;
-          e
-        end
+        parseBracketAccess p expr startPos
       | Lparen when noCall = false ->
         loop p (parseCallExpr p expr)
       | _ -> expr
