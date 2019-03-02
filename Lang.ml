@@ -3430,10 +3430,11 @@ let rec goToClosing closingToken state =
     in
     let typeDef = parseTypeDef ~attrs p in
     let rec loop p defs =
+      let attrs = parseAttributesAndBinding p in
       match p.Parser.token with
       | And ->
         Parser.next p;
-        let typeDef = parseTypeDef p in
+        let typeDef = parseTypeDef ~attrs p in
         loop p (typeDef::defs)
       | _ ->
         List.rev defs
@@ -3713,7 +3714,9 @@ let rec goToClosing closingToken state =
    *  ∣	functorArgs =>  module-expr
    *  ∣	module-expr(module-expr)
    *  ∣	( module-expr )
-   *  ∣	( module-expr : module-type ) *)
+   *  ∣	( module-expr : module-type )
+   *  | extension
+   *  | attributes module-expr *)
   and parseModuleExpr ?(attrs=[]) p =
     let attrs = parseAttributes p in
     let modExpr = if isEs6ArrowFunctor p then
@@ -3885,8 +3888,11 @@ let rec goToClosing closingToken state =
    *  | { signature }
    *  | ( module-type )               --> parenthesized module-type
    *  | functor-args => module-type   --> functor
+   *  | module-type => module-type    --> functor
    *  | module type of module-expr
    *  | attributes module-type
+   *  | module-type with-mod-constraints
+   *  | extension
    *)
    and parseModuleType ?(es6Arrow=true) ?(with_=true) p =
     let attrs = parseAttributes p in
@@ -3998,7 +4004,7 @@ let rec goToClosing closingToken state =
       let item = parseSignatureItem p in
       let () = match p.Parser.token with
       | Semicolon -> Parser.next p
-      | Let | Typ | AtAt | PercentPercent | External | Exception | Open | Include | Module | Rbrace | Eof -> ()
+      | Let | Typ | At | AtAt | PercentPercent | External | Exception | Open | Include | Module | Rbrace | Eof -> ()
       | _ -> Parser.expectExn Semicolon p
       in
       let spec = (item::spec) in
@@ -4012,7 +4018,7 @@ let rec goToClosing closingToken state =
     let attrs = parseAttributes p in
     match p.Parser.token with
     | Let ->
-      parseSignLetDesc p
+      parseSignLetDesc ~attrs p
     | Typ ->
       let (recFlag, typeDecls) = parseTypeDefinition ~attrs p in
       Ast_helper.Sig.type_ recFlag typeDecls
@@ -4025,7 +4031,7 @@ let rec goToClosing closingToken state =
     | Include ->
       Parser.next p;
       let moduleType = parseModuleType p in
-      let includeDescription = Ast_helper.Incl.mk moduleType in
+      let includeDescription = Ast_helper.Incl.mk ~attrs moduleType in
       Ast_helper.Sig.include_ includeDescription
     | Module ->
       Parser.next p;
@@ -4041,7 +4047,7 @@ let rec goToClosing closingToken state =
       Ast_helper.Sig.attribute ~loc attr
     | PercentPercent ->
       let (loc, extension) = parseExtension ~moduleLanguage:true p in
-      Ast_helper.Sig.extension ~loc extension
+      Ast_helper.Sig.extension ~attrs ~loc extension
     | token -> raise (Parser.ParseError (p.startPos, Report.Unexpected token))
 
   and parseModuleDeclarationOrAlias ~attrs p =
@@ -4066,6 +4072,7 @@ let rec goToClosing closingToken state =
   and parseModuleTypeDeclaration ~attrs p =
     let startPos = p.Parser.startPos in
     Parser.expectExn Typ p;
+    (* We diverge from ocaml here by requiring uident instead of ident *)
     let moduleName = match p.Parser.token with
     | Uident ident ->
       Parser.next p;
@@ -4081,7 +4088,7 @@ let rec goToClosing closingToken state =
     let moduleDecl = Ast_helper.Mtd.mk ~attrs ?typ moduleName in
     Ast_helper.Sig.modtype ~loc:(mkLoc startPos p.prevEndPos) moduleDecl
 
-  and parseSignLetDesc p =
+  and parseSignLetDesc ~attrs p =
     Parser.expectExn Let p;
     let name = match p.Parser.token with
     | Lident ident ->
@@ -4092,7 +4099,7 @@ let rec goToClosing closingToken state =
     in
     Parser.expect Colon p;
     let typExpr = parsePolyTypeExpr p in
-    let valueDesc = Ast_helper.Val.mk name typExpr in
+    let valueDesc = Ast_helper.Val.mk ~attrs name typExpr in
     Ast_helper.Sig.value valueDesc
 
 (*    attr-id	::=	lowercase-ident

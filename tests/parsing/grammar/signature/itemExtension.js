@@ -4,4 +4,7 @@ module type Ext = {
   %%item.extension.with.args("argument")
 
   %%item.extension.with.args(x => f(x))
+
+  @withAttr
+  %%item.extension
 }
