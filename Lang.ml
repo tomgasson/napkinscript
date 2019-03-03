@@ -3785,8 +3785,8 @@ let rec goToClosing closingToken state =
     Ast_helper.Str.modtype ~loc moduleTypeDeclaration
 
   (* definition	::=
-    ∣	 module rec module-name :  module-type =  module-expr   { and module-name :  module-type =  module-expr }
-    |  module module-name  { ( module-name :  module-type ) }  [ : module-type ]  =  module-expr *)
+    ∣	 module rec module-name :  module-type =  module-expr   { and module-name
+    :  module-type =  module-expr } *)
   and parseMaybeRecModuleBinding ~attrs p =
     if Parser.optional p Token.Rec then
       Ast_helper.Str.rec_module (parseModuleBindings ~attrs p)
@@ -4038,6 +4038,10 @@ let rec goToClosing closingToken state =
       begin match p.Parser.token with
       | Uident _ ->
         parseModuleDeclarationOrAlias ~attrs p
+      | Rec ->
+        Ast_helper.Sig.rec_module (
+          parseRecModuleSpec ~attrs p
+        )
       | Typ ->
         parseModuleTypeDeclaration ~attrs p
       | _ -> raise (Parser.ParseError (p.startPos, Report.Uident))
@@ -4049,6 +4053,43 @@ let rec goToClosing closingToken state =
       let (loc, extension) = parseExtension ~moduleLanguage:true p in
       Ast_helper.Sig.extension ~attrs ~loc extension
     | token -> raise (Parser.ParseError (p.startPos, Report.Unexpected token))
+
+  (* module rec module-name :  module-type  { and module-name:  module-type } *)
+  and parseRecModuleSpec ~attrs p =
+    Parser.expect Rec p;
+    let rec loop p spec =
+      let attrs = parseAttributesAndBinding p in
+      match p.Parser.token with
+      | And ->
+        (* TODO: give a good error message when with constraint, no parens
+         * and ASet: (Set.S with type elt = A.t)
+         * and BTree: (Btree.S with type elt = A.t)
+         * Without parens, the `and` signals the start of another
+         * `with-constraint`
+         *)
+        Parser.expect And p;
+        let decl = parseRecModuleDeclaration ~attrs p in
+        loop p (decl::spec)
+      | _ ->
+        List.rev spec
+    in
+    let first = parseRecModuleDeclaration ~attrs p in
+    loop p [first]
+
+  (* module-name : module-type *)
+  and parseRecModuleDeclaration ~attrs p =
+    let name = match p.Parser.token with
+    | Uident modName ->
+      let loc = mkLoc p.startPos p.endPos in
+      Parser.next p;
+      Location.mkloc modName loc
+    | _ -> raise (Parser.ParseError (p.startPos, Report.Uident))
+    in
+    Parser.expect Colon p;
+    let modType = parseModuleType p in
+    Ast_helper.Md.mk ~attrs name modType
+
+
 
   and parseModuleDeclarationOrAlias ~attrs p =
     let moduleName = match p.Parser.token with
