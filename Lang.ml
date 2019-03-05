@@ -368,6 +368,14 @@ end
 module Lex = struct
   type mode = Normal | Template | Tuple | Jsx | Diamond
 
+  let string_of_mode = function
+    | Normal -> "normal"
+    | Template -> "template"
+    | Tuple -> "tuple"
+    | Jsx -> "jsx"
+    | Diamond -> "diamond"
+
+
   type lexbuf = {
     filename: string;
     src: bytes;
@@ -376,23 +384,49 @@ module Lex = struct
     mutable rdOffset: int; (* reading offset (position after current character) *)
     mutable lineOffset: int; (* current line offset *)
     mutable lnum: int; (* current line number *)
-    mutable mode: mode;
+    mutable mode: mode list;
   }
 
   let setNormalMode lexbuf =
-    lexbuf.mode <- Normal
+    lexbuf.mode <- Normal::lexbuf.mode
 
 	let setDiamondMode lexbuf =
-		lexbuf.mode <- Diamond
+		lexbuf.mode <- Diamond::lexbuf.mode
 
   let setTemplateMode lexbuf =
-    lexbuf.mode <- Template
+    lexbuf.mode <- Template::lexbuf.mode
 
   let setTupleMode lexbuf =
-    lexbuf.mode <- Tuple
+    lexbuf.mode <- Tuple::lexbuf.mode
 
   let setJsxMode lexbuf =
-    lexbuf.mode <- Jsx
+    lexbuf.mode <- Jsx::lexbuf.mode
+
+  let popMode lexbuf mode =
+    match lexbuf.mode with
+    | m::ms when m = mode ->
+      lexbuf.mode <- ms
+    | _ -> ()
+
+  let inNormalMode lexbuf = match lexbuf.mode with
+    | Normal::_ -> true
+    | _ -> false
+
+  let inTupleMode lexbuf = match lexbuf.mode with
+    | Tuple::_ -> true
+    | _ -> false
+
+  let inDiamondMode lexbuf = match lexbuf.mode with
+    | Diamond::_ -> true
+    | _ -> false
+
+  let inJsxMode lexbuf = match lexbuf.mode with
+    | Jsx::_ -> true
+    | _ -> false
+
+  let inTemplateMode lexbuf = match lexbuf.mode with
+    | Template::_ -> true
+    | _ -> false
 
   let position lexbuf = Lexing.{
     pos_fname = lexbuf.filename;
@@ -443,7 +477,7 @@ module Lex = struct
       rdOffset = 0;
       lineOffset = 0;
       lnum = 1;
-      mode = Normal;
+      mode = [Normal];
     } in
     next lexbuf;
     lexbuf
@@ -557,7 +591,7 @@ module Lex = struct
         let contents =
           Bytes.sub_string lexbuf.src startOff (lexbuf.offset - 1 - startOff)
         in
-        setNormalMode lexbuf;
+        popMode lexbuf Template;
         Token.TemplateTail contents
       ) else if lexbuf.ch == CharacterCodes.dollar &&
                 peek lexbuf == CharacterCodes.lbrace
@@ -567,7 +601,7 @@ module Lex = struct
           let contents =
             Bytes.sub_string lexbuf.src startOff (lexbuf.offset - 2 - startOff)
           in
-          setNormalMode lexbuf;
+          popMode lexbuf Template;
           Token.TemplatePart contents
       ) else (
         next lexbuf;
@@ -580,7 +614,7 @@ module Lex = struct
     skipWhitespace lexbuf;
     let startPos = position lexbuf in
     let ch = lexbuf.ch in
-    let token = if lexbuf.mode = Template then
+    let token = if inTemplateMode lexbuf then
       lexTemplate lexbuf
     else if ch == CharacterCodes.underscore then (
       let nextCh = peek lexbuf in
@@ -689,7 +723,7 @@ module Lex = struct
           next lexbuf;
           lexMultiLineComment lexbuf
         ) else (
-          if lexbuf.mode = Tuple then
+          if inTupleMode lexbuf then
             lexForwardSlashOrTupleEnding lexbuf
           else
           Token.Forwardslash
@@ -718,14 +752,22 @@ module Lex = struct
           Token.Plus
         )
       else if ch == CharacterCodes.greaterThan then
-        if lexbuf.ch == CharacterCodes.equal && lexbuf.mode != Diamond then (
+        if lexbuf.ch == CharacterCodes.equal && not (inDiamondMode lexbuf) then (
           next lexbuf;
           Token.GreaterEqual
         ) else (
           Token.GreaterThan
         )
       else if ch == CharacterCodes.lessThan then
-        if lexbuf.mode = Jsx then (
+        (* Imagine the following: <div><
+         * < indicates the start of a new jsx-element, the parser expects
+         * the name of a new element after the <
+         * Example: <div> <div
+         * But what if we have a / here: example </ in  <div></div>
+         * This signals a closing element. To simulate the two-token lookahead,
+         * the </ is emitted as a single new token LessThanSlash *)
+        if inJsxMode lexbuf then (
+          let () = skipWhitespace lexbuf in
           if lexbuf.ch == CharacterCodes.forwardslash then
             let () = next lexbuf in
             Token.LessThanSlash
@@ -785,17 +827,31 @@ module Lex = struct
 
   and lexForwardSlashOrTupleEnding lexbuf =
     let cb lexbuf =
-      let (_, _, token) = lex lexbuf in
+      let (startPos, _, token) = lex lexbuf in
       match token with
-      | Int _ | Lident _ | Uident _ | Lparen | Minus | Plus
+      | Lident _ ->
+        next lexbuf;
+        if lexbuf.ch != CharacterCodes.equal then
+          Token.TupleEnding
+        else
+          Token.Forwardslash
+      | GreaterThan
+      | Int _ | Uident _ | Lparen | Minus | Plus
       | Lazy | If | For | While | Switch | At -> Token.Forwardslash
       | _ -> TupleEnding
     in
     let result = lookahead lexbuf cb in
-    setNormalMode lexbuf;
+    if result = TupleEnding then popMode lexbuf Tuple;
     result
 
-  let rescanLessThan lexbuf =
+  (* Imagine: <div> <Navbar /> <
+   * is `<` the start of a jsx-child? <div …
+   * or is it the start of a closing tag?  </div>
+   * reconsiderLessThan peeks at the next token and
+   * determines the correct token to disambiguate *)
+  let reconsiderLessThan lexbuf =
+    (* < consumed *)
+    skipWhitespace lexbuf;
     if lexbuf.ch == CharacterCodes.forwardslash then
       let () = next lexbuf in
       Token.LessThanSlash
@@ -978,31 +1034,32 @@ module LangParser = struct
       callback parserStateCopy
   end
 
+  let jsxAttr = (Location.mknoloc "JSX", Parsetree.PStr [])
 
-type context =
-  | OrdinaryExpr
-  | TernaryTrueBranchExpr
-  | WhenExpr
+  type context =
+    | OrdinaryExpr
+    | TernaryTrueBranchExpr
+    | WhenExpr
 
-let getClosingToken = function
-  | Token.Lparen -> Token.Rparen
-  | Lbrace -> Rbrace
-  | Lbracket -> Rbracket
-  | _ -> assert false
+  let getClosingToken = function
+    | Token.Lparen -> Token.Rparen
+    | Lbrace -> Rbrace
+    | Lbracket -> Rbracket
+    | _ -> assert false
 
-let rec goToClosing closingToken state =
-  match (state.Parser.token, closingToken) with
-  | (Rparen, Token.Rparen) | (Rbrace, Rbrace) | (Rbracket, Rbracket) ->
-    Parser.next state; ()
-  | (Token.Lbracket | Lparen | Lbrace) as t, _ ->
-    Parser.next state;
-    goToClosing (getClosingToken t) state;
-    goToClosing closingToken state
-  | ((Rparen | Token.Rbrace | Rbracket | Eof), _)  ->
-    raise (Parser.ParseError (state.startPos, Report.Unbalanced closingToken))
-  | _ ->
-    Parser.next state;
-    goToClosing closingToken state
+  let rec goToClosing closingToken state =
+    match (state.Parser.token, closingToken) with
+    | (Rparen, Token.Rparen) | (Rbrace, Rbrace) | (Rbracket, Rbracket) ->
+      Parser.next state; ()
+    | (Token.Lbracket | Lparen | Lbrace) as t, _ ->
+      Parser.next state;
+      goToClosing (getClosingToken t) state;
+      goToClosing closingToken state
+    | ((Rparen | Token.Rbrace | Rbracket | Eof), _)  ->
+      raise (Parser.ParseError (state.startPos, Report.Unbalanced closingToken))
+    | _ ->
+      Parser.next state;
+      goToClosing closingToken state
 
   (* Madness *)
   let isEs6ArrowExpression ~inTernary p =
@@ -1176,18 +1233,6 @@ let rec goToClosing closingToken state =
     in
     handle_seq seq
 
-    let verifyJsxOpeningClosingName nameExpr closingName =
-      match nameExpr.Parsetree.pexp_desc with
-      | Pexp_ident openingIdent ->
-          let openingName = List.hd (Longident.flatten openingIdent.txt) in
-          openingName = closingName
-      | _ -> assert false
-
-    let string_of_pexp_ident nameExpr =
-      match nameExpr.Parsetree.pexp_desc with
-      | Pexp_ident openingIdent ->
-        List.hd (Longident.flatten openingIdent.txt)
-      | _ -> ""
 
   (* Ldot (Ldot (Lident "Foo", "Bar"), "baz") *)
   let parseValuePath p =
@@ -1252,6 +1297,35 @@ let rec goToClosing closingToken state =
     in
     (* Parser.eatBreadcrumb p; *)
     moduleIdent
+
+  let verifyJsxOpeningClosingName p nameExpr =
+    let closing = match p.Parser.token with
+    | Lident lident -> Parser.next p; Longident.Lident lident
+    | Uident _ ->
+      (parseModuleLongIdent p).txt
+    | _ -> Longident.Lident ""
+    in
+    match nameExpr.Parsetree.pexp_desc with
+    | Pexp_ident openingIdent ->
+      let opening =
+        let withoutCreateElement =
+          Longident.flatten openingIdent.txt
+          |> List.filter (fun s -> s <> "createElement")
+        in
+        match (Longident.unflatten withoutCreateElement) with
+        | Some li -> li
+        | None -> Longident.Lident ""
+      in
+      opening = closing
+    | _ -> assert false
+
+  let string_of_pexp_ident nameExpr =
+    match nameExpr.Parsetree.pexp_desc with
+    | Pexp_ident openingIdent ->
+      Longident.flatten openingIdent.txt
+      |> List.filter (fun s -> s <> "createElement")
+      |> String.concat "."
+    | _ -> ""
 
   (* open-def ::=
    *   | open module-path
@@ -1923,7 +1997,7 @@ let rec goToClosing closingToken state =
         Parser.next p;
         let lident = parseValuePath p in
         begin match p.Parser.token with
-        | Equal ->
+        | Equal when noCall = false ->
           Parser.leaveBreadcrumb p ExprSetField;
           Parser.next p;
           let endPos = p.prevEndPos in
@@ -1986,7 +2060,9 @@ let rec goToClosing closingToken state =
     let attrs = parseAttributes p in
     let expr = parseUnaryExpr p in
     let endPos = p.Parser.prevEndPos in
-    {expr with pexp_attributes = attrs; pexp_loc = mkLoc startPos endPos}
+    {expr with
+      pexp_attributes = expr.Parsetree.pexp_attributes @ attrs;
+      pexp_loc = mkLoc startPos endPos}
 
   (* a binary expression is an expression that combines two expressions with an
    * operator. Examples:
@@ -2157,108 +2233,116 @@ let rec goToClosing closingToken state =
    * Foo.Bar -> Foo.Bar.createElement
    *)
   and parseJsxName p =
-    let (ident, loc) = match p.Parser.token with
+    let longident = match p.Parser.token with
     | Lident ident ->
       let identStart = p.startPos in
+      let identEnd = p.endPos in
       Parser.next p;
-      let identEnd = p.prevEndPos in
       let loc = mkLoc identStart identEnd in
-      (Longident.Lident ident, loc)
+      Location.mkloc (Longident.Lident ident) loc
     | Uident _ ->
       let longident = parseModuleLongIdent p in
-      let identName = (Longident.Ldot (longident.txt, "createElement")) in
-      (identName, longident.loc)
+      Location.mkloc (Longident.Ldot (longident.txt, "createElement")) longident.loc
     | _ ->
-        raise (Parser.ParseError (p.startPos,
+      raise (Parser.ParseError (p.startPos,
       Report.Message "A jsx name should start with a lowercase or uppercase identifier, like: div in <div /> or Navbar in <Navbar />"))
     in
-    Ast_helper.Exp.ident ~loc (Location.mkloc ident loc)
+    Ast_helper.Exp.ident ~loc:longident.loc longident
+
+  and parseJsxOpeningOrSelfClosingElement p =
+    let jsxStartPos = p.Parser.startPos in
+    let name = parseJsxName p in
+    let jsxProps = parseJsxProps p in
+    let children = match p.Parser.token with
+    | Forwardslash -> (* <foo a=b /> *)
+      let childrenStartPos = p.Parser.startPos in
+      Parser.next p;
+      let childrenEndPos = p.Parser.startPos in
+      Parser.expectExn GreaterThan p;
+      let loc = mkLoc childrenStartPos childrenEndPos in
+      makeListExpression loc [] None (* no children *)
+    | GreaterThan -> (* <foo a=b> bar </foo> *)
+      let childrenStartPos = p.Parser.startPos in
+      Lex.setJsxMode p.lexbuf;
+      Parser.next p;
+      let (spread, children) = parseJsxChildren p in
+      let childrenEndPos = p.Parser.startPos in
+      let () = match p.token with
+      | LessThanSlash -> Parser.next p
+      | LessThan -> Parser.next p; Parser.expectExn Forwardslash p
+      | _ -> Parser.expectExn LessThanSlash p
+      in
+      begin match p.Parser.token with
+      | Lident _ | Uident _ when verifyJsxOpeningClosingName p name ->
+        Parser.expectExn GreaterThan p;
+        let loc = mkLoc childrenStartPos childrenEndPos in
+        if spread then
+          List.hd children
+        else
+          makeListExpression loc children None
+      | _ ->
+        let opening = "</" ^ (string_of_pexp_ident name) ^ ">" in
+        let message = "Closing jsx name should be the same as the opening name. Did you mean " ^ opening ^ " ?" in
+        raise (Parser.ParseError (p.startPos, Report.Message message))
+      end
+    | unknownToken -> raise (Parser.ParseError (p.startPos, Report.Unexpected unknownToken))
+    in
+    let jsxEndPos = p.prevEndPos in
+    let loc = mkLoc jsxStartPos jsxEndPos in
+    Ast_helper.Exp.apply
+      ~loc
+      name
+      (jsxProps @ [
+        (Asttypes.Labelled "children", children);
+        (Asttypes.Nolabel, Ast_helper.Exp.construct (Location.mknoloc (Longident.Lident "()")) None)
+      ])
 
   (*
    *  jsx ::=
-   *    | <> {primary-expr} </>
-   *    | <element-name {jsx-attribute} />
-   *    | <element-name {jsx-attribute}> {primary-expr} </element-name>
+   *    | <> jsx-children </>
+   *    | <element-name {jsx-prop} />
+   *    | <element-name {jsx-prop}> jsx-children </element-name>
+   *
+   *  jsx-children ::= primary-expr*          * => 0 or more
    *)
   and parseJsx p =
     Parser.leaveBreadcrumb p Report.Jsx;
-    let jsxStartPos = p.Parser.startPos in
     Parser.expectExn LessThan p;
-    match p.Parser.token with
+    let jsxExpr = match p.Parser.token with
     | Lident _ | Uident _ ->
-      let name = parseJsxName p in
-      let jsxAttrs = parseJsxAttributes p in
-      let children = match p.Parser.token with
-      | Forwardslash -> (* <foo a=b /> *)
-        let childrenStartPos = p.Parser.startPos in
-        Parser.next p;
-        let childrenEndPos = p.Parser.startPos in
-        Parser.expectExn GreaterThan p;
-        let loc = mkLoc childrenStartPos childrenEndPos in
-        makeListExpression loc [] None (* no children *)
-      | GreaterThan -> (* <foo a=b> bar </foo> *)
-        let childrenStartPos = p.Parser.startPos in
-        Lex.setJsxMode p.lexbuf;
-        Parser.next p;
-        let children = parseJsxChildren p in
-        let childrenEndPos = p.Parser.startPos in
-        let () = match p.token with
-        | LessThanSlash ->
-          Parser.next p;
-          ()
-        | LessThan -> Parser.next p; Parser.expectExn Forwardslash p
-        | _ -> Parser.expectExn LessThanSlash p
-        in
-        begin match p.Parser.token with
-        | Lident closingIdent | Uident closingIdent ->
-          if verifyJsxOpeningClosingName name closingIdent then (
-            Parser.next p;
-            Parser.expectExn GreaterThan p;
-            let loc = mkLoc childrenStartPos childrenEndPos in
-            makeListExpression loc children None
-          ) else
-            let opening = "</" ^ (string_of_pexp_ident name) ^ ">" in
-            let message = "Closing jsx name should be the same as the opening name. Did you mean " ^ opening ^ " ?" in
-            raise (Parser.ParseError (p.startPos, Report.Message message))
-        | _ ->
-          let opening = "</" ^ (string_of_pexp_ident name) ^ ">" in
-          let message = "Closing jsx name should be the same as the opening name. Did you mean " ^ opening ^ " ?" in
-          raise (Parser.ParseError (p.startPos, Report.Message message))
-        end
-      | unknownToken -> raise (Parser.ParseError (p.startPos, Report.Unexpected unknownToken))
-      in
-      let jsxEndPos = p.prevEndPos in
-      let loc = mkLoc jsxStartPos jsxEndPos in
-      Ast_helper.Exp.apply
-        ~loc
-        name
-        (jsxAttrs @ [
-          (Asttypes.Labelled "childen", children);
-          (Asttypes.Nolabel, Ast_helper.Exp.construct (Location.mknoloc (Longident.Lident "()")) None)
-        ])
+      parseJsxOpeningOrSelfClosingElement p
     | GreaterThan -> (* fragment: <> foo </> *)
       parseJsxFragment p
     | _ ->
-        parseJsxName p
+      parseJsxName p
+    in
+    {jsxExpr with pexp_attributes = [jsxAttr]}
 
+  (*
+   * jsx-fragment ::=
+   *  | <> </>
+   *  | <> jsx-children </>
+   *)
   and parseJsxFragment p =
     let childrenStartPos = p.Parser.startPos in
+    Lex.setJsxMode p.lexbuf;
     Parser.expectExn GreaterThan p;
-    let children = parseJsxChildren p in
+    let (_spread, children) = parseJsxChildren p in
     let childrenEndPos = p.Parser.startPos in
     Parser.expectExn LessThanSlash p;
     Parser.expectExn GreaterThan p;
     let loc = mkLoc childrenStartPos childrenEndPos in
-    let fragment = makeListExpression loc children None in
-    let jsxAttr = (Location.mknoloc "JSX", Parsetree.PStr []) in
-    {fragment with pexp_attributes = [jsxAttr]}
+    makeListExpression loc children None
+
 
   (*
-   * jsx-attribute ::=
-   *   | [?] LIDENT
-   *   | LIDENT = [?] jsx_expr
+   * jsx-prop ::=
+   *   |  lident
+   *   | ?lident
+   *   |  lident =  jsx_expr
+   *   |  lident = ?jsx_expr
    *)
-  and parseJsxAttribute p =
+  and parseJsxProp p =
     Parser.leaveBreadcrumb p Report.JsxAttribute;
     let optional = Parser.optional p Question in
     let name = match p.Parser.token with
@@ -2268,7 +2352,7 @@ let rec goToClosing closingToken state =
     in
     (* optional punning: <foo ?a /> *)
     if optional then
-      (Asttypes.Labelled name, Ast_helper.Exp.ident (Location.mknoloc
+      (Asttypes.Optional name, Ast_helper.Exp.ident (Location.mknoloc
         (Longident.Lident name)))
     else begin
       match p.Parser.token with
@@ -2291,13 +2375,13 @@ let rec goToClosing closingToken state =
         (label, attrExpr)
     end
 
-  and parseJsxAttributes p =
-    let rec loop p attrs =
+  and parseJsxProps p =
+    let rec loop p props =
       match p.Parser.token with
-      | Token.Eof | Forwardslash | GreaterThan -> List.rev attrs
+      | Token.Eof | Forwardslash | GreaterThan -> List.rev props
       | _ ->
-        let attr = parseJsxAttribute p in
-        loop p (attr::attrs)
+        let prop = parseJsxProp p in
+        loop p (prop::props)
     in
     loop p []
 
@@ -2305,16 +2389,21 @@ let rec goToClosing closingToken state =
     let rec loop p children =
       match p.Parser.token  with
       | Token.Eof | LessThanSlash ->
-        Lex.setNormalMode p.lexbuf;
+        Lex.popMode p.lexbuf Jsx;
         List.rev children
       | LessThan ->
-        let token = Lex.rescanLessThan p.lexbuf in
+        (* Imagine: <div> <Navbar /> <
+         * is `<` the start of a jsx-child? <div …
+         * or is it the start of a closing tag?  </div>
+         * reconsiderLessThan peeks at the next token and
+         * determines the correct token to disambiguate *)
+        let token = Lex.reconsiderLessThan p.lexbuf in
         if token = LessThan then
           let child = parsePrimaryExpr ~noCall:true p in
           loop p (child::children)
-        else
+        else (* LessThanSlash *)
           let () = p.token <- token in
-          let () = Lex.setNormalMode p.lexbuf in
+          let () = Lex.popMode p.lexbuf Jsx in
           List.rev children
       | _ ->
         let child = parsePrimaryExpr ~noCall:true p in
@@ -2323,8 +2412,8 @@ let rec goToClosing closingToken state =
     match p.Parser.token with
     | DotDotDot ->
       Parser.next p;
-      [parsePrimaryExpr ~noCall:true p]
-    | _ -> loop p []
+      (true, [parsePrimaryExpr ~noCall:true p])
+    | _ -> (false, loop p [])
 
   and parseBracedOrRecordExpr p =
     let startPos = p.Parser.startPos in
@@ -2735,7 +2824,7 @@ let rec goToClosing closingToken state =
     let startPos = p.Parser.startPos in
     Parser.leaveBreadcrumb p ExprCall;
     let args = parseCommaSeparatedList ~closing:Rparen ~f:parseArgument p in
-    Parser.expectExn Rparen p;
+    Parser.expect Rparen p;
     let args = match args with
     | [] ->
       let loc = mkLoc startPos p.prevEndPos in
@@ -3070,7 +3159,7 @@ let rec goToClosing closingToken state =
 			parseCommaSeparatedList ~closing:GreaterThan ~f:parseTypExpr p
 		in
 		Parser.expect GreaterThan p;
-		Lex.setNormalMode p.lexbuf;
+		Lex.popMode p.lexbuf Diamond;
 		typeArgs
 
   and parseConstructorTypeArgs p =
@@ -3080,7 +3169,7 @@ let rec goToClosing closingToken state =
 			parseCommaSeparatedList ~closing:GreaterThan ~f:parseTypExpr p
 		in
 		Parser.expect GreaterThan p;
-		Lex.setNormalMode p.lexbuf;
+		Lex.popMode p.lexbuf Diamond;
 		typeArgs
 
   (* field-decl	::=	[mutable] field-name : poly-typexpr *)
