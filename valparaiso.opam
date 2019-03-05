@@ -1,5 +1,5 @@
 opam-version: "2.0"
-name: "valparaiso"
+name: "napkinscript"
 version: "0.1"
 synopsis: "One-line description"
 description: """
@@ -8,8 +8,8 @@ Longer description
 maintainer: "Iwan <valcke.maxim@gmail.com>"
 authors: "Iwan <valcke.maxim@gmail.com>"
 license: "MIT"
-homepage: "https://github.com/iwankaramazow/valparaiso"
-bug-reports: "https://github.com/iwankaramazow/valparaiso/issues"
+homepage: "https://github.com/iwankaramazow/napkinscript"
+bug-reports: "https://github.com/iwankaramazow/napkinscript/issues"
 depends: [ "ocaml" ]
 build: [
   [make "build"]

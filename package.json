@@ -1,5 +1,5 @@
 {
-  "name": "valparaiso",
+  "name": "napkinscript",
   "version": "0.0.1",
   "description": "",
   "main": "./src/Lang.ml",
@@ -16,12 +16,12 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/IwanKaramazow/Valparaiso.git"
+    "url": "git+https://github.com/IwanKaramazow/napkinscript.git"
   },
   "author": "Iwan ",
   "license": "MIT",
   "bugs": {
-    "url": "https://github.com/IwanKaramazow/Valparaiso/issues"
+    "url": "https://github.com/IwanKaramazow/napkinscript/issues"
   },
-  "homepage": "https://github.com/IwanKaramazow/Valparaiso#readme"
+  "homepage": "https://github.com/IwanKaramazow/napkingscript#readme"
 }

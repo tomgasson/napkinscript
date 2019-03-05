@@ -1,4 +1,4 @@
-# Valparaiso [![Build Status](https://travis-ci.org/IwanKaramazow/Valparaiso.svg?branch=master)](https://travis-ci.org/IwanKaramazow/Valparaiso) [![Build status](https://ci.appveyor.com/api/projects/status/a8d1hx0xi17tk14j?svg=true)](https://ci.appveyor.com/project/IwanKaramazow/valparaiso)
+# napkinscript [![Build Status](https://travis-ci.org/IwanKaramazow/napkinscript.svg?branch=master)](https://travis-ci.org/IwanKaramazow/napkinscript) [![Build status](https://ci.appveyor.com/api/projects/status/a8d1hx0xi17tk14j?svg=true)](https://ci.appveyor.com/project/IwanKaramazow/napkinscript)
 
 ## Setup
 
@@ -8,8 +8,8 @@ Required:
 - OS: Mac/Linux
 
 ```
-git clone git@github.com:IwanKaramazow/Valparaiso.git
-cd Valparaiso
+git clone git@github.com:IwanKaramazow/napkinscript.git
+cd napkinscript
 npm install
 
 opam switch create 4.06.1
