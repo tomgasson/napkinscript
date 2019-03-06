@@ -1,15 +1,14 @@
 {
   "name": "napkinscript",
-  "version": "0.0.1",
+  "version": "0.0.1-dev",
   "description": "",
   "main": "./src/Lang.ml",
-  "directories": {
-    "test": "tests"
+  "bin": {
+    "napkinscript": "./lib/napkinscript.exe"
   },
   "dependencies": {},
   "devDependencies": {
-    "jest": "^24.1.0",
-    "jest-snapshot-serializer-raw": "^1.1.0"
+    "jest": "^24.1.0"
   },
   "scripts": {
     "test": "make test"
@@ -18,7 +17,7 @@
     "type": "git",
     "url": "git+https://github.com/IwanKaramazow/napkinscript.git"
   },
-  "author": "Iwan ",
+  "author": "Iwan (valcke.maxim@gmail.com)",
   "license": "MIT",
   "bugs": {
     "url": "https://github.com/IwanKaramazow/napkinscript/issues"

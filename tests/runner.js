@@ -2,7 +2,7 @@ let path = require("path");
 let fs = require("fs");
 let cp = require("child_process");
 
-let parser = path.join(process.cwd(), "./_build/native.exe");
+let parser = path.join(process.cwd(), "./lib/napkinscript.exe");
 
 function parseFile(filename) {
   let cmd = `${parser} ${filename}\n`;
