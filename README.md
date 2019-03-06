@@ -1,6 +1,24 @@
 # napkinscript [![Build Status](https://travis-ci.org/IwanKaramazow/napkinscript.svg?branch=master)](https://travis-ci.org/IwanKaramazow/napkinscript) [![Build status](https://ci.appveyor.com/api/projects/status/a8d1hx0xi17tk14j?svg=true)](https://ci.appveyor.com/project/IwanKaramazow/napkinscript)
 
-## Setup
+## Getting Started
+Install napkinscript using [`yarn`](https://yarnpkg.com/en/package/jest):
+
+```bash
+yarn add --dev napkinscript
+```
+
+Or [`npm`](https://www.npmjs.com/):
+
+```bash
+npm install --save-dev napkinscript
+```
+
+Update your `bsconfig.json`:
+```javascript
+  "pp-flags": "napkinscript",
+```
+
+## Dev Setup
 
 Required:
 - [NodeJS](https://nodejs.org/) 
