@@ -75,6 +75,16 @@ type nonrec t =
   {
   x: ((int)[@onInt ]) [@rowAttr ];
   y: ((int)[@onInt ]) [@rowAttr2 ]}
+type nonrec t = {
+  form: form }
+type nonrec t = {
+  mutable form: form }
+type nonrec t = {
+  form: form ;
+  answers: answers }
+type nonrec t = {
+  mutable form: form ;
+  mutable answers: answers }
 "
 `;
 

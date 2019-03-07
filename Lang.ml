@@ -3188,8 +3188,13 @@ module LangParser = struct
       Location.mkloc ident loc
     | _ -> raise (Parser.ParseError (p.startPos, Report.Lident))
     in
-    Parser.expect Colon p;
-    let typ = parsePolyTypeExpr p in
+    let typ = match p.Parser.token with
+    | Colon ->
+      Parser.next p;
+      parsePolyTypeExpr p
+    | _ ->
+      Ast_helper.Typ.constr {name with txt = Lident name.txt} []
+    in
     let loc = mkLoc startPos typ.ptyp_loc.loc_end in
     Ast_helper.Type.field ~attrs ~loc ~mut name typ
 

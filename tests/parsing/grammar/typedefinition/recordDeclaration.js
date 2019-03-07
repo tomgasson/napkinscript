@@ -17,4 +17,8 @@ type t = {x: 'a 'b. polyType}
 type t = {@attr x: int, @attr2 y: int}
 type t = {@rowAttr x: @onInt int, @rowAttr2 y: @onInt int}
 
-
+// field-declaration punning
+type t = {form}
+type t = {mutable form}
+type t = {form, answers}
+type t = {mutable form, mutable answers}
