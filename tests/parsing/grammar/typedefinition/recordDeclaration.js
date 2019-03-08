@@ -22,3 +22,6 @@ type t = {form}
 type t = {mutable form}
 type t = {form, answers}
 type t = {mutable form, mutable answers}
+
+// parses bs object type correct
+type t = {. "age": int}

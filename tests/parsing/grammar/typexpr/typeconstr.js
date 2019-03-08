@@ -9,6 +9,10 @@ type t = Mod.Sub.t<a, b, c>
 type t = Mod.Sub.t<a, b, c,>
 type t = list
 type t = list<string>
+type t = list<{. "age": int}>
+type t = list<{. "age": int}, {. "name": string}>
+type t = {.} // Note: this compiles to bucklescript
+type t = {..} // Note: this compiles to bucklescript
 
 let t: string = x 
 let t: Parser.t = x
@@ -21,6 +25,10 @@ let t: Mod.Sub.t<a, b, c> = x
 let t: Mod.Sub.t<a, b, c,> = x
 let t: list = x
 let t: list<string> = x
+let t: list<{. "age": int}> = x
+let t: list<{. "age": int}, {. "name": string}> = x
+let t: list<{. }> = x // Note: this compiles to bucklescript
+let t: list<{..}> = x // Note: this compiles to bucklescript
 
 // >= isn't an infix op
 let t: list<string>= x

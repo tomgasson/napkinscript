@@ -112,6 +112,22 @@ let x = let a = 1 in let b = 2 in a + b
 "
 `;
 
+exports[`bsObject.js 1`] = `
+"let x = [%bs.obj { age = 30 }]
+let y = [%bs.obj { age = 30 }]
+let y = [%bs.obj { age = 30; name = \\"steve\\" }]
+let y = [%bs.obj { age = 30; name = \\"steve\\" }]
+let x = \\"age\\"
+let x = \\"age\\".(0)
+let x = \\"age\\" |. Js.log
+let x = if \\"age\\" then true else false
+let x = \\"age\\" |. Js.log; (let foo = 1 in let bar = 2 in foo + bar)
+let x =
+  if \\"age\\" then true else false; (let foo = 1 in let bar = 2 in foo + bar)
+let x = \\"age\\".(0); (let foo = 1 in let bar = 2 in foo + bar)
+"
+`;
+
 exports[`constants.js 1`] = `
 "let x = true
 let y = false

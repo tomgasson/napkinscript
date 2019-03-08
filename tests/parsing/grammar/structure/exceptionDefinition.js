@@ -1,7 +1,12 @@
 exception ExitEarly
 exception ExitEarly(int)
-exception ExitEarly{x: int} // overparse
 exception ExitEarly({x: int})
+exception ExitEarly({. "jsExit": int})
+exception ExitEarly({. "jsExit": int},)
+exception ExitEarly({. "jsExit": int}, {. "code": int})
+exception ExitEarly({. "jsExit": int}, int, {. "code": int},)
+exception ExitJsStyle({.})
+exception ExitJsStyle({..})
 
 @onConstructor
 exception ExitEarly

@@ -5,8 +5,12 @@ exports[`exceptionDefinition.js 1`] = `
 exception ExitEarly of int 
 exception ExitEarly of {
   x: int } 
-exception ExitEarly of {
-  x: int } 
+exception ExitEarly of < jsExit: int   >  Js.t 
+exception ExitEarly of < jsExit: int   >  Js.t 
+exception ExitEarly of < jsExit: int   >  Js.t * < code: int   >  Js.t 
+exception ExitEarly of < jsExit: int   >  Js.t * int * < code: int   >  Js.t 
+exception ExitJsStyle of <  >  Js.t 
+exception ExitJsStyle of < .. >  Js.t 
 exception ExitEarly [@onConstructor ]
 exception ExitEarly of int [@onConstructor ]
 exception Exit = Terminate
