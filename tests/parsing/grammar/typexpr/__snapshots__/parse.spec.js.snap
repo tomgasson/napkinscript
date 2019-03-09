@@ -100,8 +100,18 @@ type nonrec t = list
 type nonrec t = string list
 type nonrec t = < age: int   >  Js.t list
 type nonrec t = (< age: int   >  Js.t, < name: string   >  Js.t) list
-type nonrec t = <  >  Js.t
 type nonrec t = < .. >  Js.t
+type nonrec t = < .. >  Js.t list
+type nonrec t = < age: int   ;.. >  Js.t
+type nonrec t = < age: int   ;.. >  Js.t list
+type nonrec t = < age: int [@attr ]  ;.. >  Js.t
+type nonrec t = < age: int [@attr ]  ;.. >  Js.t list
+type nonrec t = < age: int [@attr ] ;name: string [@attr ]  ;.. >  Js.t
+type nonrec t = < age: int [@attr ] ;name: string [@attr ]  ;.. >  Js.t list
+type nonrec t = < age: int   ;.. >  Js.t
+type nonrec t = < age: int   ;.. >  Js.t list
+type nonrec t = < age: int  ;name: string   ;.. >  Js.t
+type nonrec t = < age: int  ;name: string   ;.. >  Js.t list
 let (t : string) = x
 let (t : Parser.t) = x
 let (t : Lang.Parser.t) = x
@@ -114,9 +124,24 @@ let (t : (a, b, c) Mod.Sub.t) = x
 let (t : list) = x
 let (t : string list) = x
 let (t : < age: int   >  Js.t list) = x
+let (t : < age: int   >  Js.t list) = x
+let (t : < age: int [@attr ]  >  Js.t list) = x
+let (t : < age: int [@attr ]  >  Js.t list) = x
+let (t : < age: int [@attr ] ;name: string [@attr ]  >  Js.t list) = x
 let (t : (< age: int   >  Js.t, < name: string   >  Js.t) list) = x
-let (t : <  >  Js.t list) = x
+let (t :
+  (< age: int [@attr ]  >  Js.t, < name: string [@attr ]  >  Js.t) list) = x
+let (t :
+  (< age: int [@attr ] ;name: string [@attr ]  >  Js.t,
+    < name: string [@attr ] ;age: int [@attr ]  >  Js.t) list)
+  = x
 let (t : < .. >  Js.t list) = x
+let (t : < age: int   ;.. >  Js.t list) = x
+let (t : < age: int   ;.. >  Js.t list) = x
+let (t : < age: int [@attr ]  ;.. >  Js.t list) = x
+let (t : < age: int [@attr ]  ;.. >  Js.t list) = x
+let (t : < age: int  ;name: string   ;.. >  Js.t list) = x
+let (t : < age: int [@attr ] ;name: string [@attr ]  ;.. >  Js.t list) = x
 let (t : string list) = x
 "
 `;

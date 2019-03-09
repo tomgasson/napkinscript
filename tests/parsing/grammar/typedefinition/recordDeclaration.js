@@ -24,4 +24,15 @@ type t = {form, answers}
 type t = {mutable form, mutable answers}
 
 // parses bs object type correct
-type t = {. "age": int}
+type t = {"age": int}
+type t = {..}
+type t = {"age": int,}
+type t = {.. "age": int}
+type t = {.. "age": int, "name": string}
+type t = {.. @attr "age": int}
+type t = {.. @attr "age": int,}
+type t = {.. @attr "age": int, @attr "name": string}
+type t = {@attr "age": int}
+type t = {@attr "age": int,}
+type t = {@attr "age": int, "name": string}
+type t = {@attr "age": int, @attr2 "name": string}

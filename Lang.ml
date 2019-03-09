@@ -3110,20 +3110,23 @@ module LangParser = struct
     let startPos = p.Parser.startPos in
     Parser.expect Lbrace p;
     let objectType = match p.Parser.token with
-    | Dot | DotDot ->
-      let closedFlag = if p.token = Dot then
-        Asttypes.Closed
-      else
-        Asttypes.Open
-      in
+    | DotDot ->
       Parser.next p;
+      let closedFlag = Asttypes.Open in
       let fields =
         parseCommaSeparatedList ~closing:Rbrace ~f:parseStringFieldDeclaration p
       in
       Parser.expectExn Rbrace p;
       let loc = mkLoc startPos p.prevEndPos in
       makeBsObjType ~loc ~closed:closedFlag fields
-    | t -> raise (Parser.ParseError (p.startPos, Report.Unexpected t))
+    | _ ->
+      let closedFlag = Asttypes.Closed in
+      let fields =
+        parseCommaSeparatedList ~closing:Rbrace ~f:parseStringFieldDeclaration p
+      in
+      Parser.expectExn Rbrace p;
+      let loc = mkLoc startPos p.prevEndPos in
+      makeBsObjType ~loc ~closed:closedFlag fields
     in
     objectType
 
@@ -3330,18 +3333,15 @@ module LangParser = struct
     let constrArgs = match p.Parser.token with
     | Lparen ->
       Parser.next p;
+      (* TODO: this could use some cleanup/stratification *)
       begin match p.Parser.token with
       | Lbrace ->
-         Parser.next p;
-         let startPos = p.Parser.startPos in
-         begin match p.Parser.token with
-         | Dot | DotDot ->
-          let closedFlag = if p.token = Dot then
-            Asttypes.Closed
-          else
-            Asttypes.Open
-          in
+        Parser.next p;
+        let startPos = p.Parser.startPos in
+        begin match p.Parser.token with
+        | DotDot ->
           Parser.next p;
+          let closedFlag = Asttypes.Open in
           let fields =
             parseCommaSeparatedList ~closing:Rbrace ~f:parseStringFieldDeclaration p
           in
@@ -3353,18 +3353,59 @@ module LangParser = struct
           Parser.expect Rparen p;
           Parsetree.Pcstr_tuple (typ::moreArgs)
         | _ ->
-          let fields =
-            parseCommaSeparatedList ~closing:Rbrace ~f:parseFieldDeclaration p
-          in
-          Parser.expect Rbrace p;
-          Parser.optional p Comma |> ignore;
-          Parser.expectExn Rparen p;
-          Parsetree.Pcstr_record fields
+          let attrs = parseAttributes p in
+          begin match p.Parser.token with
+          | String _  ->
+            let closedFlag = Asttypes.Closed in
+            let fields = match attrs with
+            | [] ->
+              parseCommaSeparatedList ~closing:Rbrace ~f:parseStringFieldDeclaration p
+            | attrs ->
+              let first =
+                let field = parseStringFieldDeclaration p in
+                Parser.optional p Comma |> ignore;
+                begin match field with
+                | Parsetree.Otag (label, _, ct) -> Parsetree.Otag (label, attrs, ct)
+                | Oinherit ct -> Oinherit ct
+                end
+              in
+              first::(
+                parseCommaSeparatedList
+                  ~closing:Rbrace
+                  ~f:parseStringFieldDeclaration p
+              )
+              in
+              Parser.expect Rbrace p;
+              let loc = mkLoc startPos p.prevEndPos in
+              let typ = makeBsObjType ~loc ~closed:closedFlag fields in
+              Parser.optional p Comma |> ignore;
+              let moreArgs = parseCommaSeparatedList ~closing:Rparen ~f:parseTypExpr p in
+              Parser.expect Rparen p;
+              Parsetree.Pcstr_tuple (typ::moreArgs)
+            | _ ->
+              let fields = match attrs with
+              | [] ->
+                parseCommaSeparatedList ~closing:Rbrace ~f:parseFieldDeclaration p
+              | attrs ->
+                let first =
+                  let field = parseFieldDeclaration p in
+                  Parser.expect Comma p;
+                  {field with Parsetree.pld_attributes = attrs}
+                in
+                first::(
+                  parseCommaSeparatedList ~closing:Rbrace ~f:parseFieldDeclaration p
+                )
+              in
+              Parser.expect Rbrace p;
+              Parser.optional p Comma |> ignore;
+              Parser.expectExn Rparen p;
+              Parsetree.Pcstr_record fields
+            end
         end
-      | _ ->
-        let args = parseCommaSeparatedList ~closing:Rparen ~f:parseTypExpr p in
-        Parser.expectExn Rparen p;
-        Parsetree.Pcstr_tuple args
+        | _ ->
+          let args = parseCommaSeparatedList ~closing:Rparen ~f:parseTypExpr p in
+          Parser.expectExn Rparen p;
+          Parsetree.Pcstr_tuple args
        end
     | _ -> Pcstr_tuple []
     in
@@ -3570,13 +3611,9 @@ module LangParser = struct
     let startPos = p.Parser.startPos in
     Parser.expect Lbrace p;
     match p.Parser.token with
-    | Dot | DotDot ->
-      let closedFlag = if p.token = Dot then
-        Asttypes.Closed
-      else
-        Asttypes.Open
-      in
+    | DotDot ->
       Parser.next p;
+      let closedFlag = Asttypes.Open in
       let fields =
         parseCommaSeparatedList ~closing:Rbrace ~f:parseStringFieldDeclaration p
       in
@@ -3585,12 +3622,49 @@ module LangParser = struct
       let typ = makeBsObjType ~loc ~closed:closedFlag fields in
       (Some typ, Asttypes.Public, Parsetree.Ptype_abstract)
     | _ ->
-      let fields =
-        parseCommaSeparatedList ~closing:Rbrace ~f:parseFieldDeclaration p
-      in
-      Parser.expect Rbrace p;
-      (None, Asttypes.Public, Parsetree.Ptype_record fields)
-
+      let attrs = parseAttributes p in
+      begin match p.Parser.token with
+      | String _  ->
+        let closedFlag = Asttypes.Closed in
+        let fields = match attrs with
+        | [] ->
+          parseCommaSeparatedList ~closing:Rbrace ~f:parseStringFieldDeclaration p
+        | attrs ->
+          let first =
+            let field = parseStringFieldDeclaration p in
+            Parser.optional p Comma |> ignore;
+            begin match field with
+            | Parsetree.Otag (label, _, ct) -> Parsetree.Otag (label, attrs, ct)
+            | Oinherit ct -> Oinherit ct
+            end
+          in
+          first::(
+            parseCommaSeparatedList
+              ~closing:Rbrace
+              ~f:parseStringFieldDeclaration p
+          )
+          in
+          Parser.expect Rbrace p;
+          let loc = mkLoc startPos p.prevEndPos in
+          let typ = makeBsObjType ~loc ~closed:closedFlag fields in
+          (Some typ, Asttypes.Public, Parsetree.Ptype_abstract)
+      | _ ->
+        let fields = match attrs with
+        | [] ->
+          parseCommaSeparatedList ~closing:Rbrace ~f:parseFieldDeclaration p
+        | attrs ->
+          let first =
+            let field = parseFieldDeclaration p in
+            Parser.optional p Comma |> ignore;
+            {field with Parsetree.pld_attributes = attrs}
+          in
+          first::(
+            parseCommaSeparatedList ~closing:Rbrace ~f:parseFieldDeclaration p
+          )
+        in
+        Parser.expect Rbrace p;
+        (None, Asttypes.Public, Parsetree.Ptype_record fields)
+      end
 
   and parseTypeEquationAndRepresentation p =
     match p.Parser.token with
@@ -4614,7 +4688,7 @@ module LangParser = struct
       (* Format.pp_print_flush Format.std_formatter (); *)
       (* print_newline(); *)
       List.iter (fun (pos, problem) ->
-        Printf.eprintf "Parse error\n";
+        Printf.eprintf "Parse error: %s\n" (p.lexbuf.filename);
         Printf.eprintf "Line: %d, Column: %d\n" (pos.Lexing.pos_lnum) (pos.pos_cnum - pos.pos_bol + 1);
         Printf.eprintf "%s\n"
         (match problem with

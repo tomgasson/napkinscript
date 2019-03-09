@@ -22,11 +22,21 @@ type nonrec t =
   a: int } 
   | JsColor of < gradient: int   >  Js.t 
   | JsColor of < gradient: int   >  Js.t 
+  | JsColor of < gradient: int   >  Js.t 
+  | JsColor of < gradient: int [@attr ]  >  Js.t 
   | JsColor of < gradient: int   >  Js.t * color 
   | JsColor of < gradient: int   >  Js.t * color 
   | JsColor of < gradient: int   >  Js.t * < hex: string   >  Js.t * int 
-  | JsT of <  >  Js.t 
+  | JsColor of < gradient: int [@attr ]  >  Js.t * < hex: string [@attr ]  > 
+  Js.t * int 
   | JsT of < .. >  Js.t 
+  | JsT of < gradient: int   ;.. >  Js.t 
+  | JsT of < gradient: int   ;.. >  Js.t 
+  | JsT of < gradient: int [@attr ]  ;.. >  Js.t 
+  | JsT of < gradient: int  ;hex: string   ;.. >  Js.t *
+  < gradient: int  ;hex: string   ;.. >  Js.t 
+  | JsT of < gradient: int [@attr ] ;hex: string [@attr ]  ;.. >  Js.t *
+  < gradient: int [@attr ] ;hex: string [@attr ]  ;.. >  Js.t 
 type nonrec t =
   | Rgb: t 
 type nonrec t =
@@ -48,11 +58,22 @@ type nonrec t =
   a: int } -> t 
   | JsColor: < gradient: int   >  Js.t -> t 
   | JsColor: < gradient: int   >  Js.t -> t 
+  | JsColor: < gradient: int   >  Js.t -> t 
+  | JsColor: < gradient: int   >  Js.t -> t 
+  | JsColor: < gradient: int [@attr ]  >  Js.t -> t 
   | JsColor: < gradient: int   >  Js.t * color -> t 
   | JsColor: < gradient: int   >  Js.t * color -> t 
   | JsColor: < gradient: int   >  Js.t * < hex: string   >  Js.t * int -> t 
-  | JsT: <  >  Js.t -> t 
   | JsT: < .. >  Js.t -> t 
+  | JsT: < gradient: int   ;.. >  Js.t -> t 
+  | JsT: < gradient: int [@attr ]  ;.. >  Js.t -> t 
+  | JsT: < gradient: int   ;.. >  Js.t -> t 
+  | JsT: < gradient: int [@attr ]  ;.. >  Js.t -> t 
+  | JsT: < gradient: int   ;.. >  Js.t -> t 
+  | JsT: < gradient: int  ;hex: string   ;.. >  Js.t *
+  < gradient: int  ;hex: string   ;.. >  Js.t -> t 
+  | JsT: < gradient: int [@attr ] ;hex: string [@attr ]  ;.. >  Js.t *
+  < gradient: int [@attr ] ;hex: string [@attr ]  ;.. >  Js.t -> t 
 type nonrec t =
   | EmptyColor [@attr ]
   | White: grayscale -> ((t)[@onGadt ]) [@onConstr ]
@@ -100,6 +121,17 @@ type nonrec t = {
   mutable form: form ;
   mutable answers: answers }
 type nonrec t = < age: int   >  Js.t
+type nonrec t = < .. >  Js.t
+type nonrec t = < age: int   >  Js.t
+type nonrec t = < age: int   ;.. >  Js.t
+type nonrec t = < age: int  ;name: string   ;.. >  Js.t
+type nonrec t = < age: int [@attr ]  ;.. >  Js.t
+type nonrec t = < age: int [@attr ]  ;.. >  Js.t
+type nonrec t = < age: int [@attr ] ;name: string [@attr ]  ;.. >  Js.t
+type nonrec t = < age: int [@attr ]  >  Js.t
+type nonrec t = < age: int [@attr ]  >  Js.t
+type nonrec t = < age: int [@attr ] ;name: string   >  Js.t
+type nonrec t = < age: int [@attr ] ;name: string [@attr2 ]  >  Js.t
 "
 `;
 
