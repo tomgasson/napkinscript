@@ -10,5 +10,8 @@ test: build-native
 debug: build
 	./lib/napkinscript.exe file.js
 
+debugi: build
+	./lib/napkinscript.exe file.jsi
+
 release:
 	ocamlopt -O3 -o ./lib/napkinscript.exe -I +compiler-libs ocamlcommon.cmxa Lang.ml

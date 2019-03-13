@@ -441,9 +441,25 @@ module Lex = struct
     pos_cnum = lexbuf.offset;
   }
 
+  (* TODO: refactor, won't work if char width > 1 char *)
+  let computeEndPosition lexbuf = Lexing.{
+    pos_fname = lexbuf.filename;
+    (* line number *)
+    pos_lnum =
+      if lexbuf.offset < lexbuf.lineOffset then lexbuf.lnum - 1 else lexbuf.lnum;
+    (* offset of the beginning of the line (number
+       of characters between the beginning of the lexbuf and the beginning
+       of the line) *)
+    pos_bol = lexbuf.lineOffset; (* Unsound *)
+    (* [pos_cnum] is the offset of the position (number of
+       characters between the beginning of the lexbuf and the position). *)
+    pos_cnum = lexbuf.offset;
+  }
+
   let printPos p =
     print_endline ("cnum: " ^ (string_of_int p.Lexing.pos_cnum));
     print_endline ("lnum: " ^ (string_of_int p.Lexing.pos_lnum));
+    print_endline ("bol: " ^ (string_of_int p.Lexing.pos_bol));
     print_endline ("beginning of line: " ^ (string_of_int p.Lexing.pos_bol));
     print_endline ("-------------------")
 
@@ -822,7 +838,7 @@ module Lex = struct
         raise (Unknown_token lexbuf.ch)
     end
     in
-    let endPos = position lexbuf in
+    let endPos = computeEndPosition lexbuf in
     (startPos, endPos, token)
 
   and lexForwardSlashOrTupleEnding lexbuf =
@@ -861,6 +877,81 @@ module Lex = struct
 end
 
 module Report = struct
+
+  module Doc = struct
+    type color =
+      | NoColor
+      | Red
+
+    type style = {
+      bold: bool;
+      underline: bool;
+      color: color;
+    }
+
+    let emptyStyle = {
+      bold = false;
+      underline = false;
+      color = NoColor;
+    }
+
+    type mode = Horizontal | Vertical
+
+    type t =
+      | Empty
+      | Text of style * string
+      | Join of (mode * t * t)
+
+    type simple =
+      | SEmpty
+      | SPlainText of string
+      | SCons of (mode * simple * simple)
+
+    let empty = Empty
+    let text ?(style=emptyStyle) txt = Text(style, txt)
+    let vcat doc1 doc2 = Join(Vertical, doc1, doc2)
+    let hcat doc1 doc2 = Join(Horizontal, doc1, doc2)
+
+    let highlight ~from ~to_ txt =
+      if to_ < 0 then
+        text txt
+      else
+        let before = String.sub txt 0 from in
+        let content = String.sub txt from (to_ - from) in
+        let after = String.sub txt to_ (String.length txt - to_) in
+        hcat
+          (text before)
+          (hcat
+            (text ~style:{emptyStyle with color = Red} content)
+            (text after))
+
+    let rec toSimple = function
+      | Empty -> SEmpty
+      | Text(style, txt) ->
+        begin match style.color with
+        | NoColor -> SPlainText txt
+        | Red -> SPlainText ("\027[31m" ^ txt ^ "\027[0m")
+        end
+      | Join(mode, doc1, doc2) -> SCons(mode, toSimple doc1, toSimple doc2)
+
+    let toString doc =
+      let buffer = Buffer.create 100 in
+      let simpleDoc = toSimple doc in
+      let rec render = function
+        | SEmpty -> ()
+        | SPlainText txt -> Buffer.add_string buffer txt
+        | SCons(mode, simpledoc1, simpledoc2) ->
+          render simpledoc1;
+          match mode with
+          | Vertical -> Buffer.add_char buffer '\n'
+          | Horizontal -> ();
+          render simpledoc2
+      in
+      render simpleDoc;
+      Buffer.contents buffer
+
+  end
+
   type circumstance =
     | OpenDescription (* open Belt *)
     | ModuleLongIdent (* Foo or Foo.Bar *)
@@ -881,7 +972,18 @@ module Report = struct
     | TypeExpression
     | External
     | PatternMatching
+    | PatternMatchCase
     | LetBinding
+
+    | TypeDef
+    | TypeConstrName
+    | TypeParams
+    | TypeParam
+
+    | TypeRepresentation
+
+    | RecordDecl
+    | ConstructorDeclaration
 
   (* type context = circumstance * token *)
 
@@ -908,6 +1010,14 @@ module Report = struct
     | ExprArrayAccess -> "an array access expression"
     | ExprArrayMutation -> "an array mutation"
     | LetBinding -> "a let binding"
+    | TypeDef -> "a type definition"
+    | TypeParams -> "type parameters"
+    | TypeParam -> "a type parameter"
+    | TypeConstrName -> "a type-constructor name"
+    | TypeRepresentation -> "a type representation"
+    | RecordDecl -> "a record declaration"
+    | PatternMatchCase -> "a pattern match case"
+    | ConstructorDeclaration -> "a constructor declaration"
 
   let parseContext stack =
     match stack with
@@ -921,16 +1031,29 @@ module Report = struct
         circumstanceToString c
     | [] -> "your code"
 
-  (* let parseMeaningFullCircumstance stack = *)
-    (* let peek stack  *)
+  let rec drop n l =
+    if n == 1 then l
+    else drop (n - 1) (match l with | x::xs -> xs | _ -> l)
 
-
-  (* let parseCircumstances css = *)
-
+  let renderCodeContext (src : string) startPos endPos =
+    let lnum = startPos.Lexing.pos_lnum in
+    let startCol = (startPos.pos_cnum - startPos.pos_bol) in
+    let endCol = (endPos.Lexing.pos_cnum - endPos.pos_bol) in
+    let lines = String.split_on_char '\n' src |> drop lnum in
+    match lines with
+    | x::xs ->
+      let d =
+        let open Doc in
+        hcat
+          (text ~style:{emptyStyle with color = Red} (string_of_int lnum))
+          (hcat (text " |  ") (highlight ~from:startCol ~to_:endCol x))
+      in
+      Doc.toString d
+    | _ -> ""
 
   type problem =
     | Unexpected of Token.t
-    | Expected of (Token.t * circumstance option)
+    | Expected of (Token.t * Lexing.position * circumstance option)
     | OneOf of Token.t list
     | Message of string
     | Uident
@@ -1018,13 +1141,13 @@ module LangParser = struct
       if p.token = token then
         next p
       else
-        raise (ParseError (p.startPos, Report.Expected (token, circumstance)))
+        raise (ParseError (p.startPos, Report.Expected (token, p.prevEndPos, circumstance)))
 
     let expect ?circumstance token p =
       if p.token = token then
         next p
       else
-        let error = (p.startPos, Report.Expected (token, circumstance)) in
+        let error = (p.startPos, Report.Expected (token, p.prevEndPos, circumstance)) in
         p.errors <- error::p.errors
 
     let lookahead p callback =
@@ -1234,7 +1357,7 @@ module LangParser = struct
     handle_seq seq
 
 
-  (* {. "foo": bar} -> Js.t({. foo: bar})
+  (* {"foo": bar} -> Js.t({. foo: bar})
    * {.. "foo": bar} -> Js.t({.. foo: bar}) *)
   let makeBsObjType ~loc ~closed rows =
     let obj = Ast_helper.Typ.object_ ~loc rows closed in
@@ -1267,6 +1390,20 @@ module LangParser = struct
     in
     Parser.next p;
     Location.mkloc ident (mkLoc startPos p.prevEndPos)
+
+ let parseValuePathTail p startPos ident =
+    let rec loop p path =
+      match p.Parser.token with
+      | Lident ident ->
+        Parser.next p;
+        Location.mkloc (Longident.Ldot(path, ident)) (mkLoc startPos p.prevEndPos)
+      | Uident ident ->
+        Parser.next p;
+        Parser.expect Dot p;
+        loop p (Longident.Ldot (path, ident))
+      | t -> raise (Parser.ParseError (p.startPos, Report.Unexpected t))
+    in
+    loop p ident
 
   let parseModuleLongIdentTail p startPos ident =
     let rec loop p acc =
@@ -1905,7 +2042,7 @@ module LangParser = struct
             ~loc (Location.mkloc (Longident.Lident "()") loc) None
         | t ->
           let expr = parseConstrainedExpr p in
-          Parser.expectExn Rparen p;
+          Parser.expect Rparen p;
           {expr with pexp_loc = mkLoc startPos p.startPos}
         end
       | List ->
@@ -2124,7 +2261,7 @@ module LangParser = struct
         | Rbrace ->
           Lex.setTemplateMode p.lexbuf;
           Parser.next p
-        | _ -> raise (Parser.ParseError (p.startPos, Report.Expected (Rbrace, None)))
+        | _ -> raise (Parser.ParseError (p.startPos, Report.Expected (Rbrace, p.prevEndPos, None)))
         in
         let str = Ast_helper.Exp.constant (Pconst_string(txt, None)) in
         let next =
@@ -2151,7 +2288,7 @@ module LangParser = struct
       | Rbrace ->
         Lex.setTemplateMode p.lexbuf;
         Parser.next p
-      | _ -> raise (Parser.ParseError (p.startPos, Report.Expected (Rbrace, None)))
+      | _ -> raise (Parser.ParseError (p.startPos, Report.Expected (Rbrace, p.prevEndPos, None)))
       in
       let str = Ast_helper.Exp.constant (Pconst_string(txt, None)) in
       let next =
@@ -2800,6 +2937,22 @@ module LangParser = struct
     let loc = mkLoc startPos p.prevEndPos in
     Ast_helper.Exp.while_ ~loc expr1 expr2
 
+  and parsePatternMatchCase p =
+    Parser.leaveBreadcrumb p Report.PatternMatchCase;
+    Parser.expectExn Bar p;
+    let lhs = parsePattern p in
+    let guard = match p.Parser.token with
+    | When ->
+      Parser.next p;
+      Some (parseExpr ~context:WhenExpr p)
+    | _ ->
+      None
+    in
+    Parser.expect EqualGreater p;
+    let rhs = parseExprBlock p in
+    Parser.eatBreadcrumb p;
+    Ast_helper.Exp.case lhs ?guard rhs
+
   and parsePatternMatching p =
     Parser.leaveBreadcrumb p Report.PatternMatching;
     (* '{' consumed *)
@@ -2807,21 +2960,9 @@ module LangParser = struct
       match p.Parser.token with
       | Rbrace ->
         List.rev cases
-      | Bar ->
-        Parser.next p;
-        let lhs = parsePattern p in
-        let guard = match p.Parser.token with
-        | When ->
-          Parser.next p;
-          Some (parseExpr ~context:WhenExpr p)
-        | _ ->
-          None
-        in
-        Parser.expectExn EqualGreater p;
-        let rhs = parseExprBlock p in
-        let case = Ast_helper.Exp.case lhs ?guard rhs in
+      | _ ->
+        let case = parsePatternMatchCase p in
         loop p (case::cases)
-      | token -> raise (Parser.ParseError (p.startPos, Report.Unexpected token))
     in
     let cases = loop p [] in
     Parser.eatBreadcrumb p;
@@ -2831,9 +2972,9 @@ module LangParser = struct
     let startPos = p.Parser.startPos in
     Parser.expectExn Switch p;
     let switchExpr = parseExpr ~context:WhenExpr p in
-    Parser.expectExn Lbrace p;
+    Parser.expect Lbrace p;
     let cases = parsePatternMatching p in
-    Parser.expectExn Rbrace p;
+    Parser.expect Rbrace p;
     let loc = mkLoc startPos p.prevEndPos in
     Ast_helper.Exp.match_ ~loc switchExpr cases
 
@@ -3199,8 +3340,8 @@ module LangParser = struct
   (*
    * typexpr ::=
    *  | 'ident
-   *  |  _
-   *  |  (typexpr)
+   *  | _
+   *  | (typexpr)
    *  | typexpr => typexpr            --> es6 arrow
    *  | (typexpr, typexpr) => typexpr --> es6 arrow
    *  | /typexpr, typexpr, typexpr/  --> tuple
@@ -3313,11 +3454,13 @@ module LangParser = struct
    *  | { field-decl, field-decl, field-decl, }
    *)
   and parseRecordDeclaration p =
+    Parser.leaveBreadcrumb p Report.RecordDecl;
     Parser.expectExn Lbrace p;
     let rows =
       parseCommaSeparatedList ~closing:Rbrace ~f:parseFieldDeclaration p
     in
     Parser.expect Rbrace p;
+    Parser.eatBreadcrumb p;
     rows
 
   (* constr-args ::=
@@ -3423,11 +3566,13 @@ module LangParser = struct
    *  | constr-name const-args
    *  | attrs constr-name const-args *)
    and parseTypeConstructorDeclaration p =
+     Parser.leaveBreadcrumb p Report.ConstructorDeclaration;
      let attrs = parseAttributes p in
      match p.Parser.token with
      | Uident uident ->
        Parser.next p;
        let (args, res) = parseConstrDeclArgs p in
+       Parser.eatBreadcrumb p;
        Ast_helper.Type.constructor ~attrs ?res ~args (Location.mknoloc uident)
      | _ -> raise (Parser.ParseError (p.startPos, Report.Uident))
 
@@ -3462,6 +3607,7 @@ module LangParser = struct
    *  |  = ..
    *)
   and parseTypeRepresentation p =
+    Parser.leaveBreadcrumb p Report.TypeRepresentation;
     (* = consumed *)
     let privateFlag =
       if Parser.optional p Token.Private
@@ -3478,6 +3624,7 @@ module LangParser = struct
       Ptype_open
     | unknownToken -> raise (Parser.ParseError (p.startPos, Report.Unexpected unknownToken))
     in
+    Parser.eatBreadcrumb p;
     (privateFlag, kind)
 
   (* type-param	::=
@@ -3490,12 +3637,13 @@ module LangParser = struct
    *   | (* empty *)
    *)
   and parseTypeParam p =
+    Parser.leaveBreadcrumb p Report.TypeParam;
     let variance = match p.Parser.token with
     | Plus -> Parser.next p; Asttypes.Covariant
     | Minus -> Parser.next p; Contravariant
     | _ -> Invariant
     in
-    match p.Parser.token with
+    let param = match p.Parser.token with
     | SingleQuote ->
       Parser.next p;
       begin match p.Parser.token with
@@ -3511,6 +3659,9 @@ module LangParser = struct
       Parser.next p;
       (Ast_helper.Typ.any ~loc (), variance)
     | token -> raise (Parser.ParseError (p.startPos, Report.Unexpected token))
+    in
+    Parser.eatBreadcrumb p;
+    param
 
   (* type-params	::=
    *  | <type-param>
@@ -3520,12 +3671,18 @@ module LangParser = struct
   and parseTypeParams p =
     match p.Parser.token with
     | LessThan ->
+      Parser.leaveBreadcrumb p TypeParams;
       Parser.next p;
       let params =
         parseCommaSeparatedList ~closing:GreaterThan ~f:parseTypeParam p
       in
       Parser.expect GreaterThan p;
+      Parser.eatBreadcrumb p;
       params
+    | Lparen when p.startPos.pos_lnum == p.prevEndPos.pos_lnum ->
+      raise (Parser.ParseError (p.startPos, Report.Message
+        "Type parameters start with diamonds, example: type foo<'a>"
+      ))
     | _ -> []
 
   (* type-constraint	::=	constraint ' ident =  typexpr *)
@@ -3566,18 +3723,9 @@ module LangParser = struct
       begin match p.Parser.token with
       | Dot ->
         Parser.next p;
-        let rec loop p path =
-          match p.Parser.token with
-         | Lident ident ->
-           Parser.next p;
-           Longident.Ldot(path, ident)
-         | Uident uident ->
-           Parser.next p;
-           Parser.expectExn Dot p;
-           loop p (Longident.Ldot (path, uident))
-         | token -> raise (Parser.ParseError (p.startPos, Report.Unexpected token))
+        let typeConstr =
+          parseValuePathTail p uidentStartPos (Longident.Lident uident)
         in
-        let typeConstr = Location.mknoloc (loop p (Longident.Lident uident)) in
         let typ = parseTypeAlias p (match p.Parser.token with
         | LessThan ->
           let args = parseTypeConstructorArgs p in
@@ -3649,6 +3797,7 @@ module LangParser = struct
           let typ = makeBsObjType ~loc ~closed:closedFlag fields in
           (Some typ, Asttypes.Public, Parsetree.Ptype_abstract)
       | _ ->
+        Parser.leaveBreadcrumb p Report.RecordDecl;
         let fields = match attrs with
         | [] ->
           parseCommaSeparatedList ~closing:Rbrace ~f:parseFieldDeclaration p
@@ -3663,6 +3812,7 @@ module LangParser = struct
           )
         in
         Parser.expect Rbrace p;
+        Parser.eatBreadcrumb p;
         (None, Asttypes.Public, Parsetree.Ptype_record fields)
       end
 
@@ -3691,25 +3841,6 @@ module LangParser = struct
       end
     | _ -> (None, Public, Parsetree.Ptype_abstract)
 
-  (* let parseConstrDef p = *)
-    (* match p.Parser.token with *)
-    (* | Uident ident -> *)
-      (* Parser.next p; *)
-
-
-
-  (* let parseTypeExtensionDef p = *)
-    (* + consumed *)
-    (* Parser.expectExn p Equal; *)
-    (* let privateFlag = *)
-      (* if Parser.optional p Token.Private *)
-      (* then Asttypes.Private *)
-      (* else Asttypes.Public *)
-    (* in *)
-    (* ignore (Parser.optional p Token.Bar); *)
-    (* let firstConstrDef = parseConstrDef p in *)
-
-
 (*
   type-definition	::=	type [rec] typedef  { and typedef }
 
@@ -3723,17 +3854,22 @@ module LangParser = struct
 
   (* typedef	::=	typeconstr-name [type-params] type-information *)
   and parseTypeDef ?attrs p =
+    Parser.leaveBreadcrumb p Report.TypeDef;
     let startPos = p.Parser.startPos in
     let attrs = match attrs with | Some attrs -> attrs | None -> parseAttributes p in
+    Parser.leaveBreadcrumb p Report.TypeConstrName;
     let typeConstrName = match p.Parser.token with
     | Lident ident ->
       let loc = mkLoc p.startPos p.endPos in
       Parser.next p;
       (Location.mkloc ident loc)
-    | _ -> raise (Parser.ParseError (p.startPos, Report.Message "Type constructor name should be lowercase"))
+    | _ -> raise (Parser.ParseError (p.startPos, Report.Lident))
     in
+    Parser.eatBreadcrumb p;
+    Parser.leaveBreadcrumb p Report.TypeParams;
     let params = parseTypeParams p in
-    match p.Parser.token with
+    Parser.eatBreadcrumb p;
+    let typeDef = match p.Parser.token with
     (* | PlusEqual -> *)
       (* Parser.next p; *)
       (* let (priv, kind) = parseTypeExtensionDef p in *)
@@ -3746,6 +3882,10 @@ module LangParser = struct
       let loc = mkLoc startPos endPos in
       Ast_helper.Type.mk
         ~loc ~attrs ~priv ~kind ~params ~cstrs ?manifest typeConstrName
+    in
+    Parser.eatBreadcrumb p;
+    typeDef
+
 
   and parseTypeDefinition ~attrs p =
     Parser.expectExn Token.Typ p;
@@ -3887,8 +4027,7 @@ module LangParser = struct
     | _ ->
       Ast_helper.Str.eval ~attrs (parseExpr p)
     in
-    let endPos = p.prevEndPos in
-    let loc = mkLoc startPos endPos in
+    let loc = mkLoc startPos p.prevEndPos in
     {item with pstr_loc = loc}
 
   (* include-statement ::= include module-expr *)
@@ -4340,6 +4479,21 @@ module LangParser = struct
     in
     Ast_helper.Mty.signature (List.rev (loop p []))
 
+  and parseSignature p =
+    let rec loop p spec =
+      let item = parseSignatureItem p in
+      let () = match p.Parser.token with
+      | Semicolon -> Parser.next p
+      | Let | Typ | At | AtAt | PercentPercent | External | Exception | Open | Include | Module | Rbrace | Eof -> ()
+      | _ -> Parser.expectExn Semicolon p
+      in
+      let spec = (item::spec) in
+      match p.Parser.token with
+      | Rbrace | Eof -> spec
+      | _ -> loop p spec
+    in
+    List.rev (loop p [])
+
   and parseSignatureItem p =
     let attrs = parseAttributes p in
     match p.Parser.token with
@@ -4680,8 +4834,18 @@ module LangParser = struct
     let src = read_file filename in
     let p = Parser.make src filename in
     try
-      let ast = parseStructure p in
-      Pprintast.structure Format.std_formatter ast;
+      let () =
+        (* poor mans version of determining interface files
+         * does it end with 'i' ? :D
+         * TODO: rewrite (maybe?) *)
+        let len = String.length filename in
+        if len > 0 && String.get filename (len - 1) = 'i' then (
+          let ast = parseSignature p in
+          Pprintast.signature Format.std_formatter ast
+        ) else
+          let ast = parseStructure p in
+          Pprintast.structure Format.std_formatter ast
+      in
       Format.pp_print_flush Format.std_formatter ();
       print_newline();
       (* Printast.implementation Format.std_formatter ast; *)
@@ -4692,21 +4856,41 @@ module LangParser = struct
         Printf.eprintf "Line: %d, Column: %d\n" (pos.Lexing.pos_lnum) (pos.pos_cnum - pos.pos_bol + 1);
         Printf.eprintf "%s\n"
         (match problem with
-        | Report.Expected (t, _) ->
+        | Report.Expected (t,_, _) ->
           "Missing " ^ Token.toString t
         | _ -> "Todo: pretty print parse error")
       ) p.errors;
       exit 0
     with
     | Parser.ParseError (pos, problem) ->
-      Printf.eprintf "Parse error: %s\n" (p.lexbuf.filename);
-      Printf.eprintf "Line: %d, Column: %d\n" (pos.pos_lnum) (pos.pos_cnum - pos.pos_bol + 1);
-      Printf.eprintf "Problem encountered while trying to parse %s.\n"
-      (Report.parseContext p.breadcrumbs);
-      Printf.eprintf "%s\n"
+      Printf.eprintf "\nParse error: %s -> line: %d, col: %d\n" (p.lexbuf.filename) (pos.pos_lnum) (pos.pos_cnum - pos.pos_bol + 1);
+      Printf.eprintf "Problem encountered while trying to parse %s.\n" (Report.parseContext p.breadcrumbs);
+      let ctx = Report.renderCodeContext (Bytes.to_string p.lexbuf.src) pos p.endPos in
+      Printf.eprintf "\n%s\n\n" ctx;
+      Printf.eprintf "%s\n\n"
       (match problem with
-      | Report.Uident -> "I'm expecting an uppercased identifier like Foo or Bar"
-      | Report.Lident -> "I'm expecting an lowercased identifier like foo or bar"
+      | Report.Uident ->
+        begin match p.Parser.token with
+        | Lident lident ->
+          let guess = String.capitalize_ascii lident in
+          "Did you mean `" ^ guess ^"` instead of `" ^ lident ^ "`?"
+        | t when Token.isKeyword t ->
+          let token = Token.toString t in
+          "`" ^ token ^ "` is a reserved keyword. Try `" ^ token ^ "_` or `_" ^ token ^ "` instead"
+        | _ ->
+          "At this point, I'm looking for an uppercased identifier like `Belt` or `Array`"
+        end
+      | Report.Lident ->
+        begin match p.Parser.token with
+        | Uident uident ->
+          let guess = String.uncapitalize_ascii uident in
+          "Did you mean `" ^ guess ^"` instead of `" ^ uident ^ "`?"
+        | t when Token.isKeyword t ->
+          let token = Token.toString t in
+          "`" ^ token ^ "` is a reserved keyword. Try `" ^ token ^ "_` or `_" ^ token ^ "` instead"
+        | _ ->
+          "I'm expecting an lowercased identifier like `name` or `age`"
+        end
       | Report.OneOf tokens ->
           "I'm expecting one of the following tokens:\n"
           ^ (String.concat "\n" (List.map (fun t -> "• " ^ (Token.toString t)) tokens))
@@ -4727,6 +4911,13 @@ module LangParser = struct
               | _ ->
                 "I'm not sure what to parse here when looking at \"" ^ name ^ "\"."
               end
+          | (TypeParam, _)::_ ->
+              begin match t with
+              | Lident ident ->
+                "Did you mean '" ^ ident ^"? A Type parameter starts with a quote."
+              | _ ->
+                "I'm not sure what to parse here when looking at \"" ^ name ^ "\"."
+              end
           | _ ->
             (* TODO: match on circumstance to verify Lident needed ? *)
             if Token.isKeyword t then
@@ -4734,7 +4925,7 @@ module LangParser = struct
             else
             "I'm not sure what to parse here when looking at \"" ^ name ^ "\"."
           end
-      | Expected (t, circumstance) ->
+      | Expected (t, _, circumstance) ->
           "I'm expecting a \"" ^ (Token.toString t) ^ "\" here."
           ^ (match circumstance with
           | Some c -> "It signals the start of " ^ (Report.circumstanceToString c)
