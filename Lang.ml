@@ -1159,6 +1159,10 @@ module LangParser = struct
 
   let jsxAttr = (Location.mknoloc "JSX", Parsetree.PStr [])
 
+  type typDefOrExt =
+    | TypeDef of (Asttypes.rec_flag * Parsetree.type_declaration list)
+    | TypeExt of Parsetree.type_extension
+
   type context =
     | OrdinaryExpr
     | TernaryTrueBranchExpr
@@ -1365,6 +1369,11 @@ module LangParser = struct
       Location.mkloc (Longident.Ldot (Longident.Lident "Js", "t")) loc
     in
     Ast_helper.Typ.constr jsDotTCtor [obj]
+
+  let lidentOfPath longident =
+    match Longident.flatten longident |> List.rev with
+    | [] -> ""
+    | ident::_ -> ident
 
   (* Ldot (Ldot (Lident "Foo", "Bar"), "baz") *)
   let parseValuePath p =
@@ -3841,18 +3850,10 @@ module LangParser = struct
       end
     | _ -> (None, Public, Parsetree.Ptype_abstract)
 
-(*
-  type-definition	::=	type [rec] typedef  { and typedef }
-
-  typedef	::=	typeconstr-name [type-params] type-information
-
-  type-information	::=	[type-equation]  [type-representation]  { type-constraint }
-
-  type-equation	::=	= typexpr
-*)
-
-
-  (* typedef	::=	typeconstr-name [type-params] type-information *)
+  (* type-definition	::=	type [rec] typedef  { and typedef }
+   * typedef	::=	typeconstr-name [type-params] type-information
+   * type-information	::=	[type-equation]  [type-representation]  { type-constraint }
+   * type-equation	::=	= typexpr *)
   and parseTypeDef ?attrs p =
     Parser.leaveBreadcrumb p Report.TypeDef;
     let startPos = p.Parser.startPos in
@@ -3869,13 +3870,7 @@ module LangParser = struct
     Parser.leaveBreadcrumb p Report.TypeParams;
     let params = parseTypeParams p in
     Parser.eatBreadcrumb p;
-    let typeDef = match p.Parser.token with
-    (* | PlusEqual -> *)
-      (* Parser.next p; *)
-      (* let (priv, kind) = parseTypeExtensionDef p in *)
-      (* Ast_helper.Te. *)
-      (* Ast_helper.Type.mk ~priv ~kind typeConstrName *)
-    | _ ->
+    let typeDef =
       let (manifest, priv, kind) = parseTypeEquationAndRepresentation p in
       let cstrs = parseTypeConstraints p in
       let endPos = p.prevEndPos in
@@ -3886,26 +3881,82 @@ module LangParser = struct
     Parser.eatBreadcrumb p;
     typeDef
 
+  and parseTypeExtension ~params ~attrs ~name p =
+    Parser.expect PlusEqual p;
+    let priv =
+      if Parser.optional p Token.Private
+      then Asttypes.Private
+      else Asttypes.Public
+    in
+    Parser.optional p Bar |> ignore;
+    let first =
+      let (attrs, name, kind) = match p.Parser.token with
+      | Bar ->
+        Parser.next p;
+        parseConstrDef ~parseAttrs:true p
+      | _ ->
+        parseConstrDef ~parseAttrs:true p
+      in
+      Ast_helper.Te.constructor ~attrs name kind
+    in
+    let rec loop p cs =
+      match p.Parser.token with
+      | Bar ->
+        let startPos = p.Parser.startPos in
+        Parser.next p;
+        let (attrs, name, kind) = parseConstrDef ~parseAttrs:true p in
+        let extConstr =
+          Ast_helper.Te.constructor ~attrs ~loc:(mkLoc startPos p.prevEndPos) name kind
+        in
+        loop p (extConstr::cs)
+      | _ ->
+        List.rev cs
+    in
+    let constructors = loop p [first] in
+    Ast_helper.Te.mk ~attrs ~params ~priv name constructors
 
-  and parseTypeDefinition ~attrs p =
+  and parseTypeDefinitions ~attrs ~name ~params ~startPos p =
+      let typeDef =
+        let (manifest, priv, kind) = parseTypeEquationAndRepresentation p in
+        let cstrs = parseTypeConstraints p in
+        let endPos = p.prevEndPos in
+        let loc = mkLoc startPos endPos in
+        Ast_helper.Type.mk
+          ~loc ~attrs ~priv ~kind ~params ~cstrs ?manifest
+          {name with txt = lidentOfPath name.Location.txt}
+      in
+      let rec loop p defs =
+        let attrs = parseAttributesAndBinding p in
+        match p.Parser.token with
+        | And ->
+          Parser.next p;
+          let typeDef = parseTypeDef ~attrs p in
+          loop p (typeDef::defs)
+        | _ ->
+          List.rev defs
+      in
+      loop p [typeDef]
+
+  (* TODO: decide if we really want type extensions (eg. type x += Blue)
+   * It adds quite a bit of complexity that can be avoided,
+   * implemented for now. Needed to get a feel for the complexities of
+   * this territory of the grammar *)
+  and parseTypeDefinitionOrExtension ~attrs p =
+    let startPos = p.Parser.startPos in
     Parser.expectExn Token.Typ p;
     let recFlag =
       if Parser.optional p Token.Rec
         then Asttypes.Recursive
         else Asttypes.Nonrecursive
     in
-    let typeDef = parseTypeDef ~attrs p in
-    let rec loop p defs =
-      let attrs = parseAttributesAndBinding p in
-      match p.Parser.token with
-      | And ->
-        Parser.next p;
-        let typeDef = parseTypeDef ~attrs p in
-        loop p (typeDef::defs)
-      | _ ->
-        List.rev defs
-    in
-    (recFlag, loop p [typeDef])
+    let name = parseValuePath p in
+    let params = parseTypeParams p in
+    match p.Parser.token with
+    | PlusEqual ->
+      TypeExt(parseTypeExtension ~params ~attrs ~name p)
+    | _ ->
+      let typeDefs = parseTypeDefinitions ~attrs ~name ~params ~startPos p in
+      TypeDef(recFlag, typeDefs)
 
   and parsePrimitive p =
     let rec loop p prims =
@@ -3942,7 +3993,15 @@ module LangParser = struct
     Parser.eatBreadcrumb p;
     vb
 
-  and parseConstrDeclOrName p =
+  (* constr-def ::=
+   *  | constr-decl
+   *  | constr-name = constr
+   *
+   *  constr-decl ::= constr-name constr-args
+   *  constr-name ::= uident
+   *  constr      ::= path-uident *)
+  and parseConstrDef ~parseAttrs p =
+    let attrs = if parseAttrs then parseAttributes p else [] in
     let name = match p.Parser.token with
     | Uident name ->
       let loc = mkLoc p.startPos p.endPos in
@@ -3961,7 +4020,7 @@ module LangParser = struct
     | _ ->
       Parsetree.Pext_decl (Pcstr_tuple [], None)
     in
-    (name, kind)
+    (attrs, name, kind)
 
   (*
    * exception-definition	::=
@@ -3969,12 +4028,11 @@ module LangParser = struct
    *  ∣	exception constr-name = constr
    *
    *  constr-name ::= uident
-   *  constr ::= long_uident
-  *)
+   *  constr ::= long_uident *)
   and parseExceptionDef ~attrs p =
     let startPos = p.Parser.startPos in
     Parser.expectExn Token.Exception p;
-    let (name, kind) = parseConstrDeclOrName p in
+    let (_, name, kind) = parseConstrDef ~parseAttrs:false p in
     let loc = mkLoc startPos p.prevEndPos in
     Ast_helper.Te.constructor ~loc ~attrs name kind
 
@@ -4009,8 +4067,12 @@ module LangParser = struct
       let (recFlag, letBindings) = parseLetBindings ~attrs p in
       Ast_helper.Str.value recFlag letBindings
     | Typ ->
-      let (recFlag, typeDecls) = parseTypeDefinition ~attrs p in
-      Ast_helper.Str.type_ recFlag typeDecls
+      begin match parseTypeDefinitionOrExtension ~attrs p with
+      | TypeDef(recFlag, types) ->
+        Ast_helper.Str.type_ recFlag types
+      | TypeExt(ext) ->
+        Ast_helper.Str.type_extension ext
+      end
     | External ->
       Ast_helper.Str.primitive (parseExternalDef ~attrs p)
     | Exception ->
@@ -4503,8 +4565,12 @@ module LangParser = struct
     | Let ->
       parseSignLetDesc ~attrs p
     | Typ ->
-      let (recFlag, typeDecls) = parseTypeDefinition ~attrs p in
-      Ast_helper.Sig.type_ recFlag typeDecls
+      begin match parseTypeDefinitionOrExtension ~attrs p with
+      | TypeDef(recFlag, types) ->
+        Ast_helper.Sig.type_ recFlag types
+      | TypeExt(ext) ->
+        Ast_helper.Sig.type_extension ext
+      end
     | External ->
       Ast_helper.Sig.value (parseExternalDef ~attrs p)
     | Exception ->
