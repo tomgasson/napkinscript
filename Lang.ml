@@ -4481,16 +4481,19 @@ module LangParser = struct
 
   and parseSignature p =
     let rec loop p spec =
-      let item = parseSignatureItem p in
-      let () = match p.Parser.token with
-      | Semicolon -> Parser.next p
-      | Let | Typ | At | AtAt | PercentPercent | External | Exception | Open | Include | Module | Rbrace | Eof -> ()
-      | _ -> Parser.expectExn Semicolon p
-      in
-      let spec = (item::spec) in
-      match p.Parser.token with
-      | Rbrace | Eof -> spec
-      | _ -> loop p spec
+      if p.Parser.token = Eof then
+        spec
+      else
+        let item = parseSignatureItem p in
+        let () = match p.Parser.token with
+        | Semicolon -> Parser.next p
+        | Let | Typ | At | AtAt | PercentPercent | External | Exception | Open | Include | Module | Rbrace | Eof -> ()
+        | _ -> Parser.expectExn Semicolon p
+        in
+        let spec = (item::spec) in
+        match p.Parser.token with
+        | Rbrace | Eof -> spec
+        | _ -> loop p spec
     in
     List.rev (loop p [])
 
@@ -4827,7 +4830,10 @@ module LangParser = struct
       done; String.sub !txt 0 ((String.length !txt) - 1)
     with End_of_file ->
       close_in chan;
-      String.sub !txt 0 ((String.length !txt) - 1);;
+      if (String.length !txt) > 0 then
+        String.sub !txt 0 ((String.length !txt) - 1)
+      else
+        ""
 
   let () =
     let filename = Sys.argv.(1) in
