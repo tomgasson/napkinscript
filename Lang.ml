@@ -1,3 +1,26 @@
+module IO: sig
+  val readFile: string -> string
+end = struct
+  (* random chunk size: 2^15, TODO: why do we guess randomly? *)
+  let chunkSize = 32768
+
+  let readFile filename =
+    let chan = open_in filename in
+    let buffer = Buffer.create chunkSize in
+    let chunk = Bytes.create chunkSize in
+    let rec loop () =
+      let len = input chan chunk 0 chunkSize in
+      if len == 0 then (
+        close_in chan;
+        Buffer.contents buffer
+      ) else (
+        Buffer.add_subbytes buffer chunk 0 len;
+        loop ()
+      )
+    in
+    loop ()
+end
+
 module CharacterCodes = struct
   let eol = -1
 
@@ -4699,7 +4722,6 @@ module LangParser = struct
     let startPos = p.Parser.startPos in
     let rec loop p acc =
       match p.Parser.token with
-      (* TODO keywords! *)
       | Lident ident | Uident ident ->
         Parser.next p;
         let id = acc ^ ident in
@@ -4887,23 +4909,9 @@ module LangParser = struct
     in
     [Ast_helper.Str.include_ (Ast_helper.Incl.mk modExpr)]
 
-  let read_file filename =
-    let txt = ref "" in
-    let chan = open_in filename in
-    try
-      while true; do
-        txt := !txt ^ input_line chan ^ "\n"
-      done; String.sub !txt 0 ((String.length !txt) - 1)
-    with End_of_file ->
-      close_in chan;
-      if (String.length !txt) > 0 then
-        String.sub !txt 0 ((String.length !txt) - 1)
-      else
-        ""
-
   let () =
     let filename = Sys.argv.(1) in
-    let src = read_file filename in
+    let src = IO.readFile filename in
     let p = Parser.make src filename in
     try
       let () =
