@@ -388,20 +388,105 @@ module Token = struct
       else Lident str
 end
 
-module Lex = struct
-  type mode = Normal | Template | Tuple | Jsx | Diamond
+module Grammar = struct
+  type t =
+    | OpenDescription (* open Belt *)
+    | ModuleLongIdent (* Foo or Foo.Bar *)
+    | Ternary (* condExpr ? trueExpr : falseExpr *)
+    | Es6ArrowExpr
+    | Jsx
+    | JsxAttribute
+    | ExprOperand
+    | ExprUnary
+    | ExprSetField
+    | ExprBinaryAfterOp of Token.t
+    | ExprBlock
+    | ExprCall
+    | ExprArrayAccess
+    | ExprArrayMutation
+    | ExprIf
+    | IfCondition | IfBranch | ElseBranch
+    | TypeExpression
+    | External
+    | PatternMatching
+    | PatternMatchCase
+    | LetBinding
+
+    | TypeDef
+    | TypeConstrName
+    | TypeParams
+    | TypeParam
+
+    | TypeRepresentation
+
+    | RecordDecl
+    | ConstructorDeclaration
+
+  let toString = function
+    | OpenDescription -> "an open description"
+    | ModuleLongIdent -> "a module identifier"
+    | Ternary -> "a ternary expression"
+    | Es6ArrowExpr -> "an es6 arrow function"
+    | Jsx -> "a jsx expression"
+    | JsxAttribute -> "a jsx attribute"
+    | ExprOperand -> "a basic expression"
+    | ExprUnary -> "a unary expression"
+    | ExprBinaryAfterOp op -> "an expression after the operator \"" ^ Token.toString op  ^ "\""
+    | ExprIf -> "an if expression"
+    | IfCondition -> "the condition of an if expression"
+    | IfBranch -> "the true-branch of an if expression"
+    | ElseBranch -> "the else-branch of an if expression"
+    | TypeExpression -> "a type"
+    | External -> "an external"
+    | PatternMatching -> "the cases of a pattern match"
+    | ExprBlock -> "a block with expressions"
+    | ExprSetField -> "a record field mutation"
+    | ExprCall -> "a function application"
+    | ExprArrayAccess -> "an array access expression"
+    | ExprArrayMutation -> "an array mutation"
+    | LetBinding -> "a let binding"
+    | TypeDef -> "a type definition"
+    | TypeParams -> "type parameters"
+    | TypeParam -> "a type parameter"
+    | TypeConstrName -> "a type-constructor name"
+    | TypeRepresentation -> "a type representation"
+    | RecordDecl -> "a record declaration"
+    | PatternMatchCase -> "a pattern match case"
+    | ConstructorDeclaration -> "a constructor declaration"
+end
+
+module Diagnostics = struct
+  type category =
+    | Unexpected of Token.t
+    | Expected of (Token.t * Lexing.position * Grammar.t option)
+    | Message of string
+    | Uident
+    | Lident
+    | Unclosed of Token.t
+    | Unbalanced of Token.t
+
+  type t = {
+    filename: string;
+    startPos: Lexing.position;
+    length: int; (* or endPos? *)
+    category: category;
+  }
+end
+
+module Scanner = struct
+  type mode = Template | Tuple | Jsx | Diamond
 
   let string_of_mode = function
-    | Normal -> "normal"
     | Template -> "template"
     | Tuple -> "tuple"
     | Jsx -> "jsx"
     | Diamond -> "diamond"
 
 
-  type lexbuf = {
+  type t = {
     filename: string;
     src: bytes;
+    mutable err: Diagnostics.t -> unit;
     mutable ch: int; (* current character *)
     mutable offset: int; (* character offset *)
     mutable rdOffset: int; (* reading offset (position after current character) *)
@@ -410,73 +495,66 @@ module Lex = struct
     mutable mode: mode list;
   }
 
-  let setNormalMode lexbuf =
-    lexbuf.mode <- Normal::lexbuf.mode
+	let setDiamondMode scanner =
+		scanner.mode <- Diamond::scanner.mode
 
-	let setDiamondMode lexbuf =
-		lexbuf.mode <- Diamond::lexbuf.mode
+  let setTemplateMode scanner =
+    scanner.mode <- Template::scanner.mode
 
-  let setTemplateMode lexbuf =
-    lexbuf.mode <- Template::lexbuf.mode
+  let setTupleMode scanner =
+    scanner.mode <- Tuple::scanner.mode
 
-  let setTupleMode lexbuf =
-    lexbuf.mode <- Tuple::lexbuf.mode
+  let setJsxMode scanner =
+    scanner.mode <- Jsx::scanner.mode
 
-  let setJsxMode lexbuf =
-    lexbuf.mode <- Jsx::lexbuf.mode
-
-  let popMode lexbuf mode =
-    match lexbuf.mode with
+  let popMode scanner mode =
+    match scanner.mode with
     | m::ms when m = mode ->
-      lexbuf.mode <- ms
+      scanner.mode <- ms
     | _ -> ()
 
-  let inNormalMode lexbuf = match lexbuf.mode with
-    | Normal::_ -> true
-    | _ -> false
-
-  let inTupleMode lexbuf = match lexbuf.mode with
+  let inTupleMode scanner = match scanner.mode with
     | Tuple::_ -> true
     | _ -> false
 
-  let inDiamondMode lexbuf = match lexbuf.mode with
+  let inDiamondMode scanner = match scanner.mode with
     | Diamond::_ -> true
     | _ -> false
 
-  let inJsxMode lexbuf = match lexbuf.mode with
+  let inJsxMode scanner = match scanner.mode with
     | Jsx::_ -> true
     | _ -> false
 
-  let inTemplateMode lexbuf = match lexbuf.mode with
+  let inTemplateMode scanner = match scanner.mode with
     | Template::_ -> true
     | _ -> false
 
-  let position lexbuf = Lexing.{
-    pos_fname = lexbuf.filename;
+  let position scanner = Lexing.{
+    pos_fname = scanner.filename;
     (* line number *)
-    pos_lnum = lexbuf.lnum;
+    pos_lnum = scanner.lnum;
     (* offset of the beginning of the line (number
-       of characters between the beginning of the lexbuf and the beginning
+       of characters between the beginning of the scanner and the beginning
        of the line) *)
-    pos_bol = lexbuf.lineOffset;
+    pos_bol = scanner.lineOffset;
     (* [pos_cnum] is the offset of the position (number of
-       characters between the beginning of the lexbuf and the position). *)
-    pos_cnum = lexbuf.offset;
+       characters between the beginning of the scanner and the position). *)
+    pos_cnum = scanner.offset;
   }
 
   (* TODO: refactor, won't work if char width > 1 char *)
-  let computeEndPosition lexbuf = Lexing.{
-    pos_fname = lexbuf.filename;
+  let computeEndPosition scanner = Lexing.{
+    pos_fname = scanner.filename;
     (* line number *)
     pos_lnum =
-      if lexbuf.offset < lexbuf.lineOffset then lexbuf.lnum - 1 else lexbuf.lnum;
+      if scanner.offset < scanner.lineOffset then scanner.lnum - 1 else scanner.lnum;
     (* offset of the beginning of the line (number
-       of characters between the beginning of the lexbuf and the beginning
+       of characters between the beginning of the scanner and the beginning
        of the line) *)
-    pos_bol = lexbuf.lineOffset; (* Unsound *)
+    pos_bol = scanner.lineOffset; (* Unsound *)
     (* [pos_cnum] is the offset of the position (number of
-       characters between the beginning of the lexbuf and the position). *)
-    pos_cnum = lexbuf.offset;
+       characters between the beginning of the scanner and the position). *)
+    pos_cnum = scanner.offset;
   }
 
   let printPos p =
@@ -486,95 +564,97 @@ module Lex = struct
     print_endline ("beginning of line: " ^ (string_of_int p.Lexing.pos_bol));
     print_endline ("-------------------")
 
-  let next lexbuf =
-    if lexbuf.rdOffset < (Bytes.length lexbuf.src) then begin
-      lexbuf.offset <- lexbuf.rdOffset;
-      let ch = Bytes.get lexbuf.src lexbuf.rdOffset in
+  let next scanner =
+    if scanner.rdOffset < (Bytes.length scanner.src) then (
+      scanner.offset <- scanner.rdOffset;
+      let ch = Bytes.get scanner.src scanner.rdOffset in
       if ch = '\n' then begin
-        lexbuf.lineOffset <- lexbuf.offset + 1;
-        lexbuf.lnum <- lexbuf.lnum + 1
+        scanner.lineOffset <- scanner.offset + 1;
+        scanner.lnum <- scanner.lnum + 1
       end;
-      lexbuf.rdOffset <- lexbuf.rdOffset + 1;
-      lexbuf.ch <- int_of_char ch
-    end else begin
-      lexbuf.offset <- Bytes.length lexbuf.src;
-      lexbuf.ch <- -1
-    end
+      scanner.rdOffset <- scanner.rdOffset + 1;
+      scanner.ch <- int_of_char ch
+    ) else (
+      scanner.offset <- Bytes.length scanner.src;
+      scanner.ch <- -1
+    )
 
-  let peek lexbuf =
-    if lexbuf.rdOffset < (Bytes.length lexbuf.src) then
-      int_of_char (Bytes.unsafe_get lexbuf.src lexbuf.rdOffset)
+  let peek scanner =
+    if scanner.rdOffset < (Bytes.length scanner.src) then
+      int_of_char (Bytes.unsafe_get scanner.src scanner.rdOffset)
     else
       -1
 
   let make b filename =
-    let lexbuf = {
+    let scanner = {
       filename;
       src = b;
+      err = (fun _ -> ());
       ch = CharacterCodes.space;
       offset = 0;
       rdOffset = 0;
       lineOffset = 0;
       lnum = 1;
-      mode = [Normal];
+      mode = [];
     } in
-    next lexbuf;
-    lexbuf
+    next scanner;
+    scanner
 
 
   (* black magic, use sparingly! *)
-  let lookahead lexbuf callback =
-    let lexbufCopy = {lexbuf with filename = lexbuf.filename} in
-    callback lexbufCopy
+  let lookahead scanner callback =
+    let scannerCopy = {scanner with filename = scanner.filename} in
+    callback scannerCopy
 
-  let skipWhitespace lexbuf =
+  let skipWhitespace scanner =
     while
-      (lexbuf.ch == CharacterCodes.space) ||
-      (lexbuf.ch == CharacterCodes.tab) ||
-      (lexbuf.ch == CharacterCodes.newline)
-    do next lexbuf
+      (scanner.ch == CharacterCodes.space) ||
+      (scanner.ch == CharacterCodes.tab) ||
+      (scanner.ch == CharacterCodes.newline)
+    do next scanner
     done
 
-  let lexIdentifier lexbuf =
-    let startOff = lexbuf.offset in
+  let scanIdentifier scanner =
+    let startOff = scanner.offset in
     while (
-      CharacterCodes.isLetter lexbuf.ch ||
-      CharacterCodes.isDigit lexbuf.ch ||
-      lexbuf.ch == CharacterCodes.underscore
+      CharacterCodes.isLetter scanner.ch ||
+      CharacterCodes.isDigit scanner.ch ||
+      scanner.ch == CharacterCodes.underscore
     ) do
-      next lexbuf
+      next scanner
     done;
-    let str = Bytes.sub_string lexbuf.src startOff (lexbuf.offset - startOff) in
+    let str = Bytes.sub_string scanner.src startOff (scanner.offset - startOff) in
     Token.lookupKeyword str
 
   (* float: (0…9) { 0…9∣ _ } [. { 0…9∣ _ }] [(e∣ E) [+∣ -] (0…9) { 0…9∣ _ }]   *)
-  let lexNumber lexbuf =
-    let startOff = lexbuf.offset in
-    while CharacterCodes.isDigit lexbuf.ch do
-      next lexbuf
+  let scanNumber scanner =
+    let startOff = scanner.offset in
+    while CharacterCodes.isDigit scanner.ch do
+      next scanner
     done;
     (* floats *)
-    if CharacterCodes.dot == lexbuf.ch then (
-      next lexbuf;
-      while CharacterCodes.isDigit lexbuf.ch do
-        next lexbuf
+    if CharacterCodes.dot == scanner.ch then (
+      next scanner;
+      while CharacterCodes.isDigit scanner.ch do
+        next scanner
       done;
-      let str = Bytes.sub_string lexbuf.src startOff (lexbuf.offset - startOff) in
+      let str = Bytes.sub_string scanner.src startOff (scanner.offset - startOff) in
       Token.Float str
     ) else (
-      let str = Bytes.sub_string lexbuf.src startOff (lexbuf.offset - startOff) in
+      let str = Bytes.sub_string scanner.src startOff (scanner.offset - startOff) in
       Token.Int str
     )
 
-  let lexString lexbuf =
-    let didEnd = ref false in
-
+  let scanString scanner =
     let buffer = Buffer.create 256 in
-    while not !didEnd do
-      if lexbuf.ch == CharacterCodes.doubleQuote then (
-        didEnd := true;
-      ) else if lexbuf.ch == CharacterCodes.backslash then (
-        next lexbuf;
+
+    let rec scan () =
+      if scanner.ch == CharacterCodes.eol then
+        ()
+      else if scanner.ch == CharacterCodes.doubleQuote then (
+        next scanner
+      ) else if scanner.ch == CharacterCodes.backslash then (
+        next scanner;
 
         let char_for_backslash = function
           | 110 -> '\010'
@@ -583,97 +663,110 @@ module Lex = struct
           | 116 -> '\009'
           | c   -> Char.chr c
         in
-
-        Buffer.add_char buffer (char_for_backslash lexbuf.ch);
+        next scanner;
+        Buffer.add_char buffer (char_for_backslash scanner.ch);
+        scan ()
+      ) else if CharacterCodes.isLineBreak scanner.ch then (
+        next scanner
       ) else (
-        Buffer.add_char buffer (Char.chr lexbuf.ch)
-      );
-      next lexbuf;
-    done;
-    Token.String (
-      Buffer.contents buffer
-    )
+        Buffer.add_char buffer (Char.chr scanner.ch);
+        next scanner;
+        scan ()
+      )
+    in
+    scan ();
+    Token.String (Buffer.contents buffer)
 
-  let lexSingleLineComment lexbuf =
-    let startOff = lexbuf.offset in
-    while not (CharacterCodes.isLineBreak lexbuf.ch) &&
-      lexbuf.rdOffset < (Bytes.length lexbuf.src)
+  let scanSingleLineComment scanner =
+    let startOff = scanner.offset in
+    while not (CharacterCodes.isLineBreak scanner.ch) &&
+      scanner.rdOffset < (Bytes.length scanner.src)
     do
-      next lexbuf
+      next scanner
     done;
-    next lexbuf;
+    next scanner;
     Token.Comment (
-      Bytes.sub_string lexbuf.src startOff (lexbuf.offset - 1 - startOff)
+      Bytes.sub_string scanner.src startOff (scanner.offset - 1 - startOff)
     )
 
-  (* TODO: error handling unclosed multi-line comment, i.e. missing */ *)
-  let lexMultiLineComment lexbuf =
-    let startOff = lexbuf.offset in
-    while not (
-      lexbuf.ch == CharacterCodes.asterisk &&
-      peek lexbuf == CharacterCodes.forwardslash
-    ) do next lexbuf done;
-    next lexbuf;
-    next lexbuf;
+  let scanMultiLineComment scanner =
+    let startOff = scanner.offset in
+    let rec scan () =
+      if scanner.ch == CharacterCodes.asterisk &&
+         peek scanner == CharacterCodes.forwardslash then (
+        next scanner;
+        next scanner
+      ) else if scanner.ch == CharacterCodes.eol then (
+        ()
+      ) else (
+        next scanner;
+        scan ()
+      )
+    in
+    scan();
     Token.Comment (
-      Bytes.sub_string lexbuf.src startOff (lexbuf.offset - 1 - startOff)
+      Bytes.sub_string scanner.src startOff (scanner.offset - 1 - startOff)
     )
 
   exception Unknown_token of int
 
-  let lexTemplate lexbuf =
-    let startOff = lexbuf.offset in
+  let scanTemplate scanner =
+    let startOff = scanner.offset in
 
-    let rec scan lexbuf =
-      if lexbuf.ch == CharacterCodes.backtick then (
-        next lexbuf;
+    let rec scan () =
+      if scanner.ch == CharacterCodes.eol then (
+        popMode scanner Template;
+        Token.TemplateTail ""
+      )
+      else if scanner.ch == CharacterCodes.backtick then (
+        next scanner;
         let contents =
-          Bytes.sub_string lexbuf.src startOff (lexbuf.offset - 1 - startOff)
+          Bytes.sub_string scanner.src startOff (scanner.offset - 1 - startOff)
         in
-        popMode lexbuf Template;
+        popMode scanner Template;
         Token.TemplateTail contents
-      ) else if lexbuf.ch == CharacterCodes.dollar &&
-                peek lexbuf == CharacterCodes.lbrace
+      ) else if scanner.ch == CharacterCodes.dollar &&
+                peek scanner == CharacterCodes.lbrace
         then (
-          next lexbuf; (* consume $ *)
-          next lexbuf; (* consume { *)
+          next scanner; (* consume $ *)
+          next scanner; (* consume { *)
           let contents =
-            Bytes.sub_string lexbuf.src startOff (lexbuf.offset - 2 - startOff)
+            Bytes.sub_string scanner.src startOff (scanner.offset - 2 - startOff)
           in
-          popMode lexbuf Template;
+          popMode scanner Template;
           Token.TemplatePart contents
       ) else (
-        next lexbuf;
-        scan lexbuf
+        next scanner;
+        scan()
       )
     in
-    scan lexbuf
+    scan()
 
-  let rec lex lexbuf =
-    skipWhitespace lexbuf;
-    let startPos = position lexbuf in
-    let ch = lexbuf.ch in
-    let token = if inTemplateMode lexbuf then
-      lexTemplate lexbuf
+  let rec scan scanner =
+    if not (inTemplateMode scanner) then skipWhitespace scanner;
+    let startPos = position scanner in
+    let ch = scanner.ch in
+    let token = if inTemplateMode scanner then
+      scanTemplate scanner
     else if ch == CharacterCodes.underscore then (
-      let nextCh = peek lexbuf in
+      let nextCh = peek scanner in
       if nextCh == CharacterCodes.underscore || CharacterCodes.isLetter nextCh then
-        lexIdentifier lexbuf
+        scanIdentifier scanner
       else (
-        next lexbuf;
+        next scanner;
         Token.Underscore
       )
     ) else if CharacterCodes.isLetter ch then
-      lexIdentifier lexbuf
+      scanIdentifier scanner
     else if CharacterCodes.isDigit ch then
-      lexNumber lexbuf
+      scanNumber scanner
     else begin
-      next lexbuf;
+      next scanner;
       if ch == CharacterCodes.dot then
-        if lexbuf.ch == CharacterCodes.dot then (
-          next lexbuf;
-          if lexbuf.ch == CharacterCodes.dot then (
-            next lexbuf;
+        if scanner.ch == CharacterCodes.dot then (
+          next scanner;
+          if scanner.ch == CharacterCodes.dot then (
+            next scanner;
             Token.DotDotDot
           ) else (
             Token.DotDot
@@ -682,14 +775,14 @@ module Lex = struct
           Token.Dot
         )
       else if ch == CharacterCodes.doubleQuote then
-        lexString lexbuf
+        scanString scanner
       else if ch == CharacterCodes.singleQuote then
         Token.SingleQuote
       else if ch == CharacterCodes.bang then
-        if lexbuf.ch == CharacterCodes.equal then (
-          next lexbuf;
-          if lexbuf.ch == CharacterCodes.equal then (
-            next lexbuf;
+        if scanner.ch == CharacterCodes.equal then (
+          next scanner;
+          if scanner.ch == CharacterCodes.equal then (
+            next scanner;
             Token.BangEqualEqual
           ) else (
             Token.BangEqual
@@ -700,13 +793,13 @@ module Lex = struct
       else if ch == CharacterCodes.semicolon then
         Token.Semicolon
       else if ch == CharacterCodes.equal then (
-        if lexbuf.ch == CharacterCodes.greaterThan then (
-          next lexbuf;
+        if scanner.ch == CharacterCodes.greaterThan then (
+          next scanner;
           Token.EqualGreater
-        ) else if lexbuf.ch == CharacterCodes.equal then (
-          next lexbuf;
-          if lexbuf.ch == CharacterCodes.equal then (
-            next lexbuf;
+        ) else if scanner.ch == CharacterCodes.equal then (
+          next scanner;
+          if scanner.ch == CharacterCodes.equal then (
+            next scanner;
             Token.EqualEqualEqual
           ) else (
             Token.EqualEqual
@@ -715,18 +808,18 @@ module Lex = struct
           Token.Equal
         )
       ) else if ch == CharacterCodes.bar then
-        if lexbuf.ch == CharacterCodes.bar then (
-          next lexbuf;
+        if scanner.ch == CharacterCodes.bar then (
+          next scanner;
           Token.Lor
-        ) else if lexbuf.ch == CharacterCodes.greaterThan then (
-          next lexbuf;
+        ) else if scanner.ch == CharacterCodes.greaterThan then (
+          next scanner;
           Token.BarGreater
         ) else (
           Token.Bar
         )
       else if ch == CharacterCodes.ampersand then
-        if lexbuf.ch == CharacterCodes.ampersand then (
-          next lexbuf;
+        if scanner.ch == CharacterCodes.ampersand then (
+          next scanner;
           Token.Land
         ) else (
           Token.Band
@@ -746,8 +839,8 @@ module Lex = struct
       else if ch == CharacterCodes.comma then
         Token.Comma
       else if ch == CharacterCodes.colon then
-       if lexbuf.ch == CharacterCodes.equal then(
-          next lexbuf;
+       if scanner.ch == CharacterCodes.equal then(
+          next scanner;
           Token.ColonEqual
         ) else (
           Token.Colon
@@ -755,44 +848,44 @@ module Lex = struct
       else if ch == CharacterCodes.backslash then
         Token.Backslash
       else if ch == CharacterCodes.forwardslash then
-        if lexbuf.ch == CharacterCodes.forwardslash then (
-          next lexbuf;
-          lexSingleLineComment lexbuf
-        ) else if (lexbuf.ch == CharacterCodes.asterisk) then (
-          next lexbuf;
-          lexMultiLineComment lexbuf
+        if scanner.ch == CharacterCodes.forwardslash then (
+          next scanner;
+          scanSingleLineComment scanner
+        ) else if (scanner.ch == CharacterCodes.asterisk) then (
+          next scanner;
+          scanMultiLineComment scanner
         ) else (
-          if inTupleMode lexbuf then
-            lexForwardSlashOrTupleEnding lexbuf
+          if inTupleMode scanner then
+            scanForwardSlashOrTupleEnding scanner
           else
           Token.Forwardslash
         )
       else if ch == CharacterCodes.minus then
-        if lexbuf.ch == CharacterCodes.dot then (
-          next lexbuf;
+        if scanner.ch == CharacterCodes.dot then (
+          next scanner;
           Token.MinusDot
-        ) else if lexbuf.ch == CharacterCodes.greaterThan then (
-          next lexbuf;
+        ) else if scanner.ch == CharacterCodes.greaterThan then (
+          next scanner;
           Token.MinusGreater;
         ) else (
           Token.Minus
         )
       else if ch == CharacterCodes.plus then
-        if lexbuf.ch == CharacterCodes.dot then (
-          next lexbuf;
+        if scanner.ch == CharacterCodes.dot then (
+          next scanner;
           Token.PlusDot
-        ) else if lexbuf.ch == CharacterCodes.plus then (
-          next lexbuf;
+        ) else if scanner.ch == CharacterCodes.plus then (
+          next scanner;
           Token.PlusPlus
-        ) else if lexbuf.ch == CharacterCodes.equal then (
-          next lexbuf;
+        ) else if scanner.ch == CharacterCodes.equal then (
+          next scanner;
           Token.PlusEqual
         ) else (
           Token.Plus
         )
       else if ch == CharacterCodes.greaterThan then
-        if lexbuf.ch == CharacterCodes.equal && not (inDiamondMode lexbuf) then (
-          next lexbuf;
+        if scanner.ch == CharacterCodes.equal && not (inDiamondMode scanner) then (
+          next scanner;
           Token.GreaterEqual
         ) else (
           Token.GreaterThan
@@ -805,32 +898,32 @@ module Lex = struct
          * But what if we have a / here: example </ in  <div></div>
          * This signals a closing element. To simulate the two-token lookahead,
          * the </ is emitted as a single new token LessThanSlash *)
-        if inJsxMode lexbuf then (
-          let () = skipWhitespace lexbuf in
-          if lexbuf.ch == CharacterCodes.forwardslash then
-            let () = next lexbuf in
+        if inJsxMode scanner then (
+          skipWhitespace scanner;
+          if scanner.ch == CharacterCodes.forwardslash then
+            let () = next scanner in
             Token.LessThanSlash
           else
             Token.LessThan
-        ) else if lexbuf.ch == CharacterCodes.equal then (
-          next lexbuf;
+        ) else if scanner.ch == CharacterCodes.equal then (
+          next scanner;
           Token.LessEqual
         ) else (
           Token.LessThan
         )
       else if ch == CharacterCodes.hash then
-        if lexbuf.ch == CharacterCodes.hash then(
-          next lexbuf;
+        if scanner.ch == CharacterCodes.hash then(
+          next scanner;
           Token.HashHash
-        ) else if lexbuf.ch == CharacterCodes.equal then(
-          next lexbuf;
+        ) else if scanner.ch == CharacterCodes.equal then(
+          next scanner;
           Token.HashEqual
         ) else (
           Token.Hash
         )
       else if ch == CharacterCodes.asterisk then
-        if lexbuf.ch == CharacterCodes.asterisk then (
-          next lexbuf;
+        if scanner.ch == CharacterCodes.asterisk then (
+          next scanner;
           Token.Exponentiation;
         ) else (
           Token.Asterisk
@@ -840,15 +933,15 @@ module Lex = struct
       else if ch == CharacterCodes.question then
         Token.Question
       else if ch == CharacterCodes.at then
-        if lexbuf.ch == CharacterCodes.at then (
-          next lexbuf;
+        if scanner.ch == CharacterCodes.at then (
+          next scanner;
           Token.AtAt
         ) else (
           Token.At
         )
     else if ch == CharacterCodes.percent then
-      if lexbuf.ch == CharacterCodes.percent then (
-        next lexbuf;
+      if scanner.ch == CharacterCodes.percent then (
+        next scanner;
         Token.PercentPercent
       ) else (
         Token.Percent
@@ -858,19 +951,19 @@ module Lex = struct
       else if ch == -1 then
         Token.Eof
       else
-        raise (Unknown_token lexbuf.ch)
+        raise (Unknown_token scanner.ch)
     end
     in
-    let endPos = computeEndPosition lexbuf in
+    let endPos = computeEndPosition scanner in
     (startPos, endPos, token)
 
-  and lexForwardSlashOrTupleEnding lexbuf =
-    let cb lexbuf =
-      let (startPos, _, token) = lex lexbuf in
+  and scanForwardSlashOrTupleEnding scanner =
+    let cb scanner =
+      let (_, _, token) = scan scanner in
       match token with
       | Lident _ ->
-        next lexbuf;
-        if lexbuf.ch != CharacterCodes.equal then
+        next scanner;
+        if scanner.ch != CharacterCodes.equal then
           Token.TupleEnding
         else
           Token.Forwardslash
@@ -879,8 +972,8 @@ module Lex = struct
       | Lazy | If | For | While | Switch | At -> Token.Forwardslash
       | _ -> TupleEnding
     in
-    let result = lookahead lexbuf cb in
-    if result = TupleEnding then popMode lexbuf Tuple;
+    let result = lookahead scanner cb in
+    if result = TupleEnding then popMode scanner Tuple;
     result
 
   (* Imagine: <div> <Navbar /> <
@@ -888,18 +981,21 @@ module Lex = struct
    * or is it the start of a closing tag?  </div>
    * reconsiderLessThan peeks at the next token and
    * determines the correct token to disambiguate *)
-  let reconsiderLessThan lexbuf =
+  let reconsiderLessThan scanner =
     (* < consumed *)
-    skipWhitespace lexbuf;
-    if lexbuf.ch == CharacterCodes.forwardslash then
-      let () = next lexbuf in
+    skipWhitespace scanner;
+    if scanner.ch == CharacterCodes.forwardslash then
+      let () = next scanner in
       Token.LessThanSlash
     else
       Token.LessThan
 
 end
 
-module Report = struct
+
+
+
+module Reporting = struct
 
   module Doc = struct
     type color =
@@ -975,83 +1071,16 @@ module Report = struct
 
   end
 
-  type circumstance =
-    | OpenDescription (* open Belt *)
-    | ModuleLongIdent (* Foo or Foo.Bar *)
-    | Ternary (* condExpr ? trueExpr : falseExpr *)
-    | Es6ArrowExpr
-    | Jsx
-    | JsxAttribute
-    | ExprOperand
-    | ExprUnary
-    | ExprSetField
-    | ExprBinaryAfterOp of Token.t
-    | ExprBlock
-    | ExprCall
-    | ExprArrayAccess
-    | ExprArrayMutation
-    | ExprIf
-    | IfCondition | IfBranch | ElseBranch
-    | TypeExpression
-    | External
-    | PatternMatching
-    | PatternMatchCase
-    | LetBinding
-
-    | TypeDef
-    | TypeConstrName
-    | TypeParams
-    | TypeParam
-
-    | TypeRepresentation
-
-    | RecordDecl
-    | ConstructorDeclaration
-
-  (* type context = circumstance * token *)
-
-  let circumstanceToString = function
-    | OpenDescription -> "an open description"
-    | ModuleLongIdent -> "a module identifier"
-    | Ternary -> "a ternary expression"
-    | Es6ArrowExpr -> "an es6 arrow function"
-    | Jsx -> "a jsx expression"
-    | JsxAttribute -> "a jsx attribute"
-    | ExprOperand -> "a basic expression"
-    | ExprUnary -> "a unary expression"
-    | ExprBinaryAfterOp op -> "an expression after the operator \"" ^ Token.toString op  ^ "\""
-    | ExprIf -> "an if expression"
-    | IfCondition -> "the condition of an if expression"
-    | IfBranch -> "the true-branch of an if expression"
-    | ElseBranch -> "the else-branch of an if expression"
-    | TypeExpression -> "a type"
-    | External -> "an external"
-    | PatternMatching -> "the cases of a pattern match"
-    | ExprBlock -> "a block with expressions"
-    | ExprSetField -> "a record field mutation"
-    | ExprCall -> "a function application"
-    | ExprArrayAccess -> "an array access expression"
-    | ExprArrayMutation -> "an array mutation"
-    | LetBinding -> "a let binding"
-    | TypeDef -> "a type definition"
-    | TypeParams -> "type parameters"
-    | TypeParam -> "a type parameter"
-    | TypeConstrName -> "a type-constructor name"
-    | TypeRepresentation -> "a type representation"
-    | RecordDecl -> "a record declaration"
-    | PatternMatchCase -> "a pattern match case"
-    | ConstructorDeclaration -> "a constructor declaration"
-
   let parseContext stack =
     match stack with
-    | ((ExprOperand, _)::cs) ->
+    | ((Grammar.ExprOperand, _)::cs) ->
         begin match cs with
         | (ExprBinaryAfterOp _ as c, _)::cs ->
-          circumstanceToString c
+          Grammar.toString c
         | _ -> "a basic expression"
         end
     | ((c, _)::cs) ->
-        circumstanceToString c
+        Grammar.toString c
     | [] -> "your code"
 
   let rec drop n l =
@@ -1076,8 +1105,7 @@ module Report = struct
 
   type problem =
     | Unexpected of Token.t
-    | Expected of (Token.t * Lexing.position * circumstance option)
-    | OneOf of Token.t list
+    | Expected of (Token.t * Lexing.position * Grammar.t option)
     | Message of string
     | Uident
     | Lident
@@ -1087,7 +1115,7 @@ module Report = struct
 
 end
 
-module LangParser = struct
+module NapkinScript = struct
   let mkLoc startLoc endLoc = Location.{
     loc_start = startLoc;
     loc_end = endLoc;
@@ -1096,17 +1124,18 @@ module LangParser = struct
 
   module Parser = struct
     type t = {
-      mutable lexbuf: Lex.lexbuf;
+      mutable scanner: Scanner.t;
       mutable token: Token.t;
       mutable startPos: Lexing.position;
       mutable endPos: Lexing.position;
       mutable prevEndPos: Lexing.position;
-      mutable breadcrumbs: (Report.circumstance * Lexing.position) list;
-      mutable errors: Report.parseError list
+      mutable breadcrumbs: (Grammar.t * Lexing.position) list;
+      mutable errors: Reporting.parseError list;
+      mutable diagnostics: Diagnostics.t list;
     }
 
     let rec next p =
-      let (startPos, endPos, token) = Lex.lex p.lexbuf in
+      let (startPos, endPos, token) = Scanner.scan p.scanner in
       p.prevEndPos <- p.endPos;
       p.token <- token;
       p.startPos <- startPos;
@@ -1116,21 +1145,25 @@ module LangParser = struct
       | _ -> ()
 
     let make src filename =
-      let lexbuf = Lex.make (Bytes.of_string src) filename in
+      let scanner = Scanner.make (Bytes.of_string src) filename in
       let parserState = {
-        lexbuf;
+        scanner;
         token = Token.Eof;
         startPos = Lexing.dummy_pos;
         prevEndPos = Lexing.dummy_pos;
         endPos = Lexing.dummy_pos;
         breadcrumbs = [];
         errors = [];
+        diagnostics = [];
       } in
+      parserState.scanner.err <- (fun d ->
+        parserState.diagnostics <- d::parserState.diagnostics
+      );
       next parserState;
       parserState
 
     let restore p1 p2 =
-      p1.lexbuf <- p2.lexbuf;
+      p1.scanner <- p2.scanner;
       p1.token <- p2.token;
       p1.startPos <- p2.startPos;
       p1.prevEndPos <- p2.prevEndPos;
@@ -1153,7 +1186,7 @@ module LangParser = struct
       else
         false
 
-    exception ParseError of Report.parseError
+    exception ParseError of Reporting.parseError
 
     (* ?circumstance indicates an optional circumstance
      * The current reasoning is to be able to say:
@@ -1164,19 +1197,19 @@ module LangParser = struct
       if p.token = token then
         next p
       else
-        raise (ParseError (p.startPos, Report.Expected (token, p.prevEndPos, circumstance)))
+        raise (ParseError (p.startPos, Reporting.Expected (token, p.prevEndPos, circumstance)))
 
     let expect ?circumstance token p =
       if p.token = token then
         next p
       else
-        let error = (p.startPos, Report.Expected (token, p.prevEndPos, circumstance)) in
+        let error = (p.startPos, Reporting.Expected (token, p.prevEndPos, circumstance)) in
         p.errors <- error::p.errors
 
     let lookahead p callback =
       (* is this copying correct? *)
-      let lexbufCopy = {p.lexbuf with filename = p.lexbuf.filename} in
-      let parserStateCopy = {p with lexbuf = lexbufCopy} in
+      let scannerCopy = {p.scanner with filename = p.scanner.filename} in
+      let parserStateCopy = {p with scanner = scannerCopy} in
       callback parserStateCopy
   end
 
@@ -1206,7 +1239,7 @@ module LangParser = struct
       goToClosing (getClosingToken t) state;
       goToClosing closingToken state
     | ((Rparen | Token.Rbrace | Rbracket | Eof), _)  ->
-      raise (Parser.ParseError (state.startPos, Report.Unbalanced closingToken))
+      raise (Parser.ParseError (state.startPos, Reporting.Unbalanced closingToken))
     | _ ->
       Parser.next state;
       goToClosing closingToken state
@@ -1393,6 +1426,7 @@ module LangParser = struct
     in
     Ast_helper.Typ.constr jsDotTCtor [obj]
 
+  (* TODO: diagnostic reporting *)
   let lidentOfPath longident =
     match Longident.flatten longident |> List.rev with
     | [] -> ""
@@ -1409,7 +1443,7 @@ module LangParser = struct
         Parser.next p;
         Parser.expectExn Dot p;
         aux p (Ldot (path, uident))
-      | token -> raise (Parser.ParseError (p.startPos, Report.Unexpected token))
+      | token -> raise (Parser.ParseError (p.startPos, Reporting.Unexpected token))
     in
     let ident = match p.Parser.token with
     | List -> Longident.Lident "list"
@@ -1418,7 +1452,7 @@ module LangParser = struct
       Parser.next p;
       Parser.expectExn Dot p;
       aux p (Lident ident)
-    | token -> raise (Parser.ParseError (p.startPos, Report.Unexpected token))
+    | token -> raise (Parser.ParseError (p.startPos, Reporting.Unexpected token))
     in
     Parser.next p;
     Location.mkloc ident (mkLoc startPos p.prevEndPos)
@@ -1433,7 +1467,7 @@ module LangParser = struct
         Parser.next p;
         Parser.expect Dot p;
         loop p (Longident.Ldot (path, ident))
-      | t -> raise (Parser.ParseError (p.startPos, Report.Unexpected t))
+      | t -> raise (Parser.ParseError (p.startPos, Reporting.Unexpected t))
     in
     loop p ident
 
@@ -1450,7 +1484,7 @@ module LangParser = struct
           loop p lident
         | _ -> Location.mkloc lident (mkLoc startPos endPos)
         end
-      | _ -> raise (Parser.ParseError (p.startPos, Report.Uident))
+      | _ -> raise (Parser.ParseError (p.startPos, Reporting.Uident))
     in
     loop p ident
 
@@ -1458,7 +1492,7 @@ module LangParser = struct
        Foo
        Foo.Bar *)
   let parseModuleLongIdent p =
-    (* Parser.leaveBreadcrumb p Report.ModuleLongIdent; *)
+    (* Parser.leaveBreadcrumb p Reporting.ModuleLongIdent; *)
     let startPos = p.Parser.startPos in
     let moduleIdent = match p.Parser.token with
     | Uident ident ->
@@ -1471,7 +1505,7 @@ module LangParser = struct
         parseModuleLongIdentTail p startPos lident
       | _ -> Location.mkloc lident (mkLoc startPos endPos)
       end
-    | _ -> raise (Parser.ParseError (p.startPos, Report.Uident))
+    | _ -> raise (Parser.ParseError (p.startPos, Reporting.Uident))
     in
     (* Parser.eatBreadcrumb p; *)
     moduleIdent
@@ -1509,7 +1543,7 @@ module LangParser = struct
    *   | open module-path
    *   | open! module-path *)
   let parseOpenDescription ~attrs p =
-    Parser.leaveBreadcrumb p Report.OpenDescription;
+    Parser.leaveBreadcrumb p Grammar.OpenDescription;
     let startPos = p.Parser.startPos in
     Parser.expectExn Open p;
     let override = if Parser.optional p Token.Bang then
@@ -1531,7 +1565,7 @@ module LangParser = struct
     | Float i -> Parsetree.Pconst_float (i, None)
     | String s -> Pconst_string(s, None)
     | _ ->
-      raise (Parser.ParseError (p.startPos, Report.Message "I'm expecting a constant like: 1 or \"a string\""))
+      raise (Parser.ParseError (p.startPos, Reporting.Message "I'm expecting a constant like: 1 or \"a string\""))
     in
     Parser.next p;
     constant
@@ -1572,9 +1606,7 @@ module LangParser = struct
      (* ∣	 ( pattern :  typexpr )   *)
      (* ∣	 pattern |  pattern   *)
      (* ∣	 constr  pattern   *)
-     (* ∣	 `tag-name  pattern   *)
-     (* ∣	 #typeconstr   *)
-     (* ∣	 pattern  { , pattern }+   *)
+     (* ∣	 / pattern  { , pattern }+  /   *)
      (* ∣	 { field  [: typexpr]  [= pattern] { ; field  [: typexpr]  [= pattern] }  [; _ ] [ ; ] }   *)
      (* ∣	 [ pattern  { ; pattern }  [ ; ] ]   *)
      (* ∣	 pattern ::  pattern   *)
@@ -1648,7 +1680,7 @@ module LangParser = struct
       let (loc, extension) = parseExtension p in
       Ast_helper.Pat.extension ~loc ~attrs extension
     | unknownToken ->
-      raise (Parser.ParseError (p.startPos, Report.Unexpected unknownToken))
+      raise (Parser.ParseError (p.startPos, Reporting.Unexpected unknownToken))
     in
     let pat = if alias then parseAliasPattern ~attrs pat p else pat in
     if or_ then parseOrPattern pat p else pat
@@ -1668,7 +1700,7 @@ module LangParser = struct
           ~attrs
            pattern
            (Location.mkloc ident loc)
-      | _ -> raise (Parser.ParseError (p.startPos, Report.Lident))
+      | _ -> raise (Parser.ParseError (p.startPos, Reporting.Lident))
       end
     | _ -> pattern
 
@@ -1731,7 +1763,7 @@ module LangParser = struct
 						(Location.mkloc ident locIdent)
 				in
 				(Location.mkloc label.txt (mkLoc startPos aliasPattern.ppat_loc.loc_end), aliasPattern)
-			| _ -> raise (Parser.ParseError (p.startPos, Report.Lident))
+			| _ -> raise (Parser.ParseError (p.startPos, Reporting.Lident))
 			end
 		| _ ->
     (Location.mkloc label.txt (mkLoc startPos pattern.ppat_loc.loc_end), pattern)
@@ -1755,7 +1787,7 @@ module LangParser = struct
       | Uident _ | Lident _ ->
         let field = parseRecordPatternField p in
         loop p (field::fields)
-      | token -> raise (Parser.ParseError (p.startPos, Report.Unexpected token))
+      | token -> raise (Parser.ParseError (p.startPos, Reporting.Unexpected token))
     in
     let (fields, closedFlag) = loop p [firstField] in
     let endPos = p.endPos in
@@ -1870,7 +1902,7 @@ module LangParser = struct
   and parseTernaryExpr leftOperand p =
     match p.Parser.token with
     | Question ->
-      Parser.leaveBreadcrumb p Report.Ternary;
+      Parser.leaveBreadcrumb p Grammar.Ternary;
       Parser.next p;
       let trueBranch = parseExpr ~context:TernaryTrueBranchExpr p in
       Parser.expectExn Colon p;
@@ -1886,7 +1918,7 @@ module LangParser = struct
 
   and parseEs6ArrowExpression ?parameters p =
     let startPos = p.Parser.startPos in
-    Parser.leaveBreadcrumb p Report.Es6ArrowExpr;
+    Parser.leaveBreadcrumb p Grammar.Es6ArrowExpr;
     let parameters = match parameters with
     | Some params -> params
     | None -> parseParameters p
@@ -1943,7 +1975,7 @@ module LangParser = struct
       | Lident ident ->
         Parser.next p;
         ident
-      | _ -> raise (Parser.ParseError (p.startPos, Report.Message "Function parameters labels should be lowercased like ~a "))
+      | _ -> raise (Parser.ParseError (p.startPos, Reporting.Message "Function parameters labels should be lowercased like ~a "))
       in
       begin match p.Parser.token with
       | Comma | Equal | Rparen ->
@@ -1966,9 +1998,7 @@ module LangParser = struct
         Parser.next p;
         let pat = parseConstrainedPattern p in
         (Asttypes.Labelled lblName, pat)
-      | _ -> raise (Parser.ParseError (p.startPos,
-          Report.OneOf [Token.Comma; Token.Equal; Token.As]
-        ))
+      | t -> raise (Parser.ParseError (p.startPos, Reporting.Unexpected t))
       end
     | _ ->
       (Asttypes.Nolabel, parseConstrainedPattern p)
@@ -2032,7 +2062,7 @@ module LangParser = struct
         [[], Asttypes.Nolabel, None, unitPattern, startPos]
       | _ -> parseParameterList p
       end
-    | token -> raise (Parser.ParseError (p.startPos, Report.Unexpected token))
+    | token -> raise (Parser.ParseError (p.startPos, Reporting.Unexpected token))
 
   and parseConstrainedExpr p =
     let expr = parseExpr p in
@@ -2048,7 +2078,7 @@ module LangParser = struct
    * This means that regardless of the context, these expressions
    * are always interpreted correctly. *)
   and parseAtomicExpr p =
-    Parser.leaveBreadcrumb p ExprOperand;
+    Parser.leaveBreadcrumb p Grammar.ExprOperand;
     let startPos = p.Parser.startPos in
     let expr = match p.Parser.token with
       | (True | False) as token ->
@@ -2091,13 +2121,13 @@ module LangParser = struct
         let (loc, extension) = parseExtension p in
         Ast_helper.Exp.extension ~loc extension
       | unknownToken ->
-        raise (Parser.ParseError (p.startPos, Report.Unexpected unknownToken))
+        raise (Parser.ParseError (p.startPos, Reporting.Unexpected unknownToken))
     in
     Parser.eatBreadcrumb p;
     expr
 
   and parseBracketAccess p expr startPos =
-    Parser.leaveBreadcrumb p ExprArrayAccess;
+    Parser.leaveBreadcrumb p Grammar.ExprArrayAccess;
     let lbracket = p.startPos in
     Parser.next p;
     match p.Parser.token with
@@ -2176,7 +2206,7 @@ module LangParser = struct
         let lident = parseValuePath p in
         begin match p.Parser.token with
         | Equal when noCall = false ->
-          Parser.leaveBreadcrumb p ExprSetField;
+          Parser.leaveBreadcrumb p Grammar.ExprSetField;
           Parser.next p;
           let endPos = p.prevEndPos in
           let loc = mkLoc startPos endPos in
@@ -2207,13 +2237,13 @@ module LangParser = struct
   and parseUnaryExpr p =
     match p.Parser.token with
     | (Minus | MinusDot | Plus | PlusDot | Bang) as token ->
-      Parser.leaveBreadcrumb p Report.ExprUnary;
+      Parser.leaveBreadcrumb p Grammar.ExprUnary;
       Parser.next p;
       let unaryExpr = makeUnaryExpr token (parseUnaryExpr p) in
       Parser.eatBreadcrumb p;
       unaryExpr
     | Band (* & *) ->
-      Parser.leaveBreadcrumb p Report.ExprUnary;
+      Parser.leaveBreadcrumb p Grammar.ExprUnary;
       let startPos = p.startPos in
       Parser.next p;
       let refAccess =
@@ -2257,7 +2287,7 @@ module LangParser = struct
       let tokenPrec = Token.precedence token in
       if tokenPrec < prec then a
       else begin
-        Parser.leaveBreadcrumb p (Report.ExprBinaryAfterOp token);
+        Parser.leaveBreadcrumb p (Grammar.ExprBinaryAfterOp token);
         let startPos = p.startPos in
         Parser.next p;
         let endPos = p.startPos in
@@ -2291,9 +2321,9 @@ module LangParser = struct
         let expr = parseExprBlock p in
         let () = match p.Parser.token with
         | Rbrace ->
-          Lex.setTemplateMode p.lexbuf;
+          Scanner.setTemplateMode p.scanner;
           Parser.next p
-        | _ -> raise (Parser.ParseError (p.startPos, Report.Expected (Rbrace, p.prevEndPos, None)))
+        | _ -> raise (Parser.ParseError (p.startPos, Reporting.Expected (Rbrace, p.prevEndPos, None)))
         in
         let str = Ast_helper.Exp.constant (Pconst_string(txt, None)) in
         let next =
@@ -2305,9 +2335,9 @@ module LangParser = struct
             [Nolabel, a; Nolabel, expr]
         in
         loop next p
-      | token -> raise (Parser.ParseError (p.startPos, Report.Unexpected token))
+      | token -> raise (Parser.ParseError (p.startPos, Reporting.Unexpected token))
     in
-    Lex.setTemplateMode p.lexbuf;
+    Scanner.setTemplateMode p.scanner;
     Parser.expectExn Backtick p;
     match p.Parser.token with
     | TemplateTail txt ->
@@ -2318,9 +2348,9 @@ module LangParser = struct
       let expr = parseExprBlock p in
       let () = match p.Parser.token with
       | Rbrace ->
-        Lex.setTemplateMode p.lexbuf;
+        Scanner.setTemplateMode p.scanner;
         Parser.next p
-      | _ -> raise (Parser.ParseError (p.startPos, Report.Expected (Rbrace, p.prevEndPos, None)))
+      | _ -> raise (Parser.ParseError (p.startPos, Reporting.Expected (Rbrace, p.prevEndPos, None)))
       in
       let str = Ast_helper.Exp.constant (Pconst_string(txt, None)) in
       let next =
@@ -2330,10 +2360,10 @@ module LangParser = struct
           expr
       in
       loop next p
-   | token -> raise (Parser.ParseError (p.startPos, Report.Unexpected token))
+   | token -> raise (Parser.ParseError (p.startPos, Reporting.Unexpected token))
 
   and parseLetBindingBody ~attrs p =
-    Parser.leaveBreadcrumb p LetBinding;
+    Parser.leaveBreadcrumb p Grammar.LetBinding;
     let pat =
       let pat = parsePattern p in
       match p.Parser.token with
@@ -2423,7 +2453,7 @@ module LangParser = struct
       Location.mkloc (Longident.Ldot (longident.txt, "createElement")) longident.loc
     | _ ->
       raise (Parser.ParseError (p.startPos,
-      Report.Message "A jsx name should start with a lowercase or uppercase identifier, like: div in <div /> or Navbar in <Navbar />"))
+      Reporting.Message "A jsx name should start with a lowercase or uppercase identifier, like: div in <div /> or Navbar in <Navbar />"))
     in
     Ast_helper.Exp.ident ~loc:longident.loc longident
 
@@ -2441,7 +2471,7 @@ module LangParser = struct
       makeListExpression loc [] None (* no children *)
     | GreaterThan -> (* <foo a=b> bar </foo> *)
       let childrenStartPos = p.Parser.startPos in
-      Lex.setJsxMode p.lexbuf;
+      Scanner.setJsxMode p.scanner;
       Parser.next p;
       let (spread, children) = parseJsxChildren p in
       let childrenEndPos = p.Parser.startPos in
@@ -2461,9 +2491,9 @@ module LangParser = struct
       | _ ->
         let opening = "</" ^ (string_of_pexp_ident name) ^ ">" in
         let message = "Closing jsx name should be the same as the opening name. Did you mean " ^ opening ^ " ?" in
-        raise (Parser.ParseError (p.startPos, Report.Message message))
+        raise (Parser.ParseError (p.startPos, Reporting.Message message))
       end
-    | unknownToken -> raise (Parser.ParseError (p.startPos, Report.Unexpected unknownToken))
+    | unknownToken -> raise (Parser.ParseError (p.startPos, Reporting.Unexpected unknownToken))
     in
     let jsxEndPos = p.prevEndPos in
     let loc = mkLoc jsxStartPos jsxEndPos in
@@ -2484,7 +2514,7 @@ module LangParser = struct
    *  jsx-children ::= primary-expr*          * => 0 or more
    *)
   and parseJsx p =
-    Parser.leaveBreadcrumb p Report.Jsx;
+    Parser.leaveBreadcrumb p Grammar.Jsx;
     Parser.expectExn LessThan p;
     let jsxExpr = match p.Parser.token with
     | Lident _ | Uident _ ->
@@ -2503,7 +2533,7 @@ module LangParser = struct
    *)
   and parseJsxFragment p =
     let childrenStartPos = p.Parser.startPos in
-    Lex.setJsxMode p.lexbuf;
+    Scanner.setJsxMode p.scanner;
     Parser.expectExn GreaterThan p;
     let (_spread, children) = parseJsxChildren p in
     let childrenEndPos = p.Parser.startPos in
@@ -2521,12 +2551,12 @@ module LangParser = struct
    *   |  lident = ?jsx_expr
    *)
   and parseJsxProp p =
-    Parser.leaveBreadcrumb p Report.JsxAttribute;
+    Parser.leaveBreadcrumb p Grammar.JsxAttribute;
     let optional = Parser.optional p Question in
     let name = match p.Parser.token with
     | Lident ident -> Parser.next p; ident
     | _ ->
-      raise (Parser.ParseError (p.startPos, Report.Lident))
+      raise (Parser.ParseError (p.startPos, Reporting.Lident))
     in
     (* optional punning: <foo ?a /> *)
     if optional then
@@ -2567,7 +2597,7 @@ module LangParser = struct
     let rec loop p children =
       match p.Parser.token  with
       | Token.Eof | LessThanSlash ->
-        Lex.popMode p.lexbuf Jsx;
+        Scanner.popMode p.scanner Jsx;
         List.rev children
       | LessThan ->
         (* Imagine: <div> <Navbar /> <
@@ -2575,13 +2605,13 @@ module LangParser = struct
          * or is it the start of a closing tag?  </div>
          * reconsiderLessThan peeks at the next token and
          * determines the correct token to disambiguate *)
-        let token = Lex.reconsiderLessThan p.lexbuf in
+        let token = Scanner.reconsiderLessThan p.scanner in
         if token = LessThan then
           let child = parsePrimaryExpr ~noCall:true p in
           loop p (child::children)
         else (* LessThanSlash *)
           let () = p.token <- token in
-          let () = Lex.popMode p.lexbuf Jsx in
+          let () = Scanner.popMode p.scanner Jsx in
           List.rev children
       | _ ->
         let child = parsePrimaryExpr ~noCall:true p in
@@ -2692,7 +2722,7 @@ module LangParser = struct
       let loc = mkLoc p.startPos p.endPos in
       Parser.next p;
       Location.mkloc (Longident.Lident s) loc
-    | t -> raise (Parser.ParseError (p.startPos, Report.Unexpected t))
+    | t -> raise (Parser.ParseError (p.startPos, Reporting.Unexpected t))
     in
     match p.Parser.token with
     | Colon ->
@@ -2731,7 +2761,7 @@ module LangParser = struct
     let rows = rows @ exprs in
     match rows with
     | [] ->
-      raise (Parser.ParseError (p.prevEndPos, Report.Message "Record spread needs at least one field that's updated"))
+      raise (Parser.ParseError (p.prevEndPos, Reporting.Message "Record spread needs at least one field that's updated"))
     | rows ->
       Ast_helper.Exp.record rows spread
 
@@ -2745,7 +2775,7 @@ module LangParser = struct
         Parser.next p;
         let loc = mkLoc startPos p.prevEndPos in
         Location.mkloc ident loc
-      | _ -> raise (Parser.ParseError (p.startPos, Report.Uident))
+      | _ -> raise (Parser.ParseError (p.startPos, Reporting.Uident))
       in
       let body = parseModuleBindingBody p in
       Parser.optional p Semicolon |> ignore;
@@ -2826,7 +2856,7 @@ module LangParser = struct
    *  a block of expression is always
    *)
   and parseExprBlock ?first p =
-      Parser.leaveBreadcrumb p Report.ExprBlock;
+      Parser.leaveBreadcrumb p Grammar.ExprBlock;
       let item = match first with
       | Some e -> e
       | None -> parseExprBlockItem p
@@ -2876,10 +2906,10 @@ module LangParser = struct
       blockExpr
 
   and parseIfExpression p =
-    Parser.leaveBreadcrumb p ExprIf;
+    Parser.leaveBreadcrumb p Grammar.ExprIf;
     let startPos = p.Parser.startPos in
     Parser.expectExn If p;
-    Parser.leaveBreadcrumb p IfCondition;
+    Parser.leaveBreadcrumb p Grammar.IfCondition;
     (* doesn't make sense to try es6 arrow here? *)
     let conditionExpr = parseExpr ~context:WhenExpr p in
     Parser.eatBreadcrumb p;
@@ -2890,7 +2920,7 @@ module LangParser = struct
     Parser.eatBreadcrumb p;
     let elseExpr = match p.Parser.token with
     | Else ->
-      Parser.leaveBreadcrumb p ElseBranch;
+      Parser.leaveBreadcrumb p Grammar.ElseBranch;
       Parser.next p;
       Parser.expectExn  Lbrace p;
       let elseExpr = parseExprBlock p in
@@ -2910,8 +2940,8 @@ module LangParser = struct
     let direction = match p.Parser.token with
     | To -> Asttypes.Upto
     | Downto -> Asttypes.Downto
-    | _ ->
-      raise (Parser.ParseError (p.startPos, Report.OneOf [Token.To; Token.Downto]))
+    | t ->
+      raise (Parser.ParseError (p.startPos, Reporting.Unexpected t))
     in
     Parser.next p;
     let e2 = parseExpr p in
@@ -2970,7 +3000,7 @@ module LangParser = struct
     Ast_helper.Exp.while_ ~loc expr1 expr2
 
   and parsePatternMatchCase p =
-    Parser.leaveBreadcrumb p Report.PatternMatchCase;
+    Parser.leaveBreadcrumb p Grammar.PatternMatchCase;
     Parser.expectExn Bar p;
     let lhs = parsePattern p in
     let guard = match p.Parser.token with
@@ -2986,7 +3016,7 @@ module LangParser = struct
     Ast_helper.Exp.case lhs ?guard rhs
 
   and parsePatternMatching p =
-    Parser.leaveBreadcrumb p Report.PatternMatching;
+    Parser.leaveBreadcrumb p Grammar.PatternMatching;
     (* '{' consumed *)
     let rec loop p cases =
       match p.Parser.token with
@@ -3052,14 +3082,14 @@ module LangParser = struct
         | _ ->
           (Labelled ident, identExpr)
         end
-      | _ -> raise (Parser.ParseError (p.startPos, Report.Lident))
+      | _ -> raise (Parser.ParseError (p.startPos, Reporting.Lident))
       end
     | _ -> (Nolabel, parseConstrainedExpr p)
 
   and parseCallExpr p funExpr =
     Parser.expectExn Lparen p;
     let startPos = p.Parser.startPos in
-    Parser.leaveBreadcrumb p ExprCall;
+    Parser.leaveBreadcrumb p Grammar.ExprCall;
     let args = parseCommaSeparatedList ~closing:Rparen ~f:parseArgument p in
     Parser.expect Rparen p;
     let args = match args with
@@ -3112,7 +3142,7 @@ module LangParser = struct
         let loc = mkLoc startPos p.prevEndPos in
         let lident = buildLongident (ident::acc) in
         Ast_helper.Exp.ident ~loc (Location.mkloc lident loc)
-      | token -> raise (Parser.ParseError (p.startPos, Report.Unexpected token))
+      | token -> raise (Parser.ParseError (p.startPos, Reporting.Unexpected token))
     in
     aux p []
 
@@ -3133,7 +3163,7 @@ module LangParser = struct
   and parseTupleExpr p =
     let startPos = p.Parser.startPos in
     Parser.expectExn Forwardslash p;
-    Lex.setTupleMode p.lexbuf;
+    Scanner.setTupleMode p.scanner;
     let exprs =
       parseCommaSeparatedList ~closing:TupleEnding ~f:parseConstrainedExpr p
     in
@@ -3226,7 +3256,7 @@ module LangParser = struct
           Parser.next p;
           let var = Location.mkloc ident (mkLoc startPos endPos) in
           loop p (var::vars)
-        | _ -> raise (Parser.ParseError (p.startPos, Report.Lident))
+        | _ -> raise (Parser.ParseError (p.startPos, Reporting.Lident))
         end
       | _ ->
         List.rev vars
@@ -3243,7 +3273,7 @@ module LangParser = struct
         let endPos = p.endPos in
         Parser.next p;
         Ast_helper.Typ.var ~loc:(mkLoc startPos endPos) ~attrs ident
-      | _ -> raise (Parser.ParseError (p.startPos, Report.Lident))
+      | _ -> raise (Parser.ParseError (p.startPos, Reporting.Lident))
       end
     | Underscore ->
       let endPos = p.endPos in
@@ -3265,7 +3295,7 @@ module LangParser = struct
         let args = parseTypeConstructorArgs p in
         Ast_helper.Typ.constr ~loc:(mkLoc startPos p.prevEndPos) ~attrs constr args
       | Lparen ->
-        raise (Parser.ParseError (p.startPos, Report.Message "Type constructor args require diamonds, like: Belt.Map.String.t<int>"))
+        raise (Parser.ParseError (p.startPos, Reporting.Message "Type constructor args require diamonds, like: Belt.Map.String.t<int>"))
       | _ ->
         Ast_helper.Typ.constr ~loc:constr.loc ~attrs constr []
       end
@@ -3275,7 +3305,7 @@ module LangParser = struct
     | Lbrace ->
       parseBsObjectType p
     | t ->
-      raise (Parser.ParseError (p.startPos, Report.Unexpected t))
+      raise (Parser.ParseError (p.startPos, Reporting.Unexpected t))
     in
     typ
 
@@ -3314,7 +3344,7 @@ module LangParser = struct
         Parser.next p;
         (* TODO: how do we parse attributes here? *)
         Ast_helper.Typ.alias ~loc:(mkLoc typ.Parsetree.ptyp_loc.loc_start p.prevEndPos) typ ident
-      | _ -> raise (Parser.ParseError (p.startPos, Report.Lident))
+      | _ -> raise (Parser.ParseError (p.startPos, Reporting.Lident))
       end
     | _ -> typ
 
@@ -3335,7 +3365,7 @@ module LangParser = struct
       | _ ->
         raise (Parser.ParseError (
           p.startPos,
-          Report.Lident
+          Reporting.Lident
         ))
       in
       Parser.expectExn Colon p;
@@ -3386,11 +3416,11 @@ module LangParser = struct
    *
    * typeconstr ::=
    *  | lident
-   *  |  uident.lident
-   *  |  uident.uident.lident     --> long module path
+   *  | uident.lident
+   *  | uident.uident.lident     --> long module path
    *)
   and parseTypExpr ?(es6Arrow=true) ?(alias=true) p =
-    Parser.leaveBreadcrumb p Report.TypeExpression;
+    Parser.leaveBreadcrumb p Grammar.TypeExpression;
     let attrs = parseAttributes p in
     let typ = if es6Arrow && isEs6ArrowType p then
       parseEs6ArrowType p
@@ -3416,23 +3446,23 @@ module LangParser = struct
     Ast_helper.Typ.tuple ~loc:(mkLoc startPos p.prevEndPos) types
 
   and parseTypeConstructorArgs p =
-		Lex.setDiamondMode p.lexbuf;
+		Scanner.setDiamondMode p.scanner;
 		Parser.expectExn LessThan p;
 		let typeArgs =
 			parseCommaSeparatedList ~closing:GreaterThan ~f:parseTypExpr p
 		in
 		Parser.expect GreaterThan p;
-		Lex.popMode p.lexbuf Diamond;
+		Scanner.popMode p.scanner Diamond;
 		typeArgs
 
   and parseConstructorTypeArgs p =
-		Lex.setDiamondMode p.Parser.lexbuf;
+		Scanner.setDiamondMode p.Parser.scanner;
 		Parser.expectExn LessThan p;
 		let typeArgs =
 			parseCommaSeparatedList ~closing:GreaterThan ~f:parseTypExpr p
 		in
 		Parser.expect GreaterThan p;
-		Lex.popMode p.lexbuf Diamond;
+		Scanner.popMode p.scanner Diamond;
 		typeArgs
 
   (* string-field-decl ::=
@@ -3446,7 +3476,7 @@ module LangParser = struct
       let nameEndPos = p.endPos in
       Parser.next p;
       Location.mkloc name (mkLoc nameStartPos nameEndPos)
-    | t -> raise (Parser.ParseError (p.startPos, Report.Unexpected t))
+    | t -> raise (Parser.ParseError (p.startPos, Reporting.Unexpected t))
     in
     Parser.expect Colon p;
     let typ = parsePolyTypeExpr p in
@@ -3468,7 +3498,7 @@ module LangParser = struct
       let loc = mkLoc p.startPos p.endPos in
       Parser.next p;
       Location.mkloc ident loc
-    | _ -> raise (Parser.ParseError (p.startPos, Report.Lident))
+    | _ -> raise (Parser.ParseError (p.startPos, Reporting.Lident))
     in
     let typ = match p.Parser.token with
     | Colon ->
@@ -3486,7 +3516,7 @@ module LangParser = struct
    *  | { field-decl, field-decl, field-decl, }
    *)
   and parseRecordDeclaration p =
-    Parser.leaveBreadcrumb p Report.RecordDecl;
+    Parser.leaveBreadcrumb p Grammar.RecordDecl;
     Parser.expectExn Lbrace p;
     let rows =
       parseCommaSeparatedList ~closing:Rbrace ~f:parseFieldDeclaration p
@@ -3598,7 +3628,7 @@ module LangParser = struct
    *  | constr-name const-args
    *  | attrs constr-name const-args *)
    and parseTypeConstructorDeclaration p =
-     Parser.leaveBreadcrumb p Report.ConstructorDeclaration;
+     Parser.leaveBreadcrumb p Grammar.ConstructorDeclaration;
      let attrs = parseAttributes p in
      match p.Parser.token with
      | Uident uident ->
@@ -3606,7 +3636,7 @@ module LangParser = struct
        let (args, res) = parseConstrDeclArgs p in
        Parser.eatBreadcrumb p;
        Ast_helper.Type.constructor ~attrs ?res ~args (Location.mknoloc uident)
-     | _ -> raise (Parser.ParseError (p.startPos, Report.Uident))
+     | _ -> raise (Parser.ParseError (p.startPos, Reporting.Uident))
 
    (* [|] constr-decl  { | constr-decl }   *)
    and parseTypeConstructorDeclarations ?first p =
@@ -3639,7 +3669,7 @@ module LangParser = struct
    *  |  = ..
    *)
   and parseTypeRepresentation p =
-    Parser.leaveBreadcrumb p Report.TypeRepresentation;
+    Parser.leaveBreadcrumb p Grammar.TypeRepresentation;
     (* = consumed *)
     let privateFlag =
       if Parser.optional p Token.Private
@@ -3654,7 +3684,7 @@ module LangParser = struct
     | DotDot ->
       Parser.next p;
       Ptype_open
-    | unknownToken -> raise (Parser.ParseError (p.startPos, Report.Unexpected unknownToken))
+    | unknownToken -> raise (Parser.ParseError (p.startPos, Reporting.Unexpected unknownToken))
     in
     Parser.eatBreadcrumb p;
     (privateFlag, kind)
@@ -3669,7 +3699,7 @@ module LangParser = struct
    *   | (* empty *)
    *)
   and parseTypeParam p =
-    Parser.leaveBreadcrumb p Report.TypeParam;
+    Parser.leaveBreadcrumb p Grammar.TypeParam;
     let variance = match p.Parser.token with
     | Plus -> Parser.next p; Asttypes.Covariant
     | Minus -> Parser.next p; Contravariant
@@ -3684,13 +3714,13 @@ module LangParser = struct
         Parser.next p;
         let loc = mkLoc startPos p.prevEndPos in
         (Ast_helper.Typ.var ~loc ident, variance)
-      | _ -> raise (Parser.ParseError (p.startPos, Report.Lident))
+      | _ -> raise (Parser.ParseError (p.startPos, Reporting.Lident))
       end
     | Underscore ->
       let loc = mkLoc p.startPos p.endPos in
       Parser.next p;
       (Ast_helper.Typ.any ~loc (), variance)
-    | token -> raise (Parser.ParseError (p.startPos, Report.Unexpected token))
+    | token -> raise (Parser.ParseError (p.startPos, Reporting.Unexpected token))
     in
     Parser.eatBreadcrumb p;
     param
@@ -3703,7 +3733,7 @@ module LangParser = struct
   and parseTypeParams p =
     match p.Parser.token with
     | LessThan ->
-      Parser.leaveBreadcrumb p TypeParams;
+      Parser.leaveBreadcrumb p Grammar.TypeParams;
       Parser.next p;
       let params =
         parseCommaSeparatedList ~closing:GreaterThan ~f:parseTypeParam p
@@ -3712,7 +3742,7 @@ module LangParser = struct
       Parser.eatBreadcrumb p;
       params
     | Lparen when p.startPos.pos_lnum == p.prevEndPos.pos_lnum ->
-      raise (Parser.ParseError (p.startPos, Report.Message
+      raise (Parser.ParseError (p.startPos, Reporting.Message
         "Type parameters start with diamonds, example: type foo<'a>"
       ))
     | _ -> []
@@ -3726,7 +3756,7 @@ module LangParser = struct
       Parser.expect Equal p;
       let typ = parseTypExpr p in
       (Ast_helper.Typ.var ident, typ, Location.none)
-    | _ -> raise (Parser.ParseError (p.startPos, Report.Lident))
+    | _ -> raise (Parser.ParseError (p.startPos, Reporting.Lident))
     end
 
   (* type-constraints ::=
@@ -3785,7 +3815,7 @@ module LangParser = struct
         ) in
         (None, Asttypes.Public, Parsetree.Ptype_variant (parseTypeConstructorDeclarations p ?first))
       end
-    | _ -> raise (Parser.ParseError (p.startPos, Report.Uident))
+    | _ -> raise (Parser.ParseError (p.startPos, Reporting.Uident))
 
   and parseRecordOrBsObjectDecl p =
     let startPos = p.Parser.startPos in
@@ -3829,7 +3859,7 @@ module LangParser = struct
           let typ = makeBsObjType ~loc ~closed:closedFlag fields in
           (Some typ, Asttypes.Public, Parsetree.Ptype_abstract)
       | _ ->
-        Parser.leaveBreadcrumb p Report.RecordDecl;
+        Parser.leaveBreadcrumb p Grammar.RecordDecl;
         let fields = match attrs with
         | [] ->
           parseCommaSeparatedList ~closing:Rbrace ~f:parseFieldDeclaration p
@@ -3878,19 +3908,19 @@ module LangParser = struct
    * type-information	::=	[type-equation]  [type-representation]  { type-constraint }
    * type-equation	::=	= typexpr *)
   and parseTypeDef ?attrs p =
-    Parser.leaveBreadcrumb p Report.TypeDef;
+    Parser.leaveBreadcrumb p Grammar.TypeDef;
     let startPos = p.Parser.startPos in
     let attrs = match attrs with | Some attrs -> attrs | None -> parseAttributes p in
-    Parser.leaveBreadcrumb p Report.TypeConstrName;
+    Parser.leaveBreadcrumb p Grammar.TypeConstrName;
     let typeConstrName = match p.Parser.token with
     | Lident ident ->
       let loc = mkLoc p.startPos p.endPos in
       Parser.next p;
       (Location.mkloc ident loc)
-    | _ -> raise (Parser.ParseError (p.startPos, Report.Lident))
+    | _ -> raise (Parser.ParseError (p.startPos, Reporting.Lident))
     in
     Parser.eatBreadcrumb p;
-    Parser.leaveBreadcrumb p Report.TypeParams;
+    Parser.leaveBreadcrumb p Grammar.TypeParams;
     let params = parseTypeParams p in
     Parser.eatBreadcrumb p;
     let typeDef =
@@ -3989,7 +4019,7 @@ module LangParser = struct
         loop p (s::prims)
       | _ ->
         begin match prims with
-        | [] -> raise (Parser.ParseError (p.startPos, Report.Message "An external definition should have at least one primitive. Example: \"setTimeout\""))
+        | [] -> raise (Parser.ParseError (p.startPos, Reporting.Message "An external definition should have at least one primitive. Example: \"setTimeout\""))
         | prims -> List.rev prims
         end
     in
@@ -3997,7 +4027,7 @@ module LangParser = struct
 
   (* external value-name : typexp = external-declaration *)
   and parseExternalDef ~attrs p =
-    Parser.leaveBreadcrumb p Report.External;
+    Parser.leaveBreadcrumb p Grammar.External;
     let startPos = p.Parser.startPos in
     Parser.expectExn Token.External p;
     let name = match p.Parser.token with
@@ -4005,9 +4035,9 @@ module LangParser = struct
       let loc = mkLoc p.startPos p.endPos in
       Parser.next p;
       Location.mkloc ident loc
-    | _ -> raise (Parser.ParseError (p.startPos, Report.Lident))
+    | _ -> raise (Parser.ParseError (p.startPos, Reporting.Lident))
     in
-    Parser.expectExn ~circumstance:(Report.TypeExpression) Colon p;
+    Parser.expectExn ~circumstance:(Grammar.TypeExpression) Colon p;
     let typExpr = parseTypExpr p in
     Parser.expect Equal p;
     let prim = parsePrimitive p in
@@ -4030,7 +4060,7 @@ module LangParser = struct
       let loc = mkLoc p.startPos p.endPos in
       Parser.next p;
       Location.mkloc name loc
-    | _ -> raise (Parser.ParseError (p.startPos, Report.Uident))
+    | _ -> raise (Parser.ParseError (p.startPos, Reporting.Uident))
     in
     let kind = match p.Parser.token with
     | Lparen ->
@@ -4143,7 +4173,7 @@ module LangParser = struct
     | Percent ->
       let (loc, extension) = parseExtension p in
       Ast_helper.Mod.extension ~loc extension
-    | unknownToken -> raise (Parser.ParseError (p.startPos, Report.Unexpected unknownToken))
+    | unknownToken -> raise (Parser.ParseError (p.startPos, Reporting.Unexpected unknownToken))
 
   and parsePrimaryModExpr p =
     let startPos = p.Parser.startPos in
@@ -4167,7 +4197,7 @@ module LangParser = struct
       Parser.next p;
       "_"
     | _ -> raise (Parser.ParseError (p.startPos,
-      Report.Message "a functor arg name should be module name or _"
+      Reporting.Message "a functor arg name should be module name or _"
       ))
     in
     Location.mkloc ident (mkLoc startPos p.prevEndPos)
@@ -4320,7 +4350,7 @@ module LangParser = struct
       Parser.next p;
       let loc = mkLoc nameStart p.prevEndPos in
       Location.mkloc ident loc
-    | _ -> raise (Parser.ParseError (p.startPos, Report.Uident))
+    | _ -> raise (Parser.ParseError (p.startPos, Reporting.Uident))
     in
     Parser.expectExn Equal p;
     let moduleType = parseModuleType p in
@@ -4350,7 +4380,7 @@ module LangParser = struct
       Parser.next p;
       let loc = mkLoc startPos p.prevEndPos in
       Location.mkloc ident loc
-    | _ -> raise (Parser.ParseError (p.startPos, Report.Uident))
+    | _ -> raise (Parser.ParseError (p.startPos, Reporting.Uident))
     in
     let body = parseModuleBindingBody p in
     let loc = mkLoc startPos p.prevEndPos in
@@ -4413,7 +4443,7 @@ module LangParser = struct
     | Percent ->
       let (loc, extension) = parseExtension p in
       Ast_helper.Mty.extension ~loc extension
-    | token -> raise (Parser.ParseError (p.startPos, Report.Unexpected token))
+    | token -> raise (Parser.ParseError (p.startPos, Reporting.Unexpected token))
     in
     let moduleTypeLoc = mkLoc startPos p.prevEndPos in
     {moduleType with pmty_loc = moduleTypeLoc}
@@ -4505,7 +4535,7 @@ module LangParser = struct
         Parser.next p;
         let lident = parseModuleLongIdent p in
         Parsetree.Pwith_module (modulePath, lident)
-      | _ -> raise (Parser.ParseError (p.startPos, Report.OneOf [Equal; ColonEqual]))
+      | t -> raise (Parser.ParseError (p.startPos, Reporting.Unexpected t))
       end
     | Typ ->
       Parser.next p;
@@ -4536,9 +4566,9 @@ module LangParser = struct
             ~cstrs:typeConstraints
             (Location.mkloc (Longident.last typeConstr.txt) typeConstr.loc)
         )
-      | _ -> raise (Parser.ParseError (p.startPos, Report.OneOf [Equal; ColonEqual]))
+      | t -> raise (Parser.ParseError (p.startPos, Reporting.Unexpected t))
       end
-    | token -> raise (Parser.ParseError (p.startPos, Report.Unexpected token))
+    | token -> raise (Parser.ParseError (p.startPos, Reporting.Unexpected token))
 
   and parseModuleTypeOf p =
     let startPos = p.Parser.startPos in
@@ -4616,7 +4646,7 @@ module LangParser = struct
         )
       | Typ ->
         parseModuleTypeDeclaration ~attrs p
-      | _ -> raise (Parser.ParseError (p.startPos, Report.Uident))
+      | _ -> raise (Parser.ParseError (p.startPos, Reporting.Uident))
       end
     | AtAt ->
       let (loc, attr) = parseStandaloneAttribute p in
@@ -4624,7 +4654,7 @@ module LangParser = struct
     | PercentPercent ->
       let (loc, extension) = parseExtension ~moduleLanguage:true p in
       Ast_helper.Sig.extension ~attrs ~loc extension
-    | token -> raise (Parser.ParseError (p.startPos, Report.Unexpected token))
+    | token -> raise (Parser.ParseError (p.startPos, Reporting.Unexpected token))
 
   (* module rec module-name :  module-type  { and module-name:  module-type } *)
   and parseRecModuleSpec ~attrs p =
@@ -4655,20 +4685,18 @@ module LangParser = struct
       let loc = mkLoc p.startPos p.endPos in
       Parser.next p;
       Location.mkloc modName loc
-    | _ -> raise (Parser.ParseError (p.startPos, Report.Uident))
+    | _ -> raise (Parser.ParseError (p.startPos, Reporting.Uident))
     in
     Parser.expect Colon p;
     let modType = parseModuleType p in
     Ast_helper.Md.mk ~attrs name modType
-
-
 
   and parseModuleDeclarationOrAlias ~attrs p =
     let moduleName = match p.Parser.token with
     | Uident ident ->
       Parser.next p;
       Location.mknoloc ident
-    | _ -> raise (Parser.ParseError (p.startPos, Report.Uident))
+    | _ -> raise (Parser.ParseError (p.startPos, Reporting.Uident))
     in
     let body = match p.Parser.token with
     | Colon ->
@@ -4678,7 +4706,7 @@ module LangParser = struct
       Parser.next p;
       let lident = parseModuleLongIdent p in
       Ast_helper.Mty.alias lident
-    | _ -> raise (Parser.ParseError (p.startPos, Report.OneOf [Colon; Equal]))
+    | t -> raise (Parser.ParseError (p.startPos, Reporting.Unexpected t))
     in
     Ast_helper.Sig.module_ (Ast_helper.Md.mk ~attrs moduleName body)
 
@@ -4690,7 +4718,7 @@ module LangParser = struct
     | Uident ident ->
       Parser.next p;
       Location.mknoloc ident
-    | _ -> raise (Parser.ParseError (p.startPos, Report.Uident))
+    | _ -> raise (Parser.ParseError (p.startPos, Reporting.Uident))
     in
     let typ = match p.Parser.token with
     | Equal ->
@@ -4708,7 +4736,7 @@ module LangParser = struct
       let nameStartPos = p.startPos in
       Parser.next p;
       Location.mkloc ident (mkLoc nameStartPos p.prevEndPos)
-    | _ -> raise (Parser.ParseError (p.startPos, Report.Lident))
+    | _ -> raise (Parser.ParseError (p.startPos, Reporting.Lident))
     in
     Parser.expect Colon p;
     let typExpr = parsePolyTypeExpr p in
@@ -4736,7 +4764,7 @@ module LangParser = struct
         | Dot -> Parser.next p; loop p (id ^ ".")
         | _ -> id
         end
-      | token -> raise (Parser.ParseError (p.startPos, Report.Unexpected token))
+      | token -> raise (Parser.ParseError (p.startPos, Reporting.Unexpected token))
     in
     let id = loop p "" in
     let endPos = p.prevEndPos in
@@ -4860,11 +4888,11 @@ module LangParser = struct
       let (var, typ) = match vb.pvb_pat.ppat_desc with
       | Ppat_constraint ({ppat_desc= Ppat_var stringLoc}, coreType) ->
         (stringLoc, coreType)
-      | _ -> raise (Parser.ParseError (vb.pvb_loc.loc_start, Report.Message "Hey! If you want to export an item, you need to add a type."))
+      | _ -> raise (Parser.ParseError (vb.pvb_loc.loc_start, Reporting.Message "Hey! If you want to export an item, you need to add a type."))
       in
       let vd = Ast_helper.Val.mk var typ in
       Ast_helper.Sig.value ~loc vd
-    | _ -> raise (Parser.ParseError (loc.loc_start, Report.Message "Hey! we don't support exporting here (yet?)"))
+    | _ -> raise (Parser.ParseError (loc.loc_start, Reporting.Message "Hey! we don't support exporting here (yet?)"))
 
   let parseExportItem p =
     match p.Parser.token with
@@ -4910,6 +4938,7 @@ module LangParser = struct
     [Ast_helper.Str.include_ (Ast_helper.Incl.mk modExpr)]
 
   let () =
+    (* let startTime = Unix.gettimeofday () in *)
     let filename = Sys.argv.(1) in
     let src = IO.readFile filename in
     let p = Parser.make src filename in
@@ -4932,24 +4961,27 @@ module LangParser = struct
       (* Format.pp_print_flush Format.std_formatter (); *)
       (* print_newline(); *)
       List.iter (fun (pos, problem) ->
-        Printf.eprintf "Parse error: %s\n" (p.lexbuf.filename);
+        Printf.eprintf "Parse error: %s\n" (p.scanner.filename);
         Printf.eprintf "Line: %d, Column: %d\n" (pos.Lexing.pos_lnum) (pos.pos_cnum - pos.pos_bol + 1);
         Printf.eprintf "%s\n"
         (match problem with
-        | Report.Expected (t,_, _) ->
+        | Reporting.Expected (t,_, _) ->
           "Missing " ^ Token.toString t
         | _ -> "Todo: pretty print parse error")
       ) p.errors;
+      (* let endTime = Unix.gettimeofday () in *)
+      (* let diff = (endTime -. startTime) *. 1000. in *)
+      (* Printf.eprintf "Execution time: %fms\n%!" diff; *)
       exit 0
     with
     | Parser.ParseError (pos, problem) ->
-      Printf.eprintf "\nParse error: %s -> line: %d, col: %d\n" (p.lexbuf.filename) (pos.pos_lnum) (pos.pos_cnum - pos.pos_bol + 1);
-      Printf.eprintf "Problem encountered while trying to parse %s.\n" (Report.parseContext p.breadcrumbs);
-      let ctx = Report.renderCodeContext (Bytes.to_string p.lexbuf.src) pos p.endPos in
+      Printf.eprintf "\nParse error: %s, line: %d, col: %d\n" (p.scanner.filename) (pos.pos_lnum) (pos.pos_cnum - pos.pos_bol + 1);
+      Printf.eprintf "Problem encountered while trying to parse %s.\n" (Reporting.parseContext p.breadcrumbs);
+      let ctx = Reporting.renderCodeContext (Bytes.to_string p.scanner.src) pos p.endPos in
       Printf.eprintf "\n%s\n\n" ctx;
       Printf.eprintf "%s\n\n"
       (match problem with
-      | Report.Uident ->
+      | Reporting.Uident ->
         begin match p.Parser.token with
         | Lident lident ->
           let guess = String.capitalize_ascii lident in
@@ -4960,7 +4992,7 @@ module LangParser = struct
         | _ ->
           "At this point, I'm looking for an uppercased identifier like `Belt` or `Array`"
         end
-      | Report.Lident ->
+      | Reporting.Lident ->
         begin match p.Parser.token with
         | Uident uident ->
           let guess = String.uncapitalize_ascii uident in
@@ -4971,9 +5003,6 @@ module LangParser = struct
         | _ ->
           "I'm expecting an lowercased identifier like `name` or `age`"
         end
-      | Report.OneOf tokens ->
-          "I'm expecting one of the following tokens:\n"
-          ^ (String.concat "\n" (List.map (fun t -> "• " ^ (Token.toString t)) tokens))
       | Message msg -> msg
       | Unexpected t ->
           let name = (Token.toString t) in
@@ -5008,7 +5037,7 @@ module LangParser = struct
       | Expected (t, _, circumstance) ->
           "I'm expecting a \"" ^ (Token.toString t) ^ "\" here."
           ^ (match circumstance with
-          | Some c -> "It signals the start of " ^ (Report.circumstanceToString c)
+          | Some c -> "It signals the start of " ^ (Grammar.toString c)
           | None -> "")
       | Unbalanced t ->
           "Closing \"" ^ (Token.toString t) ^ "\" seems to be missing."

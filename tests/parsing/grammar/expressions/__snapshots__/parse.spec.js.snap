@@ -148,6 +148,27 @@ let u = ()
 "
 `;
 
+exports[`es6template.js 1`] = `
+"let s = \\"foo\\"
+let s = \\"multi\\\\n  line\\\\n\\\\nstring\\\\n\\"
+let s = foo
+let s = \\"before\\" ^ foo
+let s = \\"before \\" ^ foo
+let s = \\"before  \\" ^ foo
+let s = foo ^ \\"after\\"
+let s = foo ^ \\" after\\"
+let s = foo ^ \\"  after\\"
+let s = foo ^ bar
+let s = (foo ^ bar) ^ baz
+let s = (foo ^ \\" \\") ^ bar
+let s = (((foo ^ \\" \\") ^ bar) ^ \\" \\") ^ baz
+let s = (((\\" before \\" ^ foo) ^ \\" \\") ^ bar) ^ \\" after \\"
+let s = (((((\\"before \\" ^ foo) ^ \\" middle \\") ^ bar) ^ \\" \\") ^ baz) ^ \\" wow \\"
+let s =
+  \\"\\\\n  multiline\\\\n\\\\n  es6\\\\n\\\\n  template\\\\n\\\\n  expression\\\\n\\\\n  so convenient\\\\n\\\\n  :)\\\\n\\"
+"
+`;
+
 exports[`extension.js 1`] = `
 ";;[%expr ]
 ;;[%expr.extension ]
@@ -560,7 +581,7 @@ let _ =
 let _ =
   ((div
       ~children:[(let left = limit |. Int.toString in
-                  (left ^ \\"characters left\\") |. React.string)] ())
+                  (left ^ \\" characters left\\") |. React.string)] ())
   [@JSX ])
 let _ =
   ((View.createElement ~style:(styles ## backgroundImageWrapper)

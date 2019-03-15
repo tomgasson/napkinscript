@@ -9,3 +9,23 @@ exports[`emptyInterface.jsi 1`] = `
 "
 "
 `;
+
+exports[`onlyMultilineComment.js 1`] = `
+"
+"
+`;
+
+exports[`onlyMultilineComment.jsi 1`] = `
+"
+"
+`;
+
+exports[`onlySinglelineComment.js 1`] = `
+"
+"
+`;
+
+exports[`onlySinglinelineComment.jsi 1`] = `
+"
+"
+`;
