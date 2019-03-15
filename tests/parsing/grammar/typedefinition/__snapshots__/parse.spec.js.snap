@@ -1,5 +1,11 @@
 // Jest Snapshot v1, https://goo.gl/fbAQLP
 
+exports[`bsObject.js 1`] = `
+"type nonrec 'a foo = < foo: int   ;.. >  Js.t as 'a
+type nonrec 'a foo = < foo: int   >  Js.t as 'a
+"
+`;
+
 exports[`constructorDeclaration.js 1`] = `
 "type nonrec t =
   | Rgb 

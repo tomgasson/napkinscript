@@ -1419,12 +1419,12 @@ module NapkinScript = struct
 
   (* {"foo": bar} -> Js.t({. foo: bar})
    * {.. "foo": bar} -> Js.t({.. foo: bar}) *)
-  let makeBsObjType ~loc ~closed rows =
+  let makeBsObjType ?attrs ~loc ~closed rows =
     let obj = Ast_helper.Typ.object_ ~loc rows closed in
     let jsDotTCtor =
       Location.mkloc (Longident.Ldot (Longident.Lident "Js", "t")) loc
     in
-    Ast_helper.Typ.constr jsDotTCtor [obj]
+    Ast_helper.Typ.constr ?attrs jsDotTCtor [obj]
 
   (* TODO: diagnostic reporting *)
   let lidentOfPath longident =
@@ -3829,7 +3829,10 @@ module NapkinScript = struct
       in
       Parser.expectExn Rbrace p;
       let loc = mkLoc startPos p.prevEndPos in
-      let typ = makeBsObjType ~loc ~closed:closedFlag fields in
+      let typ =
+        makeBsObjType ~loc ~closed:closedFlag fields
+        |> parseTypeAlias p
+      in
       (Some typ, Asttypes.Public, Parsetree.Ptype_abstract)
     | _ ->
       let attrs = parseAttributes p in
@@ -3856,7 +3859,10 @@ module NapkinScript = struct
           in
           Parser.expect Rbrace p;
           let loc = mkLoc startPos p.prevEndPos in
-          let typ = makeBsObjType ~loc ~closed:closedFlag fields in
+          let typ =
+            makeBsObjType ~loc ~closed:closedFlag fields
+            |> parseTypeAlias p
+          in
           (Some typ, Asttypes.Public, Parsetree.Ptype_abstract)
       | _ ->
         Parser.leaveBreadcrumb p Grammar.RecordDecl;
