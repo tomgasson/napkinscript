@@ -6,7 +6,7 @@ exports[`eof.js 1`] = `
 `;
 
 exports[`es6template.js 1`] = `
-"let x = \\"this contains \\" ^ foo
+"let x = (\\"this contains \\" ^ foo) ^ \\", missing closin\\"
 "
 `;
 

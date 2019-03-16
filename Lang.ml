@@ -455,21 +455,82 @@ module Grammar = struct
     | ConstructorDeclaration -> "a constructor declaration"
 end
 
-module Diagnostics = struct
+module Diagnostics: sig
+  type t
+
+  val reportUnclosedString:
+    filename: string -> startPos: Lexing.position -> length: int -> t
+  val reportUnclosedTemplate:
+    filename: string -> startPos: Lexing.position -> length: int -> t
+  val reportUnclosedComment:
+    filename: string -> startPos: Lexing.position -> length: int -> t
+
+  val reportUnknownUchar:
+    filename: string  -> startPos: Lexing.position -> length: int -> t
+
+  val print: t -> unit
+
+end = struct
   type category =
     | Unexpected of Token.t
     | Expected of (Token.t * Lexing.position * Grammar.t option)
     | Message of string
     | Uident
     | Lident
-    | Unclosed of Token.t
+    | UnclosedString
+    | UnclosedTemplate
+    | UnclosedComment
+    | UnknownUchar
     | Unbalanced of Token.t
+
+  let stringOfCategory = function
+    | Unexpected _ -> "unexpected"
+    | Expected _ -> "expected"
+    | Message txt -> txt
+    | Uident -> "uident"
+    | Lident -> "lident"
+    | UnclosedString -> "unclosed string"
+    | UnclosedTemplate -> "unclosed template"
+    | UnclosedComment -> "unclosed comment"
+    | Unbalanced _ -> "unbalanced"
+    | UnknownUchar -> "unknown rune"
 
   type t = {
     filename: string;
     startPos: Lexing.position;
     length: int; (* or endPos? *)
     category: category;
+  }
+
+  let print {category} =
+    prerr_endline (stringOfCategory category)
+
+  let reportUnclosedString ~filename ~startPos ~length = {
+    filename;
+    startPos;
+    length;
+    category = UnclosedString
+  }
+
+  let reportUnclosedComment ~filename ~startPos ~length = {
+    filename;
+    startPos;
+    length;
+    category = UnclosedComment
+  }
+
+  let reportUnclosedTemplate ~filename ~startPos ~length = {
+    filename;
+    startPos;
+    length;
+    category = UnclosedTemplate
+  }
+
+  let reportUnknownUchar ~filename ~startPos ~length = {
+    filename;
+    startPos;
+    length;
+    category = UnknownUchar
   }
 end
 
@@ -650,7 +711,12 @@ module Scanner = struct
 
     let rec scan () =
       if scanner.ch == CharacterCodes.eol then
-        ()
+        scanner.err(
+          Diagnostics.reportUnclosedString
+            ~filename:scanner.filename
+            ~startPos:(position scanner)
+            ~length:(scanner.rdOffset - scanner.offset)
+        )
       else if scanner.ch == CharacterCodes.doubleQuote then (
         next scanner
       ) else if scanner.ch == CharacterCodes.backslash then (
@@ -667,6 +733,12 @@ module Scanner = struct
         Buffer.add_char buffer (char_for_backslash scanner.ch);
         scan ()
       ) else if CharacterCodes.isLineBreak scanner.ch then (
+        scanner.err(
+          Diagnostics.reportUnclosedString
+            ~filename:scanner.filename
+            ~startPos:(position scanner)
+            ~length:(scanner.rdOffset - scanner.offset)
+        );
         next scanner
       ) else (
         Buffer.add_char buffer (Char.chr scanner.ch);
@@ -697,7 +769,12 @@ module Scanner = struct
         next scanner;
         next scanner
       ) else if scanner.ch == CharacterCodes.eol then (
-        ()
+        scanner.err(
+          Diagnostics.reportUnclosedComment
+            ~filename:scanner.filename
+            ~startPos:(position scanner)
+            ~length:(scanner.rdOffset - scanner.offset)
+        )
       ) else (
         next scanner;
         scan ()
@@ -708,15 +785,21 @@ module Scanner = struct
       Bytes.sub_string scanner.src startOff (scanner.offset - 1 - startOff)
     )
 
-  exception Unknown_token of int
-
   let scanTemplate scanner =
     let startOff = scanner.offset in
 
     let rec scan () =
       if scanner.ch == CharacterCodes.eol then (
+        scanner.err(
+          Diagnostics.reportUnclosedTemplate
+            ~filename:scanner.filename
+            ~startPos:(position scanner)
+            ~length:(scanner.rdOffset - scanner.offset)
+        );
         popMode scanner Template;
-        Token.TemplateTail ""
+        Token.TemplateTail(
+          Bytes.sub_string scanner.src startOff (scanner.offset - 2 - startOff)
+        )
       )
       else if scanner.ch == CharacterCodes.backtick then (
         next scanner;
@@ -950,8 +1033,18 @@ module Scanner = struct
         Token.Backtick
       else if ch == -1 then
         Token.Eof
-      else
-        raise (Unknown_token scanner.ch)
+      else (
+        (* if we arrive here, we're dealing with an unkown character,
+         * report the error and continue scanning… *)
+        scanner.err(
+          Diagnostics.reportUnknownUchar
+            ~filename:scanner.filename
+            ~startPos:(position scanner)
+            ~length:(scanner.rdOffset - scanner.offset)
+        );
+        let (_, _, token) = scan scanner in
+        token
+      )
     end
     in
     let endPos = computeEndPosition scanner in
@@ -4975,6 +5068,8 @@ module NapkinScript = struct
           "Missing " ^ Token.toString t
         | _ -> "Todo: pretty print parse error")
       ) p.errors;
+
+      (* List.iter Diagnostics.print p.diagnostics; *)
       (* let endTime = Unix.gettimeofday () in *)
       (* let diff = (endTime -. startTime) *. 1000. in *)
       (* Printf.eprintf "Execution time: %fms\n%!" diff; *)
