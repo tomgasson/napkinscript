@@ -3,6 +3,8 @@ let y = false
 
 let txt = "a string"
 
+let txtWithEscapedChar = "foo\nbar"
+
 let number = 1
 
 let template = `amazing
@@ -10,5 +12,6 @@ let template = `amazing
   template
      string
 `
+
 
 let complexNumber = 1.6

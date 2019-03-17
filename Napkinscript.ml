@@ -473,7 +473,7 @@ module Diagnostics: sig
 end = struct
   type category =
     | Unexpected of Token.t
-    | Expected of (Token.t * Lexing.position * Grammar.t option)
+    | Expected of (Token.t * Lexing.position (* prev token end*) * Grammar.t option)
     | Message of string
     | Uident
     | Lident
@@ -721,7 +721,6 @@ module Scanner = struct
         next scanner
       ) else if scanner.ch == CharacterCodes.backslash then (
         next scanner;
-
         let char_for_backslash = function
           | 110 -> '\010'
           | 114 -> '\013'
@@ -729,8 +728,8 @@ module Scanner = struct
           | 116 -> '\009'
           | c   -> Char.chr c
         in
-        next scanner;
         Buffer.add_char buffer (char_for_backslash scanner.ch);
+        next scanner;
         scan ()
       ) else if CharacterCodes.isLineBreak scanner.ch then (
         scanner.err(
@@ -1089,6 +1088,27 @@ end
 
 
 module Reporting = struct
+
+  module TerminalDoc = struct
+    type break =
+      | IfNeed
+      | Never
+      | Always
+
+    type document =
+      | Group of break * document
+      | Text of string
+      | Indent of int * document
+      | Join of document * document
+
+    let group ?(break=IfNeed) doc = Group(break, doc)
+    let text txt = Text txt
+    let indent i d = Indent(i, d)
+    let join d1 d2 = Join(d1, d2)
+
+    (* let toString ~width (doc: document) = *)
+
+  end
 
   module Doc = struct
     type color =
@@ -2102,7 +2122,7 @@ module NapkinScript = struct
 			let lbl = match lbl with
 			| Asttypes.Labelled lblName -> Asttypes.Optional lblName
 			| Asttypes.Optional _ as lbl -> lbl
-			| Asttypes.Nolabel -> assert false
+			| Asttypes.Nolabel -> Asttypes.Nolabel
 			in
       begin match p.Parser.token with
       | Question ->
@@ -4982,9 +5002,15 @@ module NapkinScript = struct
         let len = String.length filename in
         if len > 0 && String.get filename (len - 1) = 'i' then (
           let ast = parseSignature p in
+          (* output_string stdout Config.ast_impl_magic_number; *)
+          (* output_value stdout filename; *)
+          (* output_value stdout ast *)
           Pprintast.signature Format.std_formatter ast
         ) else
           let ast = parseStructure p in
+          (* output_string stdout Config.ast_impl_magic_number; *)
+          (* output_value stdout filename; *)
+          (* output_value stdout ast *)
           Pprintast.structure Format.std_formatter ast
       in
       Format.pp_print_flush Format.std_formatter ();

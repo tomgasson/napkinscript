@@ -132,6 +132,7 @@ exports[`constants.js 1`] = `
 "let x = true
 let y = false
 let txt = \\"a string\\"
+let txtWithEscapedChar = \\"foo\\\\nbar\\"
 let number = 1
 let template = \\"amazing\\\\n  multine\\\\n  template\\\\n     string\\\\n\\"
 let complexNumber = 1.6
