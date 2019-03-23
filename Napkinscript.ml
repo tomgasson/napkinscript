@@ -1060,6 +1060,9 @@ module Scanner = struct
         ) else if (scanner.ch == CharacterCodes.asterisk) then (
           next scanner;
           scanMultiLineComment scanner
+        ) else if scanner.ch == CharacterCodes.dot then (
+          next scanner;
+          Token.ForwardslashDot
         ) else (
           if inTupleMode scanner then
             scanForwardSlashOrTupleEnding scanner
@@ -1131,6 +1134,9 @@ module Scanner = struct
         if scanner.ch == CharacterCodes.asterisk then (
           next scanner;
           Token.Exponentiation;
+        ) else if scanner.ch == CharacterCodes.dot then (
+          next scanner;
+          Token.AsteriskDot
         ) else (
           Token.Asterisk
         )
