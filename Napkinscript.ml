@@ -531,7 +531,10 @@ module Grammar = struct
 
   (* TODO: overparse Uident ? *)
   let isFieldDeclStart = function
-    | Token.At | Mutable | Lident _ -> true
+    | Token.At | Mutable | Lident _  -> true
+    (* recovery, TODO: this is not ideal… *)
+    | Uident _ -> true
+    | t when Token.isKeyword t -> true
     | _ -> false
 
   let isRecordDeclStart = function
@@ -574,6 +577,8 @@ module Grammar = struct
 
   let isRecordRowStart = function
     | Token.Uident _ | Lident _ -> true
+    (* TODO *)
+    | t when Token.isKeyword t -> true
     | _ -> false
 
   let isRecordRowStringKeyStart = function
@@ -604,17 +609,217 @@ module Grammar = struct
     | _ -> false
 end
 
+module Reporting = struct
+  module TerminalDoc = struct
+    type break =
+      | IfNeed
+      | Never
+      | Always
+
+    type document =
+      | Nil
+      | Group of break * document
+      | Text of string
+      | Indent of int * document
+      | Append of document* document
+
+    let group ?(break= IfNeed)  doc = Group (break, doc)
+    let text txt = Text (txt)
+    let indent i d = Indent (i, d)
+    let append d1 d2 = Append (d1, d2)
+
+    type stack =
+      | Empty
+      | Cons of document* stack
+
+    let push stack doc = Cons (doc, stack)
+
+    type mode =
+      | Flat
+      | Break
+
+
+    let rec fits w stack =
+      match stack with
+      | _ when w < 0 -> false
+      | Empty  -> true
+      | Cons (doc,stack) ->
+        begin match doc with
+         | Nil  -> fits w stack
+         | Text txt ->
+           fits (w - (String.length txt)) stack
+         | Append (d1,d2) ->
+           let stack =
+             let stack = push stack d1 in
+             push stack d2
+           in
+           fits w stack
+         | Group (_,d) ->
+           fits w (push stack d)
+         | Indent (i,d) ->
+           fits (w - i) (push stack d)
+         end
+
+    let toString ~width (doc : document) =
+      let buffer = Buffer.create 100 in
+      let rec loop stack mode offset =
+        match stack with
+        | Empty  -> ()
+        | Cons (doc, rest) ->
+          begin match doc with
+           | Nil -> loop rest mode offset
+           | Text txt ->
+             Buffer.add_string buffer txt;
+             loop rest mode (offset + (String.length txt))
+           | Indent (i,doc) ->
+             let indentation = String.make i ' ' in
+             Buffer.add_string buffer indentation;
+             loop (push rest doc) mode (offset + i)
+           | Append (doc1,doc2) ->
+              let rest = push rest doc2 in
+              let rest = push rest
+                (match mode = Flat with
+                | true  -> Nil
+                | false  -> text "\n")
+              in
+              let rest = push rest doc1 in
+              loop rest mode offset
+           | Group (break,doc) ->
+             let rest = push rest doc in
+             begin match break with
+             | Always  -> loop rest Break offset
+             | Never  -> loop rest Flat offset
+             | IfNeed  ->
+               if fits (width - offset) rest
+               then loop rest Flat offset
+               else loop rest Break offset
+             end
+            end
+      in
+      loop (push Empty doc) Flat 0;
+      Buffer.contents buffer
+
+
+
+  end
+
+  type color =
+    | NoColor
+    | Red
+
+  type style = {
+    underline: bool;
+    color: color;
+  }
+
+  let emptyStyle = {
+    underline = false;
+    color = NoColor;
+  }
+
+  let highlight ~from ~len txt =
+    if from < 0 then txt else
+    let before = String.sub txt 0 from in
+    let content =
+      "\027[31m" ^ String.sub txt from len ^ "\027[0m"
+    in
+    let after =
+      String.sub txt (from + len) (String.length txt - (from + len))
+    in
+    before ^ content ^ after
+
+  let underline ~from ~len txt =
+    let open TerminalDoc in
+    let indent = String.make from ' ' in
+    let underline = String.make len '^' in
+    group ~break:Always
+      (append (text txt) (text (indent ^ underline)))
+
+  let applyStyle ~from ~len style txt =
+    let open TerminalDoc in
+        let colorizedText =
+      if style.color <> NoColor then
+        highlight ~from ~len txt
+      else
+        txt
+    in
+    underline ~from ~len colorizedText
+
+  let parseContext stack =
+    match stack with
+    | ((Grammar.ExprOperand, _)::cs) ->
+        begin match cs with
+        | (ExprBinaryAfterOp _ as c, _)::cs ->
+          Grammar.toString c
+        | _ -> "a basic expression"
+        end
+    | ((c, _)::cs) ->
+        Grammar.toString c
+    | [] -> "your code"
+
+  let rec drop n l =
+    if n == 1 then l
+    else drop (n - 1) (match l with | x::xs -> xs | _ -> l)
+
+  let rec take n l =
+    match l with
+    | _ when n == 0 -> []
+    | [] -> []
+    | x::xs -> x::(take (n -1) xs)
+
+  let renderCodeContext (src : string) startPos endPos =
+    let open Lexing in
+    let startCol = (startPos.pos_cnum - startPos.pos_bol) in
+    let endCol = (endPos.pos_cnum - endPos.pos_bol) in
+    let lines =
+      String.split_on_char '\n' src
+      |> drop startPos.pos_lnum
+      |> take (endPos.pos_lnum - startPos.pos_lnum + 1)
+    in
+    match lines with
+    | x::xs ->
+      let d =
+        let open TerminalDoc in
+        let rowNr = highlight ~from:0 ~len:1 (string_of_int startPos.pos_lnum) in
+        let len = if endCol >= 0 then
+          endCol - startCol
+        else
+          1
+        in
+        group ~break:Never
+          (append
+            (append (text rowNr) (text " |"))
+            (indent 2
+              (text (highlight ~from:startCol ~len x))))
+      in
+      TerminalDoc.toString ~width:80 d
+    | _ -> ""
+
+  type problem =
+    | Unexpected of Token.t
+    | Expected of (Token.t * Lexing.position * Grammar.t option)
+    | Message of string
+    | Uident
+    | Lident
+    | Unbalanced of Token.t
+
+  type parseError = Lexing.position * problem
+end
+
 module Diagnostics: sig
   type t
   type category
 
   val unexpected: Token.t -> (Grammar.t * Lexing.position) list -> category
-  val uident: category
-  val lident: category
+  val expected:  ?grammar:Grammar.t -> Lexing.position -> Token.t -> category
+  val uident: Token.t -> category
+  val lident: Token.t -> category
   val unclosedString: category
   val unclosedTemplate: category
   val unclosedComment: category
   val unknownUchar: category
+  val message: string -> category
+  val unbalanced: Token.t -> category
 
   val make:
     filename: string
@@ -623,15 +828,15 @@ module Diagnostics: sig
     -> category
     -> t
 
-  val print: t -> unit
+  val makeReport: t list -> string -> string
 
 end = struct
   type category =
     | Unexpected of (Token.t * ((Grammar.t * Lexing.position) list))
-    | Expected of (Token.t * Lexing.position (* prev token end*) * Grammar.t option)
+    | Expected of (Grammar.t option * Lexing.position (* prev token end*) * Token.t)
     | Message of string
-    | Uident
-    | Lident
+    | Uident of Token.t
+    | Lident of Token.t
     | UnclosedString
     | UnclosedTemplate
     | UnclosedComment
@@ -642,8 +847,8 @@ end = struct
     | Unexpected _ -> "unexpected"
     | Expected _ -> "expected"
     | Message txt -> txt
-    | Uident -> "uident"
-    | Lident -> "lident"
+    | Uident _ -> "uident"
+    | Lident _ -> "lident"
     | UnclosedString -> "unclosed string"
     | UnclosedTemplate -> "unclosed template"
     | UnclosedComment -> "unclosed comment"
@@ -657,6 +862,90 @@ end = struct
     category: category;
   }
 
+  let toString t src =
+    let locationInfo =
+      Printf.sprintf "Parse error: %s, line: %d, col: %d"
+        t.filename
+        t.startPos.Lexing.pos_lnum
+        (t.startPos.pos_cnum - t.startPos.pos_bol + 1)
+    in
+    let code =
+      let endPos = {t.startPos with pos_cnum = t.startPos.pos_cnum + t.length} in
+      Reporting.renderCodeContext src t.startPos endPos
+    in
+    let explanation = match t.category with
+    | Uident currentToken ->
+      begin match currentToken with
+      | Lident lident ->
+        let guess = String.capitalize_ascii lident in
+        "Did you mean `" ^ guess ^"` instead of `" ^ lident ^ "`?"
+      | t when Token.isKeyword t ->
+        let token = Token.toString t in
+        "`" ^ token ^ "` is a reserved keyword. Try `" ^ token ^ "_` or `_" ^ token ^ "` instead"
+      | _ ->
+        "At this point, I'm looking for an uppercased identifier like `Belt` or `Array`"
+      end
+    | Lident currentToken ->
+      begin match currentToken with
+      | Uident uident ->
+        let guess = String.uncapitalize_ascii uident in
+        "Did you mean `" ^ guess ^"` instead of `" ^ uident ^ "`?"
+      | t when Token.isKeyword t ->
+        let token = Token.toString t in
+        "`" ^ token ^ "` is a reserved keyword. Try `" ^ token ^ "_` or `_" ^ token ^ "` instead"
+      | _ ->
+        "I'm expecting an lowercased identifier like `name` or `age`"
+      end
+    | Message txt -> txt
+    | UnclosedString ->
+      "This string is missing a double quote at the end"
+    | UnclosedTemplate ->
+      "Did you forget to close this template expression with a backtick?"
+    | UnclosedComment ->
+      "This comment seems to be missing a closing `*/`"
+    | UnknownUchar ->
+      "Hmm, I have no idea what this character means…"
+    | Unbalanced t ->
+      "Closing \"" ^ (Token.toString t) ^ "\" seems to be missing."
+    | Expected (context, _, t) ->
+      let hint = match context with
+      | Some grammar -> "It signals the start of " ^ (Grammar.toString grammar)
+      | None -> ""
+      in
+      "Did you forget a `" ^ (Token.toString t) ^ "` here? " ^ hint
+    | Unexpected (t, breadcrumbs) ->
+      let name = (Token.toString t) in
+      begin match breadcrumbs with
+      | (ExprOperand, _)::breadcrumbs ->
+          begin match breadcrumbs, t with
+          | (ExprBlock, _) :: _, Rbrace ->
+            "It seems that this expression block is empty"
+          | (ExprSetField, _) :: _, _ ->
+            "It seems that this record field mutation misses an expression"
+          | (ExprArrayMutation, _) :: _, _ ->
+            "Seems that an expression is missing, with what do I mutate the array?"
+          | ((ExprBinaryAfterOp _ | ExprUnary), _) ::_, _ ->
+            "Did you forget to write an expression here?"
+          | _ ->
+            "I'm not sure what to parse here when looking at \"" ^ name ^ "\"."
+          end
+      | (TypeParam, _)::_ ->
+          begin match t with
+          | Lident ident ->
+            "Did you mean '" ^ ident ^"? A Type parameter starts with a quote."
+          | _ ->
+            "I'm not sure what to parse here when looking at \"" ^ name ^ "\"."
+          end
+      | _ ->
+        (* TODO: match on circumstance to verify Lident needed ? *)
+        if Token.isKeyword t then
+          name ^ " is a reserved keyword, it cannot be used as an identifier."
+        else
+        "I'm not sure what to parse here when looking at \"" ^ name ^ "\"."
+      end
+    in
+    Printf.sprintf "%s\n\n%s\n\n%s\n\n" locationInfo code explanation
+
   let make ~filename ~startPos ~len category = {
     filename;
     startPos;
@@ -664,18 +953,28 @@ end = struct
     category
   }
 
+  let makeReport diagnostics src =
+    List.fold_left (fun report diagnostic ->
+      report ^ (toString diagnostic src) ^ "\n"
+    ) "" (List.rev diagnostics)
+
   let print {category} =
     prerr_endline (stringOfCategory category)
 
   let unexpected token context =
     Unexpected(token, context)
 
-  let uident = Uident
-  let lident = Lident
+  let expected ?grammar pos token =
+    Expected(grammar, pos, token)
+
+  let uident currentToken = Uident currentToken
+  let lident currentToken = Lident currentToken
   let unclosedString = UnclosedString
   let unclosedComment = UnclosedComment
   let unclosedTemplate = UnclosedTemplate
   let unknownUchar = UnknownUchar
+  let message txt = Message txt
+  let unbalanced token = Unbalanced token
 end
 
 module Scanner = struct
@@ -1212,203 +1511,7 @@ end
 
 
 
-module Reporting = struct
 
-  module TerminalDoc = struct
-    type break =
-      | IfNeed
-      | Never
-      | Always
-
-    type document =
-      | Nil
-      | Group of break * document
-      | Text of string
-      | Indent of int * document
-      | Append of document* document
-
-    let group ?(break= IfNeed)  doc = Group (break, doc)
-    let text txt = Text (txt)
-    let indent i d = Indent (i, d)
-    let append d1 d2 = Append (d1, d2)
-
-    type stack =
-      | Empty
-      | Cons of document* stack
-
-    let push stack doc = Cons (doc, stack)
-
-    type mode =
-      | Flat
-      | Break
-
-
-    let rec fits w stack =
-      match stack with
-      | _ when w < 0 -> false
-      | Empty  -> true
-      | Cons (doc,stack) ->
-        begin match doc with
-         | Nil  -> fits w stack
-         | Text txt ->
-           fits (w - (String.length txt)) stack
-         | Append (d1,d2) ->
-           let stack =
-             let stack = push stack d1 in
-             push stack d2
-           in
-           fits w stack
-         | Group (_,d) ->
-           fits w (push stack d)
-         | Indent (i,d) ->
-           fits (w - i) (push stack d)
-         end
-
-    let toString ~width (doc : document) =
-      let buffer = Buffer.create 100 in
-      let rec loop stack mode offset =
-        match stack with
-        | Empty  -> ()
-        | Cons (doc, rest) ->
-          begin match doc with
-           | Nil -> loop rest mode offset
-           | Text txt ->
-             Buffer.add_string buffer txt;
-             loop rest mode (offset + (String.length txt))
-           | Indent (i,doc) ->
-             let indentation = String.make i ' ' in
-             Buffer.add_string buffer indentation;
-             loop (push rest doc) mode (offset + i)
-           | Append (doc1,doc2) ->
-              let rest = push rest doc2 in
-              let rest = push rest
-                (match mode = Flat with
-                | true  -> Nil
-                | false  -> text "\n")
-              in
-              let rest = push rest doc1 in
-              loop rest mode offset
-           | Group (break,doc) ->
-             let rest = push rest doc in
-             begin match break with
-             | Always  -> loop rest Break offset
-             | Never  -> loop rest Flat offset
-             | IfNeed  ->
-               if fits (width - offset) rest
-               then loop rest Flat offset
-               else loop rest Break offset
-             end
-            end
-      in
-      loop (push Empty doc) Flat 0;
-      Buffer.contents buffer
-
-
-
-  end
-
-  type color =
-    | NoColor
-    | Red
-
-  type style = {
-    underline: bool;
-    color: color;
-  }
-
-  let emptyStyle = {
-    underline = false;
-    color = NoColor;
-  }
-
-  let highlight ~from ~len txt =
-    let before = String.sub txt 0 from in
-    let content =
-      "\027[31m" ^ String.sub txt from len ^ "\027[0m"
-    in
-    let after =
-      String.sub txt (from + len) (String.length txt - (from + len))
-    in
-    before ^ content ^ after
-
-  let underline ~from ~len txt =
-    let open TerminalDoc in
-    let indent = String.make from ' ' in
-    let underline = String.make len '^' in
-    group ~break:Always
-      (append (text txt) (text (indent ^ underline)))
-
-  let applyStyle ~from ~len style txt =
-    let open TerminalDoc in
-        let colorizedText =
-      if style.color <> NoColor then
-        highlight ~from ~len txt
-      else
-        txt
-    in
-    underline ~from ~len colorizedText
-
-  let parseContext stack =
-    match stack with
-    | ((Grammar.ExprOperand, _)::cs) ->
-        begin match cs with
-        | (ExprBinaryAfterOp _ as c, _)::cs ->
-          Grammar.toString c
-        | _ -> "a basic expression"
-        end
-    | ((c, _)::cs) ->
-        Grammar.toString c
-    | [] -> "your code"
-
-  let rec drop n l =
-    if n == 1 then l
-    else drop (n - 1) (match l with | x::xs -> xs | _ -> l)
-
-  let rec take n l =
-    match l with
-    | _ when n == 0 -> []
-    | [] -> []
-    | x::xs -> x::(take (n -1) xs)
-
-  let renderCodeContext (src : string) startPos endPos =
-    let open Lexing in
-    let startCol = (startPos.pos_cnum - startPos.pos_bol) in
-    let endCol = (endPos.pos_cnum - endPos.pos_bol) in
-    let lines =
-      String.split_on_char '\n' src
-      |> drop startPos.pos_lnum
-      |> take (endPos.pos_lnum - startPos.pos_lnum + 1)
-    in
-    match lines with
-    | x::xs ->
-      let d =
-        let open TerminalDoc in
-        let rowNr = highlight ~from:0 ~len:1 (string_of_int startPos.pos_lnum) in
-        let len = if endCol >= 0 then
-          endCol - startCol
-        else
-          1
-        in
-        group ~break:Never
-          (append
-            (append (text rowNr) (text " |"))
-            (indent 2
-              (text (highlight ~from:startCol ~len x))))
-      in
-      TerminalDoc.toString ~width:80 d
-    | _ -> ""
-
-  type problem =
-    | Unexpected of Token.t
-    | Expected of (Token.t * Lexing.position * Grammar.t option)
-    | Message of string
-    | Uident
-    | Lident
-    | Unbalanced of Token.t
-
-  type parseError = Lexing.position * problem
-
-end
 
 module NapkinScript = struct
   let mkLoc startLoc endLoc = Location.{
@@ -1496,55 +1599,53 @@ module NapkinScript = struct
       else
         false
 
-    exception ParseError of Reporting.parseError
+    (* TODO: should we bail if there's too much stuff going wrong? *)
+    exception Exit
 
-    (* ?circumstance indicates an optional circumstance
-     * The current reasoning is to be able to say:
-     *   "I'm expecting a ":", which signals the start of a type"
-     * the "which signals the start of a type", can be deduced from the
-     * circumstance (if there's one) *)
-    let expectExn ?circumstance token p =
+    let expect ?grammar token p =
       if p.token = token then
         next p
       else
-        raise (ParseError (p.startPos, Reporting.Expected (token, p.prevEndPos, circumstance)))
-
-    let expect ?circumstance token p =
-      if p.token = token then
-        next p
-      else
-        let error = (p.startPos, Reporting.Expected (token, p.prevEndPos, circumstance)) in
-        p.errors <- error::p.errors
+        let error = Diagnostics.expected ?grammar p.prevEndPos token in
+        err p error
 
     let lookahead p callback =
-      (* is this copying correct? *)
       let scannerCopy = {p.scanner with filename = p.scanner.filename} in
       let parserStateCopy = {p with scanner = scannerCopy} in
       callback parserStateCopy
   end
 
   module Recover = struct
-    let default_expr () =
+    let defaultStructureItem () =
+      let id = Location.mknoloc "napkinscript.strItemHole" in
+      Ast_helper.Str.extension (id, PStr [])
+
+    let defaultSignatureItem () =
+      let id = Location.mknoloc "napkinscript.SigItemHole" in
+      Ast_helper.Sig.extension (id, PStr [])
+
+    let defaultExpr () =
       let id = Location.mknoloc "napkinscript.exprhole" in
       Ast_helper.Exp.mk (Pexp_extension (id, PStr []))
 
-    let default_type () =
+    let defaultType () =
       let id = Location.mknoloc "napkinscript.typehole" in
       Ast_helper.Typ.extension (id, PStr [])
 
-    let default_pattern () =
+    let defaultPattern () =
       let id = Location.mknoloc "napkinscript.patternhole" in
       Ast_helper.Pat.extension (id, PStr [])
       (* Ast_helper.Pat.any  () *)
 
-    let default_module_expr () = Ast_helper.Mod.structure []
-    let default_module_type () = Ast_helper.Mty.signature []
+    let defaultModuleExpr () = Ast_helper.Mod.structure []
+    let defaultModuleType () = Ast_helper.Mty.signature []
 
 
+    (* TODO: think and implement this a sound a possible *)
     let recoverAtomicExpr p token =
       (* Check grammar *)
       if not (Grammar.isStructureItemStart token) then Parser.next p;
-      default_expr ()
+      defaultExpr ()
 
     (* let recoverUident p = *)
       (* match p.Parser.token with *)
@@ -1553,14 +1654,14 @@ module NapkinScript = struct
       (* | _ -> *)
 
     (* let recoverLident p = *)
-      (* match p.Parser.token with *)
-      (* | Lident lident -> *)
-      (* | t when Token.isKeyword t -> *)
-      (* | _ -> *)
+      (* Location.mknoloc "_" loc *)
 
 
-
-
+    let recoverEqualGreater p =
+      Parser.expect EqualGreater p;
+      match p.Parser.token with
+      | MinusGreater -> Parser.next p
+      | _ -> ()
   end
 
   let jsxAttr = (Location.mknoloc "JSX", Parsetree.PStr [])
@@ -1589,7 +1690,7 @@ module NapkinScript = struct
       goToClosing (getClosingToken t) state;
       goToClosing closingToken state
     | ((Rparen | Token.Rbrace | Rbracket | Eof), _)  ->
-      raise (Parser.ParseError (state.startPos, Reporting.Unbalanced closingToken))
+      () (* TODO: how do report errors here? *)
     | _ ->
       Parser.next state;
       goToClosing closingToken state
@@ -1791,7 +1892,7 @@ module NapkinScript = struct
       | Lident ident -> Longident.Ldot(path, ident)
       | Uident uident ->
         Parser.next p;
-        Parser.expectExn Dot p;
+        Parser.expect Dot p;
         aux p (Ldot (path, uident))
       | token ->
         Parser.err p (Diagnostics.unexpected token p.breadcrumbs);
@@ -1802,7 +1903,7 @@ module NapkinScript = struct
     | Lident ident -> Longident.Lident ident
     | Uident ident ->
       Parser.next p;
-      Parser.expectExn Dot p;
+      Parser.expect Dot p;
       aux p (Lident ident)
     | token ->
       Parser.err p (Diagnostics.unexpected token p.breadcrumbs);
@@ -1821,7 +1922,9 @@ module NapkinScript = struct
         Parser.next p;
         Parser.expect Dot p;
         loop p (Longident.Ldot (path, ident))
-      | t -> raise (Parser.ParseError (p.startPos, Reporting.Unexpected t))
+      | token ->
+        Parser.err p (Diagnostics.unexpected token p.breadcrumbs);
+        Location.mknoloc path
     in
     loop p ident
 
@@ -1838,8 +1941,8 @@ module NapkinScript = struct
           loop p lident
         | _ -> Location.mkloc lident (mkLoc startPos endPos)
         end
-      | _ ->
-        Parser.err p Diagnostics.uident;
+      | t ->
+        Parser.err p (Diagnostics.uident t);
         Location.mkloc acc (mkLoc startPos p.prevEndPos)
     in
     loop p ident
@@ -1861,8 +1964,8 @@ module NapkinScript = struct
         parseModuleLongIdentTail p startPos lident
       | _ -> Location.mkloc lident (mkLoc startPos endPos)
       end
-    | _ ->
-      Parser.err p Diagnostics.uident;
+    | t ->
+      Parser.err p (Diagnostics.uident t);
       Location.mkloc (Longident.Lident "_") (mkLoc startPos p.prevEndPos)
     in
     (* Parser.eatBreadcrumb p; *)
@@ -1922,8 +2025,9 @@ module NapkinScript = struct
     | Int i -> Parsetree.Pconst_integer (i, None)
     | Float i -> Parsetree.Pconst_float (i, None)
     | String s -> Pconst_string(s, None)
-    | _ ->
-      raise (Parser.ParseError (p.startPos, Reporting.Message "I'm expecting a constant like: 1 or \"a string\""))
+    | token ->
+      Parser.err p (Diagnostics.unexpected token p.breadcrumbs);
+      Pconst_string("", None)
     in
     Parser.next p;
     constant
@@ -2042,8 +2146,8 @@ module NapkinScript = struct
       let (loc, extension) = parseExtension p in
       Ast_helper.Pat.extension ~loc ~attrs extension
     | token ->
-      Parser.err p(Diagnostics.unexpected token p.breadcrumbs);
-      Recover.default_pattern()
+      Parser.err p (Diagnostics.unexpected token p.breadcrumbs);
+      Recover.defaultPattern()
     in
     let pat = if alias then parseAliasPattern ~attrs pat p else pat in
     if or_ then parseOrPattern pat p else pat
@@ -2063,7 +2167,9 @@ module NapkinScript = struct
           ~attrs
            pattern
            (Location.mkloc ident loc)
-      | _ -> raise (Parser.ParseError (p.startPos, Reporting.Lident))
+      | t ->
+        Parser.err p (Diagnostics.lident t);
+        pattern
       end
     | _ -> pattern
 
@@ -2126,7 +2232,9 @@ module NapkinScript = struct
 						(Location.mkloc ident locIdent)
 				in
 				(Location.mkloc label.txt (mkLoc startPos aliasPattern.ppat_loc.loc_end), aliasPattern)
-			| _ -> raise (Parser.ParseError (p.startPos, Reporting.Lident))
+			| t ->
+        Parser.err p (Diagnostics.lident t);
+        (Location.mknoloc label.txt, pattern)
 			end
 		| _ ->
     (Location.mkloc label.txt (mkLoc startPos pattern.ppat_loc.loc_end), pattern)
@@ -2134,7 +2242,7 @@ module NapkinScript = struct
 
   and parseRecordPattern ~attrs p =
     let startPos = p.startPos in
-    Parser.expectExn Lbrace p;
+    Parser.expect Lbrace p;
     let firstField = parseRecordPatternField p in
     let rec loop p fields =
       match p.Parser.token with
@@ -2150,29 +2258,31 @@ module NapkinScript = struct
       | Uident _ | Lident _ ->
         let field = parseRecordPatternField p in
         loop p (field::fields)
-      | token -> raise (Parser.ParseError (p.startPos, Reporting.Unexpected token))
+      | token ->
+        Parser.err p(Diagnostics.unexpected token p.breadcrumbs);
+        loop p fields
     in
     let (fields, closedFlag) = loop p [firstField] in
     let endPos = p.endPos in
-    Parser.expectExn Rbrace p;
+    Parser.expect Rbrace p;
     let loc = mkLoc startPos endPos in
     Ast_helper.Pat.record ~loc ~attrs fields closedFlag
 
   and parseTuplePattern ~attrs p =
     let startPos = p.startPos in
-    Parser.expectExn Forwardslash p;
+    Parser.expect Forwardslash p;
     let patterns =
       parseCommaDelimitedList
         p ~grammar:Grammar.PatternList ~closing:Forwardslash ~f:parseConstrainedPattern
     in
-    Parser.expectExn Forwardslash p;
+    Parser.expect Forwardslash p;
     let loc = mkLoc startPos p.prevEndPos in
     Ast_helper.Pat.tuple ~loc ~attrs patterns
 
   and parseListPattern ~attrs p =
     let startPos = p.Parser.startPos in
-    Parser.expectExn List p;
-    Parser.expectExn Lparen p;
+    Parser.expect List p;
+    Parser.expect Lparen p;
     let rec loop p patterns = match p.Parser.token with
     | Rparen ->
       Parser.next p;
@@ -2207,7 +2317,7 @@ module NapkinScript = struct
 
   and parseArrayPattern ~attrs p =
     let startPos = p.startPos in
-    Parser.expectExn Lbracket p;
+    Parser.expect Lbracket p;
     let patterns =
       parseCommaDelimitedList
         p ~grammar:Grammar.PatternList ~closing:Rbracket ~f:parseConstrainedPattern
@@ -2218,7 +2328,7 @@ module NapkinScript = struct
 
   and parseConstructorPatternArgs p constr startPos attrs =
     let lparen = p.startPos in
-    Parser.expectExn Lparen p;
+    Parser.expect Lparen p;
     let args = match
       parseCommaDelimitedList
         p ~grammar:Grammar.PatternList ~closing:Rparen ~f:parseConstrainedPattern
@@ -2271,7 +2381,7 @@ module NapkinScript = struct
       Parser.leaveBreadcrumb p Grammar.Ternary;
       Parser.next p;
       let trueBranch = parseExpr ~context:TernaryTrueBranchExpr p in
-      Parser.expectExn Colon p;
+      Parser.expect Colon p;
       let falseBranch = parseExpr p in
       Parser.eatBreadcrumb p;
       let loc = {leftOperand.Parsetree.pexp_loc with
@@ -2296,7 +2406,7 @@ module NapkinScript = struct
     | _ ->
       None
     in
-    Parser.expectExn EqualGreater p;
+    Parser.expect EqualGreater p;
     let body =
       let expr = parseExpr p in
       match returnType with
@@ -2341,7 +2451,9 @@ module NapkinScript = struct
       | Lident ident ->
         Parser.next p;
         ident
-      | _ -> raise (Parser.ParseError (p.startPos, Reporting.Message "Function parameters labels should be lowercased like ~a "))
+      | t ->
+        Parser.err p (Diagnostics.lident t);
+        "_"
       in
       begin match p.Parser.token with
       | Comma | Equal | Rparen ->
@@ -2364,7 +2476,13 @@ module NapkinScript = struct
         Parser.next p;
         let pat = parseConstrainedPattern p in
         (Asttypes.Labelled lblName, pat)
-      | t -> raise (Parser.ParseError (p.startPos, Reporting.Unexpected t))
+      | t ->
+        Parser.err p (Diagnostics.unexpected t p.breadcrumbs);
+        let loc = mkLoc startPos p.prevEndPos in
+        (
+          Asttypes.Labelled lblName,
+          Ast_helper.Pat.var ~loc (Location.mkloc lblName loc)
+        )
       end
     | _ ->
       (Asttypes.Nolabel, parseConstrainedPattern p)
@@ -2434,7 +2552,9 @@ module NapkinScript = struct
         [[], Asttypes.Nolabel, None, unitPattern, startPos]
       | _ -> parseParameterList p
       end
-    | token -> raise (Parser.ParseError (p.startPos, Reporting.Unexpected token))
+    | token ->
+      Parser.err p (Diagnostics.unexpected token p.breadcrumbs);
+      []
 
   and parseConstrainedExpr p =
     let expr = parseExpr p in
@@ -2709,7 +2829,7 @@ module NapkinScript = struct
         acc
     in
     Scanner.setTemplateMode p.scanner;
-    Parser.expectExn Backtick p;
+    Parser.expect Backtick p;
     match p.Parser.token with
     | TemplateTail txt ->
       Parser.next p;
@@ -2783,7 +2903,7 @@ module NapkinScript = struct
 
   (* definition	::=	let [rec] let-binding  { and let-binding }   *)
   and parseLetBindings ~attrs p =
-    Parser.expectExn Let p;
+    Parser.expect Let p;
     let recFlag = if Parser.optional p Token.Rec then
       Asttypes.Recursive
     else
@@ -2821,8 +2941,10 @@ module NapkinScript = struct
       let longident = parseModuleLongIdent p in
       Location.mkloc (Longident.Ldot (longident.txt, "createElement")) longident.loc
     | _ ->
-      raise (Parser.ParseError (p.startPos,
-      Reporting.Message "A jsx name should start with a lowercase or uppercase identifier, like: div in <div /> or Navbar in <Navbar />"))
+      let msg = "A jsx name should start with a lowercase or uppercase identifier, like: div in <div /> or Navbar in <Navbar />"
+      in
+      Parser.err p (Diagnostics.message msg);
+      Location.mknoloc (Longident.Lident "_")
     in
     Ast_helper.Exp.ident ~loc:longident.loc longident
 
@@ -2835,7 +2957,7 @@ module NapkinScript = struct
       let childrenStartPos = p.Parser.startPos in
       Parser.next p;
       let childrenEndPos = p.Parser.startPos in
-      Parser.expectExn GreaterThan p;
+      Parser.expect GreaterThan p;
       let loc = mkLoc childrenStartPos childrenEndPos in
       makeListExpression loc [] None (* no children *)
     | GreaterThan -> (* <foo a=b> bar </foo> *)
@@ -2846,12 +2968,12 @@ module NapkinScript = struct
       let childrenEndPos = p.Parser.startPos in
       let () = match p.token with
       | LessThanSlash -> Parser.next p
-      | LessThan -> Parser.next p; Parser.expectExn Forwardslash p
-      | _ -> Parser.expectExn LessThanSlash p
+      | LessThan -> Parser.next p; Parser.expect Forwardslash p
+      | _ -> Parser.expect LessThanSlash p
       in
       begin match p.Parser.token with
       | Lident _ | Uident _ when verifyJsxOpeningClosingName p name ->
-        Parser.expectExn GreaterThan p;
+        Parser.expect GreaterThan p;
         let loc = mkLoc childrenStartPos childrenEndPos in
         if spread then
           List.hd children
@@ -2859,10 +2981,18 @@ module NapkinScript = struct
           makeListExpression loc children None
       | _ ->
         let opening = "</" ^ (string_of_pexp_ident name) ^ ">" in
-        let message = "Closing jsx name should be the same as the opening name. Did you mean " ^ opening ^ " ?" in
-        raise (Parser.ParseError (p.startPos, Reporting.Message message))
+        let msg = "Closing jsx name should be the same as the opening name. Did you mean " ^ opening ^ " ?" in
+        Parser.err p (Diagnostics.message msg);
+        Parser.expect GreaterThan p;
+        let loc = mkLoc childrenStartPos childrenEndPos in
+        if spread then
+          List.hd children
+        else
+          makeListExpression loc children None
       end
-    | unknownToken -> raise (Parser.ParseError (p.startPos, Reporting.Unexpected unknownToken))
+    | token ->
+      Parser.err p (Diagnostics.unexpected token p.breadcrumbs);
+      makeListExpression Location.none [] None
     in
     let jsxEndPos = p.prevEndPos in
     let loc = mkLoc jsxStartPos jsxEndPos in
@@ -2884,7 +3014,7 @@ module NapkinScript = struct
    *)
   and parseJsx p =
     Parser.leaveBreadcrumb p Grammar.Jsx;
-    Parser.expectExn LessThan p;
+    Parser.expect LessThan p;
     let jsxExpr = match p.Parser.token with
     | Lident _ | Uident _ ->
       parseJsxOpeningOrSelfClosingElement p
@@ -2903,11 +3033,11 @@ module NapkinScript = struct
   and parseJsxFragment p =
     let childrenStartPos = p.Parser.startPos in
     Scanner.setJsxMode p.scanner;
-    Parser.expectExn GreaterThan p;
+    Parser.expect GreaterThan p;
     let (_spread, children) = parseJsxChildren p in
     let childrenEndPos = p.Parser.startPos in
-    Parser.expectExn LessThanSlash p;
-    Parser.expectExn GreaterThan p;
+    Parser.expect LessThanSlash p;
+    Parser.expect GreaterThan p;
     let loc = mkLoc childrenStartPos childrenEndPos in
     makeListExpression loc children None
 
@@ -2924,8 +3054,9 @@ module NapkinScript = struct
     let optional = Parser.optional p Question in
     let name = match p.Parser.token with
     | Lident ident -> Parser.next p; ident
-    | _ ->
-      raise (Parser.ParseError (p.startPos, Reporting.Lident))
+    | t ->
+      Parser.err p (Diagnostics.lident t);
+      "_"
     in
     (* optional punning: <foo ?a /> *)
     if optional then
@@ -2994,7 +3125,7 @@ module NapkinScript = struct
 
   and parseBracedOrRecordExpr p =
     let startPos = p.Parser.startPos in
-    Parser.expectExn Lbrace p;
+    Parser.expect Lbrace p;
     let expr = match p.Parser.token with
     | DotDotDot ->
       (* beginning of record spread, parse record *)
@@ -3096,7 +3227,7 @@ module NapkinScript = struct
     | _ ->
       parseExprBlock p
     in
-    Parser.expectExn Rbrace p;
+    Parser.expect Rbrace p;
     {expr with pexp_loc = mkLoc startPos p.prevEndPos}
 
   and parseRecordRowWithStringKey p =
@@ -3105,7 +3236,9 @@ module NapkinScript = struct
       let loc = mkLoc p.startPos p.endPos in
       Parser.next p;
       Location.mkloc (Longident.Lident s) loc
-    | t -> raise (Parser.ParseError (p.startPos, Reporting.Unexpected t))
+    | t ->
+      Parser.err p (Diagnostics.unexpected t p.breadcrumbs);
+      Location.mknoloc (Longident.Lident "_")
     in
     match p.Parser.token with
     | Colon ->
@@ -3144,11 +3277,13 @@ module NapkinScript = struct
       parseCommaDelimitedList ~grammar:Grammar.RecordRows ~closing:Rbrace ~f:parseRecordRow p
     in
     let rows = rows @ exprs in
-    match rows with
+    let () = match rows with
     | [] ->
-      raise (Parser.ParseError (p.prevEndPos, Reporting.Message "Record spread needs at least one field that's updated"))
-    | rows ->
-      Ast_helper.Exp.record rows spread
+      let msg = "Record spread needs at least one field that's updated" in
+      Parser.err p (Diagnostics.message msg);
+    | rows -> ()
+    in
+    Ast_helper.Exp.record rows spread
 
   and parseExprBlockItem p =
     let startPos = p.Parser.startPos in
@@ -3160,7 +3295,9 @@ module NapkinScript = struct
         Parser.next p;
         let loc = mkLoc startPos p.prevEndPos in
         Location.mkloc ident loc
-      | _ -> raise (Parser.ParseError (p.startPos, Reporting.Uident))
+      | t ->
+        Parser.err p (Diagnostics.uident t);
+        Location.mknoloc "_"
       in
       let body = parseModuleBindingBody p in
       Parser.optional p Semicolon |> ignore;
@@ -3293,23 +3430,23 @@ module NapkinScript = struct
   and parseIfExpression p =
     Parser.leaveBreadcrumb p Grammar.ExprIf;
     let startPos = p.Parser.startPos in
-    Parser.expectExn If p;
+    Parser.expect If p;
     Parser.leaveBreadcrumb p Grammar.IfCondition;
     (* doesn't make sense to try es6 arrow here? *)
     let conditionExpr = parseExpr ~context:WhenExpr p in
     Parser.eatBreadcrumb p;
     Parser.leaveBreadcrumb p IfBranch;
-    Parser.expectExn Lbrace p;
+    Parser.expect Lbrace p;
     let thenExpr = parseExprBlock p in
-    Parser.expectExn Rbrace p;
+    Parser.expect Rbrace p;
     Parser.eatBreadcrumb p;
     let elseExpr = match p.Parser.token with
     | Else ->
       Parser.leaveBreadcrumb p Grammar.ElseBranch;
       Parser.next p;
-      Parser.expectExn  Lbrace p;
+      Parser.expect  Lbrace p;
       let elseExpr = parseExprBlock p in
-      Parser.expectExn Rbrace p;
+      Parser.expect Rbrace p;
       Parser.eatBreadcrumb p;
       Some elseExpr
     | _ ->
@@ -3320,7 +3457,7 @@ module NapkinScript = struct
     Ast_helper.Exp.ifthenelse ~loc conditionExpr thenExpr elseExpr
 
   and parseForRest hasOpeningParen pattern startPos p =
-    Parser.expectExn In p;
+    Parser.expect In p;
     let e1 = parseExpr p in
     let direction = match p.Parser.token with
     | To -> Asttypes.Upto
@@ -3331,16 +3468,16 @@ module NapkinScript = struct
     in
     Parser.next p;
     let e2 = parseExpr p in
-    if hasOpeningParen then Parser.expectExn Rparen p;
-    Parser.expectExn Lbrace p;
+    if hasOpeningParen then Parser.expect Rparen p;
+    Parser.expect Lbrace p;
     let bodyExpr = parseExprBlock p in
-    Parser.expectExn Rbrace p;
+    Parser.expect Rbrace p;
     let loc = mkLoc startPos p.prevEndPos in
     Ast_helper.Exp.for_ ~loc pattern e1 e2 direction bodyExpr
 
   and parseForExpression p =
     let startPos = p.Parser.startPos in
-    Parser.expectExn For p;
+    Parser.expect For p;
 		match p.token with
 		| Lparen ->
 			Parser.next p;
@@ -3361,9 +3498,9 @@ module NapkinScript = struct
         Parser.expect Semicolon p;
         let after = parseExpr p in
         Parser.expect Rparen p;
-        Parser.expectExn Lbrace p;
+        Parser.expect Lbrace p;
         let block = parseExprBlock p in
-        Parser.expectExn Rbrace p;
+        Parser.expect Rbrace p;
         let while_ = Ast_helper.Exp.while_ condition (
           Ast_helper.Exp.sequence block after
         ) in
@@ -3377,17 +3514,17 @@ module NapkinScript = struct
 
   and parseWhileExpression p =
     let startPos = p.Parser.startPos in
-    Parser.expectExn While p;
+    Parser.expect While p;
     let expr1 = parseExpr ~context:WhenExpr p in
-    Parser.expectExn Lbrace p;
+    Parser.expect Lbrace p;
     let expr2 = parseExprBlock p in
-    Parser.expectExn Rbrace p;
+    Parser.expect Rbrace p;
     let loc = mkLoc startPos p.prevEndPos in
     Ast_helper.Exp.while_ ~loc expr1 expr2
 
   and parsePatternMatchCase p =
     Parser.leaveBreadcrumb p Grammar.PatternMatchCase;
-    Parser.expectExn Bar p;
+    Parser.expect Bar p;
     let lhs = parsePattern p in
     let guard = match p.Parser.token with
     | When ->
@@ -3396,7 +3533,10 @@ module NapkinScript = struct
     | _ ->
       None
     in
-    Parser.expect EqualGreater p;
+    let () = match p.token with
+    | EqualGreater -> Parser.next p
+    | _ -> Recover.recoverEqualGreater p
+    in
     let rhs = parseExprBlock p in
     Parser.eatBreadcrumb p;
     Ast_helper.Exp.case lhs ?guard rhs
@@ -3418,7 +3558,7 @@ module NapkinScript = struct
 
   and parseSwitchExpression p =
     let startPos = p.Parser.startPos in
-    Parser.expectExn Switch p;
+    Parser.expect Switch p;
     let switchExpr = parseExpr ~context:WhenExpr p in
     Parser.expect Lbrace p;
     let cases = parsePatternMatching p in
@@ -3443,6 +3583,7 @@ module NapkinScript = struct
     | Tilde ->
       Parser.next p;
       let startPos = p.startPos in
+      (* TODO: nesting of pattern matches not intuitive for error recovery *)
       begin match p.Parser.token with
       | Lident ident ->
         Parser.next p;
@@ -3468,12 +3609,14 @@ module NapkinScript = struct
         | _ ->
           (Labelled ident, identExpr)
         end
-      | _ -> raise (Parser.ParseError (p.startPos, Reporting.Lident))
+      | t ->
+        Parser.err p (Diagnostics.lident t);
+        (Nolabel, Recover.defaultExpr ())
       end
     | _ -> (Nolabel, parseConstrainedExpr p)
 
   and parseCallExpr p funExpr =
-    Parser.expectExn Lparen p;
+    Parser.expect Lparen p;
     let startPos = p.Parser.startPos in
     Parser.leaveBreadcrumb p Grammar.ExprCall;
     let args =
@@ -3536,15 +3679,13 @@ module NapkinScript = struct
       | token ->
         Parser.next p;
         Parser.err p (Diagnostics.unexpected token p.breadcrumbs);
-        Recover.default_expr()
-        (* Ast_helper.Exp.ident (Location.mknoloc (Longident.Lident "_")) *)
-          (* raise (Parser.ParseError (p.startPos, Reporting.Unexpected token)) *)
+        Recover.defaultExpr()
     in
     aux p []
 
   and parseConstructorArgs p =
     let lparen = p.Parser.startPos in
-    Parser.expectExn Lparen p;
+    Parser.expect Lparen p;
     let args =
       parseCommaDelimitedList
         ~grammar:Grammar.ExprList ~f:parseConstrainedExpr ~closing:Rparen p
@@ -3559,7 +3700,7 @@ module NapkinScript = struct
 
   and parseTupleExpr p =
     let startPos = p.Parser.startPos in
-    Parser.expectExn Forwardslash p;
+    Parser.expect Forwardslash p;
     Scanner.setTupleMode p.scanner;
     let exprs =
       parseCommaDelimitedList
@@ -3570,8 +3711,8 @@ module NapkinScript = struct
 
   and parseListExpr p =
     let startPos = p.Parser.startPos in
-    Parser.expectExn List p;
-    Parser.expectExn Lparen p;
+    Parser.expect List p;
+    Parser.expect Lparen p;
     let rec loop p exprs = match p.Parser.token with
     | Rparen ->
       Parser.next p;
@@ -3606,7 +3747,7 @@ module NapkinScript = struct
 
   and parseArrayExp p =
     let startPos = p.Parser.startPos in
-    Parser.expectExn Lbracket p;
+    Parser.expect Lbracket p;
     let exprs =
       parseCommaDelimitedList
         p ~grammar:Grammar.ExprList ~closing:Rbracket ~f:parseConstrainedExpr
@@ -3623,7 +3764,7 @@ module NapkinScript = struct
       let vars = parseTypeVarList p in
       begin match vars with
       | _v1::_v2::_ ->
-        Parser.expectExn Dot p;
+        Parser.expect Dot p;
         let typ = parseTypExpr p in
         let loc = mkLoc startPos p.prevEndPos in
         Ast_helper.Typ.poly ~loc vars typ
@@ -3655,7 +3796,9 @@ module NapkinScript = struct
           Parser.next p;
           let var = Location.mkloc ident (mkLoc startPos endPos) in
           loop p (var::vars)
-        | _ -> raise (Parser.ParseError (p.startPos, Reporting.Lident))
+        | t ->
+          Parser.err p (Diagnostics.lident t);
+          List.rev vars
         end
       | _ ->
         List.rev vars
@@ -3672,7 +3815,10 @@ module NapkinScript = struct
         let endPos = p.endPos in
         Parser.next p;
         Ast_helper.Typ.var ~loc:(mkLoc startPos endPos) ~attrs ident
-      | _ -> raise (Parser.ParseError (p.startPos, Reporting.Lident))
+      | t ->
+        Parser.err p (Diagnostics.lident t);
+        let ident = "_" in
+        Ast_helper.Typ.var ~attrs ident
       end
     | Underscore ->
       let endPos = p.endPos in
@@ -3684,7 +3830,7 @@ module NapkinScript = struct
       Parser.next p;
       let t = parseTypExpr p in
       let endPos = p.endPos in
-      Parser.expectExn Rparen p;
+      Parser.expect Rparen p;
       {t with ptyp_loc = mkLoc startPos endPos}
     | Uident _ | Lident _ | List ->
       let constr = parseValuePath p in
@@ -3694,7 +3840,10 @@ module NapkinScript = struct
         let args = parseTypeConstructorArgs p in
         Ast_helper.Typ.constr ~loc:(mkLoc startPos p.prevEndPos) ~attrs constr args
       | Lparen ->
-        raise (Parser.ParseError (p.startPos, Reporting.Message "Type constructor args require diamonds, like: Belt.Map.String.t<int>"))
+        let msg = "Type constructor args require diamonds, like: Belt.Map.String.t<int>" in
+        Parser.err p (Diagnostics.message msg);
+        let args = parseTypeConstructorArgs p in
+        Ast_helper.Typ.constr ~loc:(mkLoc startPos p.prevEndPos) ~attrs constr args
       | _ ->
         Ast_helper.Typ.constr ~loc:constr.loc ~attrs constr []
       end
@@ -3705,7 +3854,7 @@ module NapkinScript = struct
       parseBsObjectType p
     | token ->
       Parser.err p (Diagnostics.unexpected token p.breadcrumbs);
-      Recover.default_type()
+      Recover.defaultType()
     in
     typ
 
@@ -3746,14 +3895,15 @@ module NapkinScript = struct
     match p.Parser.token with
     | As ->
       Parser.next p;
-      Parser.expectExn SingleQuote p;
+      Parser.expect SingleQuote p;
       begin match p.token with
       | Lident ident ->
         Parser.next p;
         (* TODO: how do we parse attributes here? *)
         Ast_helper.Typ.alias ~loc:(mkLoc typ.Parsetree.ptyp_loc.loc_start p.prevEndPos) typ ident
-      | _ ->
-          raise (Parser.ParseError (p.startPos, Reporting.Lident))
+      | t ->
+        Parser.err p (Diagnostics.lident t);
+        typ
       end
     | _ -> typ
 
@@ -3771,18 +3921,16 @@ module NapkinScript = struct
       Parser.next p;
       let name = match p.Parser.token with
       | Lident ident -> Parser.next p; ident
-      | _ ->
-        raise (Parser.ParseError (
-          p.startPos,
-          Reporting.Lident
-        ))
+      | t ->
+        Parser.err p (Diagnostics.lident t);
+        "_"
       in
-      Parser.expectExn Colon p;
+      Parser.expect Colon p;
       let typ = parseTypExpr p in
       begin match p.Parser.token with
       | Equal ->
         Parser.next p;
-        Parser.expectExn Question p;
+        Parser.expect Question p;
         (attrs, Asttypes.Optional name, typ, startPos)
       | _ ->
         (attrs, Asttypes.Labelled name, typ, startPos)
@@ -3792,7 +3940,7 @@ module NapkinScript = struct
 
   (* (int, ~x:string, float) *)
   and parseTypeParameters p =
-    Parser.expectExn Lparen p;
+    Parser.expect Lparen p;
     let params =
       parseCommaDelimitedList ~grammar:Grammar.TypeParameters ~closing:Rparen ~f:parseTypeParameter p
     in
@@ -3801,7 +3949,7 @@ module NapkinScript = struct
 
   and parseEs6ArrowType p =
     let parameters = parseTypeParameters p in
-    Parser.expectExn EqualGreater p;
+    Parser.expect EqualGreater p;
     let returnType = parseTypExpr ~alias:false p in
     let endPos = p.prevEndPos in
     List.fold_right (fun (attrs, argLbl, typ, startPos) t ->
@@ -3849,7 +3997,7 @@ module NapkinScript = struct
 
   and parseTupleType p =
     let startPos = p.Parser.startPos in
-    Parser.expectExn Forwardslash p;
+    Parser.expect Forwardslash p;
     let types =
       parseCommaDelimitedList ~grammar:Grammar.TypExprList ~closing:Forwardslash ~f:parseTypExpr p
     in
@@ -3858,7 +4006,7 @@ module NapkinScript = struct
 
   and parseTypeConstructorArgs p =
 		Scanner.setDiamondMode p.scanner;
-		Parser.expectExn LessThan p;
+		Parser.expect LessThan p;
 		let typeArgs =
       parseCommaDelimitedList ~grammar:Grammar.TypExprList ~closing:GreaterThan ~f:parseTypExpr p
 		in
@@ -3868,7 +4016,7 @@ module NapkinScript = struct
 
   and parseConstructorTypeArgs p =
 		Scanner.setDiamondMode p.Parser.scanner;
-		Parser.expectExn LessThan p;
+		Parser.expect LessThan p;
 		let typeArgs =
       parseCommaDelimitedList ~grammar:Grammar.TypExprList ~closing:GreaterThan ~f:parseTypExpr p
 		in
@@ -3887,7 +4035,9 @@ module NapkinScript = struct
       let nameEndPos = p.endPos in
       Parser.next p;
       Location.mkloc name (mkLoc nameStartPos nameEndPos)
-    | t -> raise (Parser.ParseError (p.startPos, Reporting.Unexpected t))
+    | token ->
+      Parser.err p (Diagnostics.unexpected token p.breadcrumbs);
+      Location.mknoloc "_"
     in
     Parser.expect Colon p;
     let typ = parsePolyTypeExpr p in
@@ -3909,7 +4059,9 @@ module NapkinScript = struct
       let loc = mkLoc p.startPos p.endPos in
       Parser.next p;
       Location.mkloc ident loc
-    | _ -> raise (Parser.ParseError (p.startPos, Reporting.Lident))
+    | t ->
+      Parser.err p (Diagnostics.lident t);
+      Location.mknoloc "_"
     in
     let typ = match p.Parser.token with
     | Colon ->
@@ -3928,7 +4080,7 @@ module NapkinScript = struct
    *)
   and parseRecordDeclaration p =
     Parser.leaveBreadcrumb p Grammar.RecordDecl;
-    Parser.expectExn Lbrace p;
+    Parser.expect Lbrace p;
     let rows =
       parseCommaDelimitedList
         ~grammar:Grammar.RecordDecl
@@ -4046,7 +4198,7 @@ module NapkinScript = struct
               in
               Parser.expect Rbrace p;
               Parser.optional p Comma |> ignore;
-              Parser.expectExn Rparen p;
+              Parser.expect Rparen p;
               Parsetree.Pcstr_record fields
             end
         end
@@ -4085,7 +4237,9 @@ module NapkinScript = struct
        let (args, res) = parseConstrDeclArgs p in
        Parser.eatBreadcrumb p;
        Ast_helper.Type.constructor ~attrs ?res ~args (Location.mknoloc uident)
-     | _ -> raise (Parser.ParseError (p.startPos, Reporting.Uident))
+     | t ->
+      Parser.err p (Diagnostics.uident t);
+      Ast_helper.Type.constructor (Location.mknoloc "_")
 
    (* [|] constr-decl  { | constr-decl }   *)
    and parseTypeConstructorDeclarations ?first p =
@@ -4133,7 +4287,10 @@ module NapkinScript = struct
     | DotDot ->
       Parser.next p;
       Ptype_open
-    | unknownToken -> raise (Parser.ParseError (p.startPos, Reporting.Unexpected unknownToken))
+    | token ->
+      Parser.err p (Diagnostics.unexpected token p.breadcrumbs);
+      (* TODO: I have no idea if this is even remotely a good idea *)
+      Parsetree.Ptype_variant []
     in
     Parser.eatBreadcrumb p;
     (privateFlag, kind)
@@ -4163,13 +4320,17 @@ module NapkinScript = struct
         Parser.next p;
         let loc = mkLoc startPos p.prevEndPos in
         (Ast_helper.Typ.var ~loc ident, variance)
-      | _ -> raise (Parser.ParseError (p.startPos, Reporting.Lident))
+      | t ->
+        Parser.err p (Diagnostics.lident t);
+        (Ast_helper.Typ.any (), variance)
       end
     | Underscore ->
       let loc = mkLoc p.startPos p.endPos in
       Parser.next p;
       (Ast_helper.Typ.any ~loc (), variance)
-    | token -> raise (Parser.ParseError (p.startPos, Reporting.Unexpected token))
+    | token ->
+      Parser.err p (Diagnostics.unexpected token p.breadcrumbs);
+      (Ast_helper.Typ.any (), variance)
     in
     Parser.eatBreadcrumb p;
     param
@@ -4195,21 +4356,34 @@ module NapkinScript = struct
       Parser.eatBreadcrumb p;
       params
     | Lparen when p.startPos.pos_lnum == p.prevEndPos.pos_lnum ->
-      raise (Parser.ParseError (p.startPos, Reporting.Message
-        "Type parameters start with diamonds, example: type foo<'a>"
-      ))
+      let msg = "Type parameters start with diamonds, example: type foo<'a>" in
+      Parser.err p (Diagnostics.message msg);
+      Parser.leaveBreadcrumb p Grammar.TypeParams;
+      Parser.next p;
+      let params =
+        parseCommaDelimitedList
+          ~grammar:Grammar.TypeParams
+          ~closing:GreaterThan
+          ~f:parseTypeParam
+          p
+      in
+      Parser.expect GreaterThan p;
+      Parser.eatBreadcrumb p;
+      params
     | _ -> []
 
   (* type-constraint	::=	constraint ' ident =  typexpr *)
   and parseTypeConstraint p =
-    Parser.expectExn SingleQuote p;
+    Parser.expect SingleQuote p;
     begin match p.Parser.token with
     | Lident ident ->
       Parser.next p;
       Parser.expect Equal p;
       let typ = parseTypExpr p in
       (Ast_helper.Typ.var ident, typ, Location.none)
-    | _ -> raise (Parser.ParseError (p.startPos, Reporting.Lident))
+    | t ->
+      Parser.err p (Diagnostics.lident t);
+      (Ast_helper.Typ.any (), parseTypExpr p, Location.none)
     end
 
   (* type-constraints ::=
@@ -4268,7 +4442,10 @@ module NapkinScript = struct
         ) in
         (None, Asttypes.Public, Parsetree.Ptype_variant (parseTypeConstructorDeclarations p ?first))
       end
-    | _ -> raise (Parser.ParseError (p.startPos, Reporting.Uident))
+    | t ->
+      Parser.err p (Diagnostics.uident t);
+      (* TODO: is this a good idea? *)
+      (None, Asttypes.Public, Parsetree.Ptype_abstract)
 
   and parseRecordOrBsObjectDecl p =
     let startPos = p.Parser.startPos in
@@ -4284,7 +4461,7 @@ module NapkinScript = struct
           ~f:parseStringFieldDeclaration
           p
       in
-      Parser.expectExn Rbrace p;
+      Parser.expect Rbrace p;
       let loc = mkLoc startPos p.prevEndPos in
       let typ =
         makeBsObjType ~loc ~closed:closedFlag fields
@@ -4394,7 +4571,9 @@ module NapkinScript = struct
       let loc = mkLoc p.startPos p.endPos in
       Parser.next p;
       (Location.mkloc ident loc)
-    | _ -> raise (Parser.ParseError (p.startPos, Reporting.Lident))
+    | t ->
+      Parser.err p (Diagnostics.lident t);
+      Location.mknoloc "_"
     in
     Parser.eatBreadcrumb p;
     Parser.leaveBreadcrumb p Grammar.TypeParams;
@@ -4473,7 +4652,7 @@ module NapkinScript = struct
    * this territory of the grammar *)
   and parseTypeDefinitionOrExtension ~attrs p =
     let startPos = p.Parser.startPos in
-    Parser.expectExn Token.Typ p;
+    Parser.expect Token.Typ p;
     let recFlag =
       if Parser.optional p Token.Rec
         then Asttypes.Recursive
@@ -4496,7 +4675,11 @@ module NapkinScript = struct
         loop p (s::prims)
       | _ ->
         begin match prims with
-        | [] -> raise (Parser.ParseError (p.startPos, Reporting.Message "An external definition should have at least one primitive. Example: \"setTimeout\""))
+        | [] ->
+          let msg = "An external definition should have at least one primitive. Example: \"setTimeout\""
+          in
+          Parser.err p (Diagnostics.message msg);
+          []
         | prims -> List.rev prims
         end
     in
@@ -4506,15 +4689,17 @@ module NapkinScript = struct
   and parseExternalDef ~attrs p =
     Parser.leaveBreadcrumb p Grammar.External;
     let startPos = p.Parser.startPos in
-    Parser.expectExn Token.External p;
+    Parser.expect Token.External p;
     let name = match p.Parser.token with
     | Lident ident ->
       let loc = mkLoc p.startPos p.endPos in
       Parser.next p;
       Location.mkloc ident loc
-    | _ -> raise (Parser.ParseError (p.startPos, Reporting.Lident))
+    | t ->
+      Parser.err p (Diagnostics.lident t);
+      Location.mknoloc "_"
     in
-    Parser.expectExn ~circumstance:(Grammar.TypeExpression) Colon p;
+    Parser.expect ~grammar:(Grammar.TypeExpression) Colon p;
     let typExpr = parseTypExpr p in
     Parser.expect Equal p;
     let prim = parsePrimitive p in
@@ -4537,7 +4722,9 @@ module NapkinScript = struct
       let loc = mkLoc p.startPos p.endPos in
       Parser.next p;
       Location.mkloc name loc
-    | _ -> raise (Parser.ParseError (p.startPos, Reporting.Uident))
+    | t ->
+      Parser.err p (Diagnostics.uident t);
+      Location.mknoloc "_"
     in
     let kind = match p.Parser.token with
     | Lparen ->
@@ -4561,7 +4748,7 @@ module NapkinScript = struct
    *  constr ::= long_uident *)
   and parseExceptionDef ~attrs p =
     let startPos = p.Parser.startPos in
-    Parser.expectExn Token.Exception p;
+    Parser.expect Token.Exception p;
     let (_, name, kind) = parseConstrDef ~parseAttrs:false p in
     let loc = mkLoc startPos p.prevEndPos in
     Ast_helper.Te.constructor ~loc ~attrs name kind
@@ -4580,7 +4767,7 @@ module NapkinScript = struct
         (* | Backtick | Uident _ | Lident _ | Lbracket | Assert | Lazy *)
         (* | If | For | While | Switch | LessThan | Rbrace -> () *)
         (* | At when prevToken <> Let && prevToken <> Module -> () *)
-        (* | _ -> Parser.expectExn Semicolon p *)
+        (* | _ -> Parser.expect Semicolon p *)
         (* in *)
         parse p (item::acc)
     in
@@ -4625,7 +4812,7 @@ module NapkinScript = struct
   (* include-statement ::= include module-expr *)
   and parseIncludeStatement ~attrs p =
     let startPos = p.Parser.startPos in
-    Parser.expectExn Token.Include p;
+    Parser.expect Token.Include p;
     let modExpr = parseModuleExpr p in
     let loc = mkLoc startPos p.prevEndPos in
     Ast_helper.Incl.mk ~loc ~attrs modExpr
@@ -4639,7 +4826,7 @@ module NapkinScript = struct
     | Lbrace ->
       Parser.next p;
       let structure = Ast_helper.Mod.structure (parseStructure p) in
-      Parser.expectExn Rbrace p;
+      Parser.expect Rbrace p;
       let endPos = p.prevEndPos in
       {structure with pmod_loc = mkLoc startPos endPos}
     | Lparen ->
@@ -4650,7 +4837,9 @@ module NapkinScript = struct
     | Percent ->
       let (loc, extension) = parseExtension p in
       Ast_helper.Mod.extension ~loc extension
-    | unknownToken -> raise (Parser.ParseError (p.startPos, Reporting.Unexpected unknownToken))
+    | token ->
+      Parser.err p (Diagnostics.unexpected token p.breadcrumbs);
+      Recover.defaultModuleExpr()
 
   and parsePrimaryModExpr p =
     let startPos = p.Parser.startPos in
@@ -4673,9 +4862,10 @@ module NapkinScript = struct
     | Underscore ->
       Parser.next p;
       "_"
-    | _ -> raise (Parser.ParseError (p.startPos,
-      Reporting.Message "a functor arg name should be module name or _"
-      ))
+    | _ ->
+      let msg = "a functor arg name should be module name or _" in
+      Parser.err p (Diagnostics.message msg);
+      "_"
     in
     Location.mkloc ident (mkLoc startPos p.prevEndPos)
 
@@ -4719,7 +4909,7 @@ module NapkinScript = struct
     | Underscore ->
       Parser.next p;
       let argName = Location.mkloc "_" (mkLoc startPos p.prevEndPos) in
-      Parser.expectExn Colon p;
+      Parser.expect Colon p;
       let moduleType = parseModuleType p in
       (attrs, argName, Some moduleType, startPos)
     | _ ->
@@ -4751,7 +4941,7 @@ module NapkinScript = struct
       Some (parseModuleType ~es6Arrow:false p)
     | _ -> None
     in
-    Parser.expectExn EqualGreater p;
+    Parser.expect EqualGreater p;
     let rhsModuleExpr =
       let modExpr = parseModuleExpr p in
       match returnType with
@@ -4799,11 +4989,11 @@ module NapkinScript = struct
 
   and parseModuleApplication p modExpr =
     let startPos = p.Parser.startPos in
-    Parser.expectExn Lparen p;
+    Parser.expect Lparen p;
     let args =
       parseCommaDelimitedList ~grammar:Grammar.ModExprList ~closing:Rparen ~f:parseConstrainedModExpr p
     in
-    Parser.expectExn Rparen p;
+    Parser.expect Rparen p;
     let args = match args with
     | [] ->
       let loc = mkLoc startPos p.prevEndPos in
@@ -4818,22 +5008,24 @@ module NapkinScript = struct
 
   and parseModuleOrModuleTypeImpl ~attrs p =
     let startPos = p.Parser.startPos in
-    Parser.expectExn Module p;
+    Parser.expect Module p;
     match p.Parser.token with
     | Typ -> parseModuleTypeImpl ~attrs startPos p
     | _ -> parseMaybeRecModuleBinding ~attrs p
 
   and parseModuleTypeImpl ~attrs startPos p =
-    Parser.expectExn Typ p;
+    Parser.expect Typ p;
     let nameStart = p.Parser.startPos in
     let name = match p.Parser.token with
     | Uident ident ->
       Parser.next p;
       let loc = mkLoc nameStart p.prevEndPos in
       Location.mkloc ident loc
-    | _ -> raise (Parser.ParseError (p.startPos, Reporting.Uident))
+    | t ->
+      Parser.err p (Diagnostics.uident t);
+      Location.mknoloc "_"
     in
-    Parser.expectExn Equal p;
+    Parser.expect Equal p;
     let moduleType = parseModuleType p in
     let moduleTypeDeclaration =
       Ast_helper.Mtd.mk
@@ -4861,7 +5053,9 @@ module NapkinScript = struct
       Parser.next p;
       let loc = mkLoc startPos p.prevEndPos in
       Location.mkloc ident loc
-    | _ -> raise (Parser.ParseError (p.startPos, Reporting.Uident))
+    | t ->
+      Parser.err p (Diagnostics.uident t);
+      Location.mknoloc "_"
     in
     let body = parseModuleBindingBody p in
     let loc = mkLoc startPos p.prevEndPos in
@@ -4912,19 +5106,21 @@ module NapkinScript = struct
     | Lparen ->
       Parser.next p;
       let mty = parseModuleType p in
-      Parser.expectExn Rparen p;
+      Parser.expect Rparen p;
       {mty with pmty_loc = mkLoc startPos p.prevEndPos}
     | Lbrace ->
       Parser.next p;
       let spec = parseSpecification p in
-      Parser.expectExn Rbrace p;
+      Parser.expect Rbrace p;
       spec
     | Module -> (* TODO: check if this is still atomic when implementing first class modules*)
       parseModuleTypeOf p
     | Percent ->
       let (loc, extension) = parseExtension p in
       Ast_helper.Mty.extension ~loc extension
-    | token -> raise (Parser.ParseError (p.startPos, Reporting.Unexpected token))
+    | token ->
+      Parser.err p (Diagnostics.unexpected token p.breadcrumbs);
+      Recover.defaultModuleType()
     in
     let moduleTypeLoc = mkLoc startPos p.prevEndPos in
     {moduleType with pmty_loc = moduleTypeLoc}
@@ -5001,7 +5197,9 @@ module NapkinScript = struct
    *  |  type typeconstr<type-params> type-equation type-constraints?
    *  ∣	 type typeconstr-name<type-params> := typexpr
    *  ∣	 module module-path = extended-module-path
-   *  ∣	 module module-path :=  extended-module-path *)
+   *  ∣	 module module-path :=  extended-module-path
+   *
+   *  TODO: split this up into multiple functions, better errors *)
   and parseWithConstraint p =
     match p.Parser.token with
     | Module ->
@@ -5016,7 +5214,11 @@ module NapkinScript = struct
         Parser.next p;
         let lident = parseModuleLongIdent p in
         Parsetree.Pwith_module (modulePath, lident)
-      | t -> raise (Parser.ParseError (p.startPos, Reporting.Unexpected t))
+      | token ->
+        (* TODO: revisit *)
+        Parser.err p (Diagnostics.unexpected token p.breadcrumbs);
+        let lident = parseModuleLongIdent p in
+        Parsetree.Pwith_modsubst (modulePath, lident)
       end
     | Typ ->
       Parser.next p;
@@ -5047,15 +5249,30 @@ module NapkinScript = struct
             ~cstrs:typeConstraints
             (Location.mkloc (Longident.last typeConstr.txt) typeConstr.loc)
         )
-      | t -> raise (Parser.ParseError (p.startPos, Reporting.Unexpected t))
+      | token ->
+        (* TODO: revisit *)
+        Parser.err p (Diagnostics.unexpected token p.breadcrumbs);
+        let typExpr = parseTypExpr p in
+        let typeConstraints = parseTypeConstraints p in
+        Parsetree.Pwith_type (
+          typeConstr,
+          Ast_helper.Type.mk
+            ~loc:typeConstr.loc
+            ~params
+            ~manifest:typExpr
+            ~cstrs:typeConstraints
+            (Location.mkloc (Longident.last typeConstr.txt) typeConstr.loc)
+        )
       end
-    | token -> raise (Parser.ParseError (p.startPos, Reporting.Unexpected token))
+    | token ->
+      Parser.err p (Diagnostics.unexpected token p.breadcrumbs);
+      raise Exit
 
   and parseModuleTypeOf p =
     let startPos = p.Parser.startPos in
-    Parser.expectExn Module p;
-    Parser.expectExn Typ p;
-    Parser.expectExn Of p;
+    Parser.expect Module p;
+    Parser.expect Typ p;
+    Parser.expect Of p;
     let moduleExpr = parseModuleExpr p in
     Ast_helper.Mty.typeof_ ~loc:(mkLoc startPos p.prevEndPos) moduleExpr
 
@@ -5066,7 +5283,7 @@ module NapkinScript = struct
       let () = match p.Parser.token with
       | Semicolon -> Parser.next p
       | Let | Typ | At | AtAt | PercentPercent | External | Exception | Open | Include | Module | Rbrace | Eof -> ()
-      | _ -> Parser.expectExn Semicolon p
+      | _ -> Parser.expect Semicolon p
       in
       let spec = (item::spec) in
       match p.Parser.token with
@@ -5084,7 +5301,7 @@ module NapkinScript = struct
         let () = match p.Parser.token with
         | Semicolon -> Parser.next p
         | Let | Typ | At | AtAt | PercentPercent | External | Exception | Open | Include | Module | Rbrace | Eof -> ()
-        | _ -> Parser.expectExn Semicolon p
+        | _ -> Parser.expect Semicolon p
         in
         let spec = (item::spec) in
         match p.Parser.token with
@@ -5127,7 +5344,9 @@ module NapkinScript = struct
         )
       | Typ ->
         parseModuleTypeDeclaration ~attrs p
-      | _ -> raise (Parser.ParseError (p.startPos, Reporting.Uident))
+      | t ->
+        Parser.err p (Diagnostics.uident t);
+        parseModuleDeclarationOrAlias ~attrs p
       end
     | AtAt ->
       let (loc, attr) = parseStandaloneAttribute p in
@@ -5135,7 +5354,9 @@ module NapkinScript = struct
     | PercentPercent ->
       let (loc, extension) = parseExtension ~moduleLanguage:true p in
       Ast_helper.Sig.extension ~attrs ~loc extension
-    | token -> raise (Parser.ParseError (p.startPos, Reporting.Unexpected token))
+    | token ->
+      Parser.err p (Diagnostics.unexpected token p.breadcrumbs);
+      Recover.defaultSignatureItem()
 
   (* module rec module-name :  module-type  { and module-name:  module-type } *)
   and parseRecModuleSpec ~attrs p =
@@ -5166,7 +5387,9 @@ module NapkinScript = struct
       let loc = mkLoc p.startPos p.endPos in
       Parser.next p;
       Location.mkloc modName loc
-    | _ -> raise (Parser.ParseError (p.startPos, Reporting.Uident))
+    | t ->
+      Parser.err p (Diagnostics.uident t);
+      Location.mknoloc "_"
     in
     Parser.expect Colon p;
     let modType = parseModuleType p in
@@ -5177,7 +5400,9 @@ module NapkinScript = struct
     | Uident ident ->
       Parser.next p;
       Location.mknoloc ident
-    | _ -> raise (Parser.ParseError (p.startPos, Reporting.Uident))
+    | t ->
+      Parser.err p (Diagnostics.uident t);
+      Location.mknoloc "_"
     in
     let body = match p.Parser.token with
     | Colon ->
@@ -5187,19 +5412,23 @@ module NapkinScript = struct
       Parser.next p;
       let lident = parseModuleLongIdent p in
       Ast_helper.Mty.alias lident
-    | t -> raise (Parser.ParseError (p.startPos, Reporting.Unexpected t))
+    | token ->
+      Parser.err p (Diagnostics.unexpected token p.breadcrumbs);
+      Recover.defaultModuleType()
     in
     Ast_helper.Sig.module_ (Ast_helper.Md.mk ~attrs moduleName body)
 
   and parseModuleTypeDeclaration ~attrs p =
     let startPos = p.Parser.startPos in
-    Parser.expectExn Typ p;
+    Parser.expect Typ p;
     (* We diverge from ocaml here by requiring uident instead of ident *)
     let moduleName = match p.Parser.token with
     | Uident ident ->
       Parser.next p;
       Location.mknoloc ident
-    | _ -> raise (Parser.ParseError (p.startPos, Reporting.Uident))
+    | t ->
+      Parser.err p (Diagnostics.uident t);
+      Location.mknoloc "_"
     in
     let typ = match p.Parser.token with
     | Equal ->
@@ -5211,13 +5440,15 @@ module NapkinScript = struct
     Ast_helper.Sig.modtype ~loc:(mkLoc startPos p.prevEndPos) moduleDecl
 
   and parseSignLetDesc ~attrs p =
-    Parser.expectExn Let p;
+    Parser.expect Let p;
     let name = match p.Parser.token with
     | Lident ident ->
       let nameStartPos = p.startPos in
       Parser.next p;
       Location.mkloc ident (mkLoc nameStartPos p.prevEndPos)
-    | _ -> raise (Parser.ParseError (p.startPos, Reporting.Lident))
+    | t ->
+      Parser.err p (Diagnostics.lident t);
+      Location.mknoloc "_"
     in
     Parser.expect Colon p;
     let typExpr = parsePolyTypeExpr p in
@@ -5245,7 +5476,9 @@ module NapkinScript = struct
         | Dot -> Parser.next p; loop p (id ^ ".")
         | _ -> id
         end
-      | token -> raise (Parser.ParseError (p.startPos, Reporting.Unexpected token))
+      | token ->
+        Parser.err p (Diagnostics.unexpected token p.breadcrumbs);
+        acc
     in
     let id = loop p "" in
     let endPos = p.prevEndPos in
@@ -5266,7 +5499,7 @@ module NapkinScript = struct
     | Lparen when p.startPos.pos_cnum = cnumEndAttrId + 1 ->
       Parser.next p;
       let item = parseStructureItem p in
-      Parser.expectExn Rparen p;
+      Parser.expect Rparen p;
       [item]
     | _ -> []
     in
@@ -5274,7 +5507,7 @@ module NapkinScript = struct
 
   (* type attribute = string loc * payload *)
   and parseAttribute p =
-    Parser.expectExn At p;
+    Parser.expect At p;
     let attrId = parseAttributeId p in
     let cnumEndAttrId = p.Parser.prevEndPos.pos_cnum - 1 in
     let payload = parsePayload cnumEndAttrId p in
@@ -5298,7 +5531,7 @@ module NapkinScript = struct
    *)
   and parseStandaloneAttribute p =
     let startPos = p.Parser.startPos in
-    Parser.expectExn AtAt p;
+    Parser.expect AtAt p;
     let attrId = parseAttributeId p in
     let cnumEndAttrId = p.Parser.prevEndPos.pos_cnum - 1 in
     let payload = parsePayload cnumEndAttrId p in
@@ -5342,9 +5575,9 @@ module NapkinScript = struct
   and parseExtension ?(moduleLanguage=false) p =
     let startPos = p.Parser.startPos in
     if moduleLanguage then
-      Parser.expectExn PercentPercent p
+      Parser.expect PercentPercent p
     else
-      Parser.expectExn Percent p;
+      Parser.expect Percent p;
     let attrId = parseAttributeId p in
     let cnumEndAttrId = p.Parser.prevEndPos.pos_cnum - 1 in
     let payload = parsePayload cnumEndAttrId p in
@@ -5377,96 +5610,30 @@ module NapkinScript = struct
           (* Ast_io.to_channel stdout filename *)
             (* (Ast_io.Impl ((module OCaml_402), ast402)) *)
 
+          (* Printast.implementation Format.std_formatter ast; *)
           Pprintast.structure Format.std_formatter ast
       in
       Format.pp_print_flush Format.std_formatter ();
       print_newline();
+      match p.diagnostics with
+      | [] ->
+        exit 0
+      | _ ->
+        print_endline (
+          Diagnostics.makeReport p.diagnostics (Bytes.to_string p.scanner.src)
+        );
+        exit 1
       (* Printast.implementation Format.std_formatter ast; *)
       (* Format.pp_print_flush Format.std_formatter (); *)
       (* print_newline(); *)
-      List.iter (fun (pos, problem) ->
-        Printf.eprintf "Parse error: %s\n" (p.scanner.filename);
-        Printf.eprintf "Line: %d, Column: %d\n" (pos.Lexing.pos_lnum) (pos.pos_cnum - pos.pos_bol + 1);
-        Printf.eprintf "%s\n"
-        (match problem with
-        | Reporting.Expected (t,_, _) ->
-          "Missing " ^ Token.toString t
-        | _ -> "Todo: pretty print parse error")
-      ) p.errors;
 
-      (* List.iter Diagnostics.print p.diagnostics; *)
       (* let endTime = Unix.gettimeofday () in *)
       (* let diff = (endTime -. startTime) *. 1000. in *)
       (* Printf.eprintf "Execution time: %fms\n%!" diff; *)
-      exit 0
     with
-    | Parser.ParseError (pos, problem) ->
-      Printf.eprintf "\nParse error: %s, line: %d, col: %d\n" (p.scanner.filename) (pos.pos_lnum) (pos.pos_cnum - pos.pos_bol + 1);
-      Printf.eprintf "Problem encountered while trying to parse %s.\n" (Reporting.parseContext p.breadcrumbs);
-      let ctx = Reporting.renderCodeContext (Bytes.to_string p.scanner.src) pos p.endPos in
-      Printf.eprintf "\n%s\n\n" ctx;
-      Printf.eprintf "%s\n\n"
-      (match problem with
-      | Reporting.Uident ->
-        begin match p.Parser.token with
-        | Lident lident ->
-          let guess = String.capitalize_ascii lident in
-          "Did you mean `" ^ guess ^"` instead of `" ^ lident ^ "`?"
-        | t when Token.isKeyword t ->
-          let token = Token.toString t in
-          "`" ^ token ^ "` is a reserved keyword. Try `" ^ token ^ "_` or `_" ^ token ^ "` instead"
-        | _ ->
-          "At this point, I'm looking for an uppercased identifier like `Belt` or `Array`"
-        end
-      | Reporting.Lident ->
-        begin match p.Parser.token with
-        | Uident uident ->
-          let guess = String.uncapitalize_ascii uident in
-          "Did you mean `" ^ guess ^"` instead of `" ^ uident ^ "`?"
-        | t when Token.isKeyword t ->
-          let token = Token.toString t in
-          "`" ^ token ^ "` is a reserved keyword. Try `" ^ token ^ "_` or `_" ^ token ^ "` instead"
-        | _ ->
-          "I'm expecting an lowercased identifier like `name` or `age`"
-        end
-      | Message msg -> msg
-      | Unexpected t ->
-          let name = (Token.toString t) in
-          begin match p.breadcrumbs with
-          | (ExprOperand, _)::breadcrumbs ->
-              begin match breadcrumbs, p.token with
-              | (ExprBlock, _) :: _, Rbrace ->
-                "It seems that this expression block is empty"
-              | (ExprSetField, _) :: _, _ ->
-                "It seems that this record field mutation misses an expression"
-              | (ExprArrayMutation, _) :: _, _ ->
-                "Seems that an expression is missing, with what do I mutate the array?"
-              | ((ExprBinaryAfterOp _ | ExprUnary), _) ::_, _ ->
-                "Did you forget to write an expression here?"
-              | _ ->
-                "I'm not sure what to parse here when looking at \"" ^ name ^ "\"."
-              end
-          | (TypeParam, _)::_ ->
-              begin match t with
-              | Lident ident ->
-                "Did you mean '" ^ ident ^"? A Type parameter starts with a quote."
-              | _ ->
-                "I'm not sure what to parse here when looking at \"" ^ name ^ "\"."
-              end
-          | _ ->
-            (* TODO: match on circumstance to verify Lident needed ? *)
-            if Token.isKeyword t then
-              name ^ " is a reserved keyword, it cannot be used as an identifier."
-            else
-            "I'm not sure what to parse here when looking at \"" ^ name ^ "\"."
-          end
-      | Expected (t, _, circumstance) ->
-          "I'm expecting a \"" ^ (Token.toString t) ^ "\" here."
-          ^ (match circumstance with
-          | Some c -> "It signals the start of " ^ (Grammar.toString c)
-          | None -> "")
-      | Unbalanced t ->
-          "Closing \"" ^ (Token.toString t) ^ "\" seems to be missing."
-      );
-      exit 1
+    | _ ->
+     print_endline (
+       Diagnostics.makeReport p.diagnostics (Bytes.to_string p.scanner.src)
+     );
+     exit 1
 end
