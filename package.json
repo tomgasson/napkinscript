@@ -1,6 +1,6 @@
 {
   "name": "napkinscript",
-  "version": "0.0.1-dev",
+  "version": "0.0.2-dev",
   "description": "",
   "main": "./src/Lang.ml",
   "bin": {
