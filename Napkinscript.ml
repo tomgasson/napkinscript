@@ -1,11 +1,8 @@
-(* Uncomment for release, to output 4.02 binary ast
+(* Uncomment for release, to output 4.02 binary ast *)
 
 open Migrate_parsetree
 
 module To_402 = Convert(OCaml_406)(OCaml_402)
-
-open Ast_406
-*)
 
 module IO: sig
   val readFile: string -> string
@@ -5590,40 +5587,43 @@ module NapkinScript = struct
     let src = IO.readFile filename in
     let p = Parser.make src filename in
     try
-      let () =
-        (* poor mans version of determining interface files
-         * does it end with 'i' ? :D
-         * TODO: rewrite (maybe?) *)
-        let len = String.length filename in
-        if len > 0 && String.get filename (len - 1) = 'i' then (
-          let ast = parseSignature p in
+      (* poor mans version of determining interface files
+       * does it end with 'i' ? :D
+       * TODO: rewrite (maybe?) *)
+      let len = String.length filename in
+      if len > 0 && String.get filename (len - 1) = 'i' then (
+        let ast = parseSignature p in
+        (* Uncomment for release *)
+        match p.diagnostics with
+        | [] ->
+          let ast402 = To_402.copy_signature ast in
+          Ast_io.to_channel stdout filename
+            (Ast_io.Intf ((module OCaml_402), ast402));
+          exit 0
+        | _ ->
+          prerr_string(
+            Diagnostics.makeReport p.diagnostics (Bytes.to_string p.scanner.src)
+          );
+          exit 1
+        (* Pprintast.signature Format.std_formatter ast *)
+      ) else (
+        let ast = parseStructure p in
+        match p.diagnostics with
+        | [] ->
           (* Uncomment for release *)
-          (* let ast402 = To_402.copy_signature ast in *)
-          (* Ast_io.to_channel stdout filename *)
-            (* (Ast_io.Intf ((module OCaml_402), ast402)) *)
-
-          Pprintast.signature Format.std_formatter ast
-        ) else
-          let ast = parseStructure p in
-          (* Uncomment for release *)
-          (* let ast402 = To_402.copy_structure ast in *)
-          (* Ast_io.to_channel stdout filename *)
-            (* (Ast_io.Impl ((module OCaml_402), ast402)) *)
-
+          let ast402 = To_402.copy_structure ast in
+          Ast_io.to_channel stdout filename
+            (Ast_io.Impl ((module OCaml_402), ast402));
+          exit 0
+        | _ ->
+          prerr_string(
+            Diagnostics.makeReport p.diagnostics (Bytes.to_string p.scanner.src)
+          );
+          exit 1
+      )
           (* Printast.implementation Format.std_formatter ast; *)
-          Pprintast.structure Format.std_formatter ast
-      in
-      Format.pp_print_flush Format.std_formatter ();
-      print_newline();
-      match p.diagnostics with
-      | [] ->
-        exit 0
-      | _ ->
-        print_endline (
-          Diagnostics.makeReport p.diagnostics (Bytes.to_string p.scanner.src)
-        );
-        exit 1
-      (* Printast.implementation Format.std_formatter ast; *)
+          (* Pprintast.structure Format.std_formatter ast *)
+       (* Printast.implementation Format.std_formatter ast; *)
       (* Format.pp_print_flush Format.std_formatter (); *)
       (* print_newline(); *)
 
@@ -5632,7 +5632,7 @@ module NapkinScript = struct
       (* Printf.eprintf "Execution time: %fms\n%!" diff; *)
     with
     | _ ->
-     print_endline (
+     prerr_string (
        Diagnostics.makeReport p.diagnostics (Bytes.to_string p.scanner.src)
      );
      exit 1
