@@ -14,4 +14,4 @@ debugi: build
 	./lib/napkinscript.exe file.jsi
 
 release:
-	ocamlopt -O3 -o ./lib/napkinscript.exe -I +compiler-libs ocamlcommon.cmxa Napkinscript.ml
+	ocamlfind ocamlopt -O3 -o ./lib/napkinscript.exe unix.cmxa Napkinscript.ml -package ocaml-migrate-parsetree -linkpkg

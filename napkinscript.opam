@@ -10,7 +10,7 @@ authors: "Iwan <valcke.maxim@gmail.com>"
 license: "MIT"
 homepage: "https://github.com/iwankaramazow/napkinscript"
 bug-reports: "https://github.com/iwankaramazow/napkinscript/issues"
-depends: [ "ocaml" ]
+depends: [ "ocaml", "ocaml-migrate-parsetree" ]
 build: [
   [make "build"]
 ]

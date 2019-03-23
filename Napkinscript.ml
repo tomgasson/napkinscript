@@ -1,3 +1,12 @@
+(* Uncomment for release, to output 4.02 binary ast
+
+open Migrate_parsetree
+
+module To_402 = Convert(OCaml_406)(OCaml_402)
+
+open Ast_406
+*)
+
 module IO: sig
   val readFile: string -> string
 end = struct
@@ -5349,15 +5358,19 @@ module NapkinScript = struct
         let len = String.length filename in
         if len > 0 && String.get filename (len - 1) = 'i' then (
           let ast = parseSignature p in
-          (* output_string stdout Config.ast_impl_magic_number; *)
-          (* output_value stdout filename; *)
-          (* output_value stdout ast *)
+          (* Uncomment for release *)
+          (* let ast402 = To_402.copy_signature ast in *)
+          (* Ast_io.to_channel stdout filename *)
+            (* (Ast_io.Intf ((module OCaml_402), ast402)) *)
+
           Pprintast.signature Format.std_formatter ast
         ) else
           let ast = parseStructure p in
-          (* output_string stdout Config.ast_impl_magic_number; *)
-          (* output_value stdout filename; *)
-          (* output_value stdout ast *)
+          (* Uncomment for release *)
+          (* let ast402 = To_402.copy_structure ast in *)
+          (* Ast_io.to_channel stdout filename *)
+            (* (Ast_io.Impl ((module OCaml_402), ast402)) *)
+
           Pprintast.structure Format.std_formatter ast
       in
       Format.pp_print_flush Format.std_formatter ();
