@@ -2,8 +2,7 @@
 
 exports[`bsObject.js 1`] = `
 "type nonrec 'a foo = < foo: int   ;.. >  Js.t as 'a
-type nonrec 'a foo = < foo: int   >  Js.t as 'a
-"
+type nonrec 'a foo = < foo: int   >  Js.t as 'a"
 `;
 
 exports[`constructorDeclaration.js 1`] = `
@@ -82,8 +81,7 @@ type nonrec t =
   < gradient: int [@attr ] ;hex: string [@attr ]  ;.. >  Js.t -> t 
 type nonrec t =
   | EmptyColor [@attr ]
-  | White: grayscale -> ((t)[@onGadt ]) [@onConstr ]
-"
+  | White: grayscale -> ((t)[@onGadt ]) [@onConstr ]"
 `;
 
 exports[`recordDeclaration.js 1`] = `
@@ -137,15 +135,13 @@ type nonrec t = < age: int [@attr ] ;name: string [@attr ]  ;.. >  Js.t
 type nonrec t = < age: int [@attr ]  >  Js.t
 type nonrec t = < age: int [@attr ]  >  Js.t
 type nonrec t = < age: int [@attr ] ;name: string   >  Js.t
-type nonrec t = < age: int [@attr ] ;name: string [@attr2 ]  >  Js.t
-"
+type nonrec t = < age: int [@attr ] ;name: string [@attr2 ]  >  Js.t"
 `;
 
 exports[`typeConstraint.js 1`] = `
 "type nonrec t = x constraint 'x = int
 type nonrec t = x constraint 'x = string constraint 'y = unit
-type nonrec t = x constraint 'a = ((typExpr)[@attr ])
-"
+type nonrec t = x constraint 'a = ((typExpr)[@attr ])"
 `;
 
 exports[`typeDefinition.js 1`] = `
@@ -160,8 +156,7 @@ type t = string
 and s = int
 type t = string
 and s = int
-and u = float
-"
+and u = float"
 `;
 
 exports[`typeInformation.js 1`] = `
@@ -236,8 +231,7 @@ type nonrec t = private
   | Green  constraint 'a = unit constraint 'b = unit
 type nonrec t = {
   x: int ;
-  y: int }
-"
+  y: int }"
 `;
 
 exports[`typeRepresentation.js 1`] = `
@@ -284,8 +278,7 @@ type nonrec t = {
   y: int }
 type nonrec t = private {
   x: int ;
-  y: int }
-"
+  y: int }"
 `;
 
 exports[`typedef.js 1`] = `
@@ -298,8 +291,7 @@ and 'a s
 type nonrec ('a, 'b) t
 and ('a, 'b) s
 type nonrec 'a t = 'a node
-and 'b s = 'b edge
-"
+and 'b s = 'b edge"
 `;
 
 exports[`typeparams.js 1`] = `
@@ -307,8 +299,7 @@ exports[`typeparams.js 1`] = `
 type nonrec ('a, 'b) t
 type nonrec ('a, 'b, 'c) t
 type nonrec (+'a, -'b, +_, -_) t
-type nonrec _ t
-"
+type nonrec _ t"
 `;
 
 exports[`typext.js 1`] = `
@@ -413,6 +404,5 @@ type t += private
   | Bar[@attr2 ] = Bar2[@@attr ]
 type t += private  
   | Foo[@attr1 ] = Foo2
-  | Bar[@attr2 ] = Bar2[@@attr ]
-"
+  | Bar[@attr2 ] = Bar2[@@attr ]"
 `;

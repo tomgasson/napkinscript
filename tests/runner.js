@@ -4,12 +4,14 @@ let cp = require("child_process");
 
 let parser = path.join(process.cwd(), "./lib/napkinscript.exe");
 
-function parseFile(filename) {
-  let cmd = `${parser} ${filename}\n`;
-  return cp.execSync(cmd).toString();
+function parseFile(filename, recover) {
+  let args = [];
+  if (recover) args.push("-recover");
+  args.push(filename);
+  return cp.spawnSync(parser, args).stdout.toString();
 }
 
-global.runParser = dirname => {
+global.runParser = (dirname, recover = false) => {
   fs.readdirSync(dirname).forEach(base => {
     let filename = path.join(dirname, base);
     if (!fs.lstatSync(filename).isFile() || base === "parse.spec.js") {
@@ -17,7 +19,7 @@ global.runParser = dirname => {
     }
 
     test(base, () => {
-      let parsetree = parseFile(filename);
+      let parsetree = parseFile(filename, recover);
       expect(parsetree).toMatchSnapshot();
     });
   });

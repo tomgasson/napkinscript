@@ -1,1 +1,1 @@
-runParser(__dirname);
+runParser(__dirname, true);

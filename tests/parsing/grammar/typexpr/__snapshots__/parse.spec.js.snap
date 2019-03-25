@@ -30,14 +30,12 @@ let (t : (int as 'r, int as 'g, int as 'b) Color.t as 'rgb) = ()
 let (t : [%t ] as 'extension) = ()
 let (t : [%t.typ ] as 'extension) = ()
 let (t : [%ext.foo \\"raw\\"] as 'extension) = ()
-let (t : ((int as 'x) * (int as 'y)) as 'tupleAlias) = ()
-"
+let (t : ((int as 'x) * (int as 'y)) as 'tupleAlias) = ()"
 `;
 
 exports[`any.js 1`] = `
 "type nonrec t = _
-let (t : _) = x
-"
+let (t : _) = x"
 `;
 
 exports[`bsObject.js 1`] = `
@@ -46,8 +44,7 @@ type nonrec t = < age: int   >  Js.t
 type nonrec t = < age: int  ;name: string   >  Js.t
 type nonrec t = < age: int  ;name: string   >  Js.t
 type nonrec t =
-  < age: int [@attr ] ;name: ((string)[@onTypeString ]) [@attr2 ]  >  Js.t
-"
+  < age: int [@attr ] ;name: ((string)[@onTypeString ]) [@attr2 ]  >  Js.t"
 `;
 
 exports[`es6Arrow.js 1`] = `
@@ -64,8 +61,7 @@ let (f : int -> string -> unit) = xf
 let (t : a:int -> b:int -> int) = xf
 let (t : ?a:int -> ?b:int -> int) = xf
 let (t : int -> int -> int -> int) = xf
-let (t : a:int -> b:int -> c:int -> int) = xf
-"
+let (t : a:int -> b:int -> c:int -> int) = xf"
 `;
 
 exports[`extension.js 1`] = `
@@ -74,16 +70,14 @@ type nonrec t = [%raw.typ ]
 type nonrec t = [%raw.typ \\"existential\\"]
 let (t : [%typ ]) = x
 let (t : [%raw.typ ]) = x
-let (t : [%raw.typ \\"ex\\"]) = x
-"
+let (t : [%raw.typ \\"ex\\"]) = x"
 `;
 
 exports[`tuple.js 1`] = `
 "type nonrec t = (string * int)
 type nonrec t = (int option * string option)
 let (t : (string * int)) = x
-let (t : (int option * string option)) = x
-"
+let (t : (int option * string option)) = x"
 `;
 
 exports[`typeconstr.js 1`] = `
@@ -142,8 +136,7 @@ let (t : < age: int [@attr ]  ;.. >  Js.t list) = x
 let (t : < age: int [@attr ]  ;.. >  Js.t list) = x
 let (t : < age: int  ;name: string   ;.. >  Js.t list) = x
 let (t : < age: int [@attr ] ;name: string [@attr ]  ;.. >  Js.t list) = x
-let (t : string list) = x
-"
+let (t : string list) = x"
 `;
 
 exports[`var.js 1`] = `
@@ -151,6 +144,5 @@ exports[`var.js 1`] = `
 let (t : 'a) = x
 let t : 'a . t = x
 let t : 'a 'b . t = x
-let t : 'a 'b 'c . t = x
-"
+let t : 'a 'b 'c . t = x"
 `;

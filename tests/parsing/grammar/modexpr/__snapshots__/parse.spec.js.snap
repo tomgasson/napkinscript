@@ -12,14 +12,12 @@ module X = (F)(struct  end)
 module X = ((F)(struct  end))(struct  end)
 module X = (F)((A : SetLike))
 module X = ((F)((A : SetLike)))((B : TreeLike))
-module X = ((F)((A : SetLike)))((B : TreeLike))
-"
+module X = ((F)((A : SetLike)))((B : TreeLike))"
 `;
 
 exports[`constrained.js 1`] = `
 "module X : MyMod = A 
-include (X : MyMod)
-"
+include (X : MyMod)"
 `;
 
 exports[`functor.js 1`] = `
@@ -38,8 +36,7 @@ module Make = ((functor (A : X) -> functor (B : Y) ->
 module F() = Map
 module F = ((functor () -> Map)[@functorAttr ])
 include functor () -> Map
-include ((functor () -> Map)[@functorAttr ])
-"
+include ((functor () -> Map)[@functorAttr ])"
 `;
 
 exports[`ident.js 1`] = `
@@ -50,8 +47,7 @@ include Belt.Array
 module A = ((Array)[@attr ])
 module A = ((Belt.Array)[@attr ])
 include ((Array)[@attr ])
-include ((Belt.Array)[@attr ])
-"
+include ((Belt.Array)[@attr ])"
 `;
 
 exports[`parenthesized.js 1`] = `
@@ -64,12 +60,10 @@ module A = (ModApply)(MyMod)
 module A : X = A 
 include ParenthesizedModule
 include ((ParenthesizedModule)[@attr ])
-module A = ((ParenthesizedModule)[@attr2 ][@attr ])
-"
+module A = ((ParenthesizedModule)[@attr2 ][@attr ])"
 `;
 
 exports[`structure.js 1`] = `
 "module X = struct let a = 1 end
-include struct let b = 2 end
-"
+include struct let b = 2 end"
 `;

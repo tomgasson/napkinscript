@@ -1,8 +1,6 @@
 (* Uncomment for release, to output 4.02 binary ast *)
-
-open Migrate_parsetree
-
-module To_402 = Convert(OCaml_406)(OCaml_402)
+(* open Migrate_parsetree
+ * module To_402 = Convert(OCaml_406)(OCaml_402) *)
 
 module IO: sig
   val readFile: string -> string
@@ -953,7 +951,7 @@ end = struct
   let makeReport diagnostics src =
     List.fold_left (fun report diagnostic ->
       report ^ (toString diagnostic src) ^ "\n"
-    ) "" (List.rev diagnostics)
+    ) "\n" (List.rev diagnostics)
 
   let print {category} =
     prerr_endline (stringOfCategory category)
@@ -1507,7 +1505,100 @@ end
 
 
 
+module Parser = struct
+  type t = {
+    mutable scanner: Scanner.t;
+    mutable token: Token.t;
+    mutable startPos: Lexing.position;
+    mutable endPos: Lexing.position;
+    mutable prevEndPos: Lexing.position;
+    mutable breadcrumbs: (Grammar.t * Lexing.position) list;
+    mutable errors: Reporting.parseError list;
+    mutable diagnostics: Diagnostics.t list;
+  }
 
+  let err p error =
+    let d = Diagnostics.make
+      ~filename:p.scanner.filename
+      ~startPos:p.startPos
+      ~len:(p.endPos.pos_cnum - p.startPos.pos_cnum)
+      error
+    in
+    p.diagnostics <- d::p.diagnostics
+
+  let rec next p =
+    let (startPos, endPos, token) = Scanner.scan p.scanner in
+    p.prevEndPos <- p.endPos;
+    p.token <- token;
+    p.startPos <- startPos;
+    p.endPos <- endPos;
+    match p.token with
+    | Comment _ -> next p
+    | _ -> ()
+
+  let make src filename =
+    let scanner = Scanner.make (Bytes.of_string src) filename in
+    let parserState = {
+      scanner;
+      token = Token.Eof;
+      startPos = Lexing.dummy_pos;
+      prevEndPos = Lexing.dummy_pos;
+      endPos = Lexing.dummy_pos;
+      breadcrumbs = [];
+      errors = [];
+      diagnostics = [];
+    } in
+    parserState.scanner.err <- (fun scanner error ->
+      let diagnostic = Diagnostics.make
+        ~filename:scanner.filename
+        ~startPos:(Scanner.position scanner)
+        ~len:(scanner.rdOffset - scanner.offset)
+        error
+      in
+      parserState.diagnostics <- diagnostic::parserState.diagnostics
+    );
+    next parserState;
+    parserState
+
+  let restore p1 p2 =
+    p1.scanner <- p2.scanner;
+    p1.token <- p2.token;
+    p1.startPos <- p2.startPos;
+    p1.prevEndPos <- p2.prevEndPos;
+    p1.endPos <- p2.endPos;
+    p1.breadcrumbs <- p2.breadcrumbs;
+    p1.errors <- p1.errors
+
+  let leaveBreadcrumb p circumstance =
+    let crumb = (circumstance, p.startPos) in
+    p.breadcrumbs <- crumb::p.breadcrumbs
+
+  let eatBreadcrumb p =
+    match p.breadcrumbs with
+    | [] -> ()
+    | _::crumbs -> p.breadcrumbs <- crumbs
+
+  let optional p token =
+    if p.token = token then
+      let () = next p in true
+    else
+      false
+
+  (* TODO: should we bail if there's too much stuff going wrong? *)
+  exception Exit
+
+  let expect ?grammar token p =
+    if p.token = token then
+      next p
+    else
+      let error = Diagnostics.expected ?grammar p.prevEndPos token in
+      err p error
+
+  let lookahead p callback =
+    let scannerCopy = {p.scanner with filename = p.scanner.filename} in
+    let parserStateCopy = {p with scanner = scannerCopy} in
+    callback parserStateCopy
+end
 
 
 module NapkinScript = struct
@@ -1517,100 +1608,6 @@ module NapkinScript = struct
     loc_ghost = false;
   }
 
-  module Parser = struct
-    type t = {
-      mutable scanner: Scanner.t;
-      mutable token: Token.t;
-      mutable startPos: Lexing.position;
-      mutable endPos: Lexing.position;
-      mutable prevEndPos: Lexing.position;
-      mutable breadcrumbs: (Grammar.t * Lexing.position) list;
-      mutable errors: Reporting.parseError list;
-      mutable diagnostics: Diagnostics.t list;
-    }
-
-    let err p error =
-      let d = Diagnostics.make
-        ~filename:p.scanner.filename
-        ~startPos:p.startPos
-        ~len:(p.endPos.pos_cnum - p.startPos.pos_cnum)
-        error
-      in
-      p.diagnostics <- d::p.diagnostics
-
-    let rec next p =
-      let (startPos, endPos, token) = Scanner.scan p.scanner in
-      p.prevEndPos <- p.endPos;
-      p.token <- token;
-      p.startPos <- startPos;
-      p.endPos <- endPos;
-      match p.token with
-      | Comment _ -> next p
-      | _ -> ()
-
-    let make src filename =
-      let scanner = Scanner.make (Bytes.of_string src) filename in
-      let parserState = {
-        scanner;
-        token = Token.Eof;
-        startPos = Lexing.dummy_pos;
-        prevEndPos = Lexing.dummy_pos;
-        endPos = Lexing.dummy_pos;
-        breadcrumbs = [];
-        errors = [];
-        diagnostics = [];
-      } in
-      parserState.scanner.err <- (fun scanner error ->
-        let diagnostic = Diagnostics.make
-          ~filename:scanner.filename
-          ~startPos:(Scanner.position scanner)
-          ~len:(scanner.rdOffset - scanner.offset)
-          error
-        in
-        parserState.diagnostics <- diagnostic::parserState.diagnostics
-      );
-      next parserState;
-      parserState
-
-    let restore p1 p2 =
-      p1.scanner <- p2.scanner;
-      p1.token <- p2.token;
-      p1.startPos <- p2.startPos;
-      p1.prevEndPos <- p2.prevEndPos;
-      p1.endPos <- p2.endPos;
-      p1.breadcrumbs <- p2.breadcrumbs;
-      p1.errors <- p1.errors
-
-    let leaveBreadcrumb p circumstance =
-      let crumb = (circumstance, p.startPos) in
-      p.breadcrumbs <- crumb::p.breadcrumbs
-
-    let eatBreadcrumb p =
-      match p.breadcrumbs with
-      | [] -> ()
-      | _::crumbs -> p.breadcrumbs <- crumbs
-
-    let optional p token =
-      if p.token = token then
-        let () = next p in true
-      else
-        false
-
-    (* TODO: should we bail if there's too much stuff going wrong? *)
-    exception Exit
-
-    let expect ?grammar token p =
-      if p.token = token then
-        next p
-      else
-        let error = Diagnostics.expected ?grammar p.prevEndPos token in
-        err p error
-
-    let lookahead p callback =
-      let scannerCopy = {p.scanner with filename = p.scanner.filename} in
-      let parserStateCopy = {p with scanner = scannerCopy} in
-      callback parserStateCopy
-  end
 
   module Recover = struct
     let defaultStructureItem () =
@@ -4750,7 +4747,7 @@ module NapkinScript = struct
     let loc = mkLoc startPos p.prevEndPos in
     Ast_helper.Te.constructor ~loc ~attrs name kind
 
-  and parseStructure p =
+  and parseStructure p : Parsetree.structure =
     let rec parse p acc = match p.Parser.token with
       | Eof | Rbrace -> acc
       | prevToken ->
@@ -5580,60 +5577,97 @@ module NapkinScript = struct
     let payload = parsePayload cnumEndAttrId p in
     let loc = mkLoc startPos p.prevEndPos in
     (loc, (attrId, payload))
+end
 
-  let () =
-    (* let startTime = Unix.gettimeofday () in *)
-    let filename = Sys.argv.(1) in
+(* command line flags *)
+module Clflags: sig
+  val recover: bool ref
+  val files: string list ref
+
+  val parse: unit -> unit
+end = struct
+  let recover = ref false
+  let setRecover () = recover := true
+
+  let files = ref []
+  let addFilename filename = files := filename::(!files)
+
+  let usage = "Usage: napkinscript <options> <file>\nOptions are:"
+
+  let spec = [("-recover", Arg.Unit (fun () -> recover := true), "Emit partial ast")]
+
+  let parse () = Arg.parse spec addFilename usage
+end
+
+module Driver: sig
+  val processFile: recover: bool -> string -> unit
+end = struct
+  type 'a file_kind =
+    | Structure: Parsetree.structure file_kind
+    | Signature: Parsetree.signature file_kind
+
+  let parse (type a) (kind : a file_kind) p : a =
+    match kind with
+    | Structure -> NapkinScript.parseStructure p
+    | Signature -> NapkinScript.parseSignature p
+
+  let parseFile kind filename =
     let src = IO.readFile filename in
     let p = Parser.make src filename in
-    try
-      (* poor mans version of determining interface files
-       * does it end with 'i' ? :D
-       * TODO: rewrite (maybe?) *)
-      let len = String.length filename in
-      if len > 0 && String.get filename (len - 1) = 'i' then (
-        let ast = parseSignature p in
-        (* Uncomment for release *)
-        match p.diagnostics with
-        | [] ->
-          let ast402 = To_402.copy_signature ast in
-          Ast_io.to_channel stdout filename
-            (Ast_io.Intf ((module OCaml_402), ast402));
-          exit 0
-        | _ ->
-          prerr_string(
-            Diagnostics.makeReport p.diagnostics (Bytes.to_string p.scanner.src)
-          );
-          exit 1
-        (* Pprintast.signature Format.std_formatter ast *)
-      ) else (
-        let ast = parseStructure p in
-        match p.diagnostics with
-        | [] ->
-          (* Uncomment for release *)
-          let ast402 = To_402.copy_structure ast in
-          Ast_io.to_channel stdout filename
-            (Ast_io.Impl ((module OCaml_402), ast402));
-          exit 0
-        | _ ->
-          prerr_string(
-            Diagnostics.makeReport p.diagnostics (Bytes.to_string p.scanner.src)
-          );
-          exit 1
+    let ast = parse kind p in
+    let report = match p.diagnostics with
+    | [] -> None
+    | diagnostics ->
+      Some(
+        Diagnostics.makeReport p.diagnostics (Bytes.to_string p.scanner.src)
       )
-          (* Printast.implementation Format.std_formatter ast; *)
-          (* Pprintast.structure Format.std_formatter ast *)
-       (* Printast.implementation Format.std_formatter ast; *)
-      (* Format.pp_print_flush Format.std_formatter (); *)
-      (* print_newline(); *)
+    in
+    (ast, report)
 
-      (* let endTime = Unix.gettimeofday () in *)
-      (* let diff = (endTime -. startTime) *. 1000. in *)
-      (* Printf.eprintf "Execution time: %fms\n%!" diff; *)
+  let parseImplementation filename =
+    parseFile Structure filename
+
+  let parseInterface filename =
+    parseFile Signature filename
+
+  let process parseFn printFn recover filename =
+    let (ast, report) = parseFn filename in
+    match report with
+    | Some report when recover = true ->
+      printFn Format.std_formatter ast;
+      prerr_string report;
+      exit 0
+    | Some report ->
+      prerr_string report;
+      exit 1
+    | None ->
+      printFn Format.std_formatter ast;
+      exit 0
+
+  type action =
+    | ProcessImplementation
+    | ProcessInterface
+
+  let processFile ~recover filename =
+    try
+      let len = String.length filename in
+      let action =
+        if len > 0 && String.get filename (len - 1) = 'i' then ProcessInterface
+        else ProcessImplementation
+      in
+      match action with
+      | ProcessImplementation ->
+        process parseImplementation Pprintast.structure recover filename
+      | ProcessInterface ->
+        process parseInterface Pprintast.signature recover filename
     with
-    | _ ->
-     prerr_string (
-       Diagnostics.makeReport p.diagnostics (Bytes.to_string p.scanner.src)
-     );
-     exit 1
+    | _ -> exit 1
 end
+
+
+let () =
+  Clflags.parse ();
+  List.iter (fun filename ->
+    Driver.processFile ~recover:!Clflags.recover filename
+  ) !Clflags.files;
+  exit 0
