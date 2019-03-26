@@ -1,6 +1,6 @@
 (* Uncomment for release, to output 4.02 binary ast *)
-(* open Migrate_parsetree *)
-(* module To_402 = Convert(OCaml_406)(OCaml_402) *)
+open Migrate_parsetree
+module To_402 = Convert(OCaml_406)(OCaml_402)
 
 module IO: sig
   val readFile: string -> string
@@ -5739,17 +5739,17 @@ end = struct
       in
       match action with
       | ProcessImplementation ->
-        process parseImplementation (Pprintast.structure Format.std_formatter) recover filename
-        (* process parseImplementation (fun ast -> *)
-          (* let ast402 = To_402.copy_structure ast in *)
-          (* Ast_io.to_channel stdout filename (Ast_io.Impl ((module OCaml_402), ast402)) *)
-        (* ) recover filename *)
+        (* process parseImplementation (Pprintast.structure Format.std_formatter) recover filename *)
+        process parseImplementation (fun ast ->
+          let ast402 = To_402.copy_structure ast in
+          Ast_io.to_channel stdout filename (Ast_io.Impl ((module OCaml_402), ast402))
+        ) recover filename
       | ProcessInterface ->
-        process parseInterface (Pprintast.signature Format.std_formatter) recover filename
-        (* process parseInterface (fun ast -> *)
-          (* let ast402 = To_402.copy_signature ast in *)
-          (* Ast_io.to_channel stdout filename (Ast_io.Intf ((module OCaml_402), ast402)) *)
-        (* ) recover filename *)
+        (* process parseInterface (Pprintast.signature Format.std_formatter) recover filename *)
+        process parseInterface (fun ast ->
+          let ast402 = To_402.copy_signature ast in
+          Ast_io.to_channel stdout filename (Ast_io.Intf ((module OCaml_402), ast402))
+        ) recover filename
     with
     | _ -> exit 1
 end
