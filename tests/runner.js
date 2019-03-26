@@ -8,10 +8,10 @@ function parseFile(filename, recover) {
   let args = [];
   if (recover) args.push("-recover");
   args.push(filename);
-  return cp.spawnSync(parser, args).stdout.toString();
+  return cp.spawnSync(parser, args);
 }
 
-global.runParser = (dirname, recover = false) => {
+global.runParser = (dirname, recover = false, showError = false) => {
   fs.readdirSync(dirname).forEach(base => {
     let filename = path.join(dirname, base);
     if (!fs.lstatSync(filename).isFile() || base === "parse.spec.js") {
@@ -19,8 +19,20 @@ global.runParser = (dirname, recover = false) => {
     }
 
     test(base, () => {
-      let parsetree = parseFile(filename, recover);
-      expect(parsetree).toMatchSnapshot();
+      let res = parseFile(filename, recover);
+      let parsetree = res.stdout.toString();
+      let output = "";
+      if (showError) {
+        output += `=====Parsetree==========================================\n`;
+        output += `${parsetree}\n`;
+        output += `=====Errors=============================================\n`;
+        output += `${res.stderr.toString()}\n`;
+        output += `========================================================`;
+      } else {
+        output = parsetree;
+      }
+
+      expect(output).toMatchSnapshot();
     });
   });
 };

@@ -775,7 +775,10 @@ module Reporting = struct
     | x::xs ->
       let d =
         let open TerminalDoc in
-        let rowNr = highlight ~from:0 ~len:1 (string_of_int startPos.pos_lnum) in
+        let rowNr =
+          let txt = string_of_int startPos.pos_lnum in
+          let len = String.length txt in
+          highlight ~from:0 ~len txt in
         let len = if endCol >= 0 then
           endCol - startCol
         else
@@ -812,7 +815,7 @@ module Diagnostics: sig
   val unclosedString: category
   val unclosedTemplate: category
   val unclosedComment: category
-  val unknownUchar: category
+  val unknownUchar: int -> category
   val message: string -> category
   val unbalanced: Token.t -> category
 
@@ -835,7 +838,7 @@ end = struct
     | UnclosedString
     | UnclosedTemplate
     | UnclosedComment
-    | UnknownUchar
+    | UnknownUchar of int
     | Unbalanced of Token.t
 
   let stringOfCategory = function
@@ -848,7 +851,7 @@ end = struct
     | UnclosedTemplate -> "unclosed template"
     | UnclosedComment -> "unclosed comment"
     | Unbalanced _ -> "unbalanced"
-    | UnknownUchar -> "unknown rune"
+    | UnknownUchar _ -> "unknown rune"
 
   type t = {
     filename: string;
@@ -857,12 +860,13 @@ end = struct
     category: category;
   }
 
+  let computeLineCol {startPos} =
+     (startPos.Lexing.pos_lnum, startPos.pos_cnum - startPos.pos_bol + 1)
+
   let toString t src =
+    let (line, col) = computeLineCol t in
     let locationInfo =
-      Printf.sprintf "Parse error: %s, line: %d, col: %d"
-        t.filename
-        t.startPos.Lexing.pos_lnum
-        (t.startPos.pos_cnum - t.startPos.pos_bol + 1)
+      Printf.sprintf "Parse error: %s, line: %d, col: %d" t.filename line col
     in
     let code =
       let endPos = {t.startPos with pos_cnum = t.startPos.pos_cnum + t.length} in
@@ -898,8 +902,13 @@ end = struct
       "Did you forget to close this template expression with a backtick?"
     | UnclosedComment ->
       "This comment seems to be missing a closing `*/`"
-    | UnknownUchar ->
-      "Hmm, I have no idea what this character means…"
+    | UnknownUchar uchar ->
+      begin match uchar with
+      | 94 (* ^ *) ->
+        "Hmm, not sure what I should do here with this character.\nIf you're trying to deref an expression, use `&foo` instead."
+      | _ ->
+        "Hmm, I have no idea what this character means…"
+      end
     | Unbalanced t ->
       "Closing \"" ^ (Token.toString t) ^ "\" seems to be missing."
     | Expected (context, _, t) ->
@@ -967,7 +976,7 @@ end = struct
   let unclosedString = UnclosedString
   let unclosedComment = UnclosedComment
   let unclosedTemplate = UnclosedTemplate
-  let unknownUchar = UnknownUchar
+  let unknownUchar code = UnknownUchar code
   let message txt = Message txt
   let unbalanced token = Unbalanced token
 end
@@ -985,7 +994,7 @@ module Scanner = struct
   type t = {
     filename: string;
     src: bytes;
-    mutable err: t -> Diagnostics.category -> unit;
+    mutable err: startPos: Lexing.position -> len: int -> Diagnostics.category -> unit;
     mutable ch: int; (* current character *)
     mutable offset: int; (* character offset *)
     mutable rdOffset: int; (* reading offset (position after current character) *)
@@ -1088,7 +1097,7 @@ module Scanner = struct
     let scanner = {
       filename;
       src = b;
-      err = (fun _ _ -> ());
+      err = (fun ~startPos:_ ~len:_ _ -> ());
       ch = CharacterCodes.space;
       offset = 0;
       rdOffset = 0;
@@ -1149,7 +1158,9 @@ module Scanner = struct
 
     let rec scan () =
       if scanner.ch == CharacterCodes.eol then
-        scanner.err scanner Diagnostics.unclosedString
+        let startPos = position scanner in
+        let len = scanner.rdOffset - scanner.offset in
+        scanner.err ~startPos ~len Diagnostics.unclosedString
       else if scanner.ch == CharacterCodes.doubleQuote then (
         next scanner
       ) else if scanner.ch == CharacterCodes.backslash then (
@@ -1165,7 +1176,9 @@ module Scanner = struct
         next scanner;
         scan ()
       ) else if CharacterCodes.isLineBreak scanner.ch then (
-        scanner.err scanner Diagnostics.unclosedString;
+        let startPos = position scanner in
+        let len = scanner.rdOffset - scanner.offset in
+        scanner.err ~startPos ~len Diagnostics.unclosedString;
         next scanner
       ) else (
         Buffer.add_char buffer (Char.chr scanner.ch);
@@ -1196,7 +1209,9 @@ module Scanner = struct
         next scanner;
         next scanner
       ) else if scanner.ch == CharacterCodes.eol then (
-        scanner.err scanner Diagnostics.unclosedComment
+        let startPos = position scanner in
+        let len = scanner.rdOffset - scanner.offset in
+        scanner.err ~startPos ~len Diagnostics.unclosedComment
       ) else (
         next scanner;
         scan ()
@@ -1212,7 +1227,9 @@ module Scanner = struct
 
     let rec scan () =
       if scanner.ch == CharacterCodes.eol then (
-        scanner.err scanner Diagnostics.unclosedTemplate;
+        let startPos = position scanner in
+        let len = scanner.rdOffset - scanner.offset in
+        scanner.err ~startPos ~len Diagnostics.unclosedTemplate;
         popMode scanner Template;
         Token.TemplateTail(
           Bytes.sub_string scanner.src startOff (scanner.offset - 2 - startOff)
@@ -1459,7 +1476,7 @@ module Scanner = struct
       else (
         (* if we arrive here, we're dealing with an unkown character,
          * report the error and continue scanning… *)
-        scanner.err scanner Diagnostics.unknownUchar;
+        scanner.err ~startPos ~len:1 (Diagnostics.unknownUchar ch);
         let (_, _, token) = scan scanner in
         token
       )
@@ -1548,11 +1565,11 @@ module Parser = struct
       errors = [];
       diagnostics = [];
     } in
-    parserState.scanner.err <- (fun scanner error ->
+    parserState.scanner.err <- (fun ~startPos ~len error ->
       let diagnostic = Diagnostics.make
-        ~filename:scanner.filename
-        ~startPos:(Scanner.position scanner)
-        ~len:(scanner.rdOffset - scanner.offset)
+        ~filename
+        ~startPos
+        ~len
         error
       in
       parserState.diagnostics <- diagnostic::parserState.diagnostics
