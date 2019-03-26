@@ -1,6 +1,6 @@
 (* Uncomment for release, to output 4.02 binary ast *)
-(* open Migrate_parsetree
- * module To_402 = Convert(OCaml_406)(OCaml_402) *)
+(* open Migrate_parsetree *)
+(* module To_402 = Convert(OCaml_406)(OCaml_402) *)
 
 module IO: sig
   val readFile: string -> string
@@ -497,12 +497,12 @@ module Grammar = struct
   let isExprStart = function
     | Token.True | False
     | Int _ | String _ | Float _ | Backtick
-    | Uident _ | Lident _
+    | Uident _ | Lident _ | Band
     | Lparen
     | List | Lbracket | Lbrace | Forwardslash
     | LessThan
     | Minus | MinusDot | Plus | PlusDot
-    | Percent -> true
+    | Percent | At -> true
     | _ -> false
 
   let isPatternStart = function
@@ -1806,6 +1806,10 @@ module NapkinScript = struct
     let stringifiedToken =
       if token = Token.MinusGreater then "|."
       else if token = Token.PlusPlus then "^"
+      else if token = Token.BangEqual then "<>"
+      else if token = Token.BangEqualEqual then "!="
+      else if token = Token.EqualEqual then "="
+      else if token = Token.EqualEqualEqual then "=="
       else Token.toString token
     in
     let operator = Location.mkloc
@@ -2730,9 +2734,9 @@ module NapkinScript = struct
           let loc = mkLoc startPos endPos in
           loop p (Ast_helper.Exp.field ~loc expr lident)
         end
-      | Lbracket when noCall = false ->
+      | Lbracket when noCall = false && p.prevEndPos.pos_lnum == p.startPos.pos_lnum ->
         parseBracketAccess p expr startPos
-      | Lparen when noCall = false ->
+      | Lparen when noCall = false && p.prevEndPos.pos_lnum == p.startPos.pos_lnum ->
         loop p (parseCallExpr p expr)
       | _ -> expr
     in
@@ -5712,14 +5716,14 @@ end = struct
     let (ast, report) = parseFn filename in
     match report with
     | Some report when recover = true ->
-      printFn Format.std_formatter ast;
+      printFn ast;
       prerr_string report;
       exit 0
     | Some report ->
       prerr_string report;
       exit 1
     | None ->
-      printFn Format.std_formatter ast;
+      printFn ast;
       exit 0
 
   type action =
@@ -5735,9 +5739,17 @@ end = struct
       in
       match action with
       | ProcessImplementation ->
-        process parseImplementation Pprintast.structure recover filename
+        process parseImplementation (Pprintast.structure Format.std_formatter) recover filename
+        (* process parseImplementation (fun ast -> *)
+          (* let ast402 = To_402.copy_structure ast in *)
+          (* Ast_io.to_channel stdout filename (Ast_io.Impl ((module OCaml_402), ast402)) *)
+        (* ) recover filename *)
       | ProcessInterface ->
-        process parseInterface Pprintast.signature recover filename
+        process parseInterface (Pprintast.signature Format.std_formatter) recover filename
+        (* process parseInterface (fun ast -> *)
+          (* let ast402 = To_402.copy_signature ast in *)
+          (* Ast_io.to_channel stdout filename (Ast_io.Intf ((module OCaml_402), ast402)) *)
+        (* ) recover filename *)
     with
     | _ -> exit 1
 end

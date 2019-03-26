@@ -77,7 +77,7 @@ let res =
 let res =
   let a = \\"a is always a string\\" in
   print_string a; (let b = 30 in print_int b)
-let nestedLet = let _ = 1 () in ()
+let nestedLet = let _ = 1 in ()
 let nestedLet = let _ = 1 in 2"
 `;
 
@@ -198,8 +198,17 @@ let x = __ident__"
 
 exports[`if.js 1`] = `
 ";;if foo then true else false
-;;if foo == 2 then let bar = 1 in let foo = 2 in bar + foo
+;;if foo = 2 then let bar = 1 in let foo = 2 in bar + foo
 let ifThenElse = if foo then lala else doStuff x y z"
+`;
+
+exports[`infix.js 1`] = `
+";;a |. (f b)
+;;\\"string1\\" ^ \\"string2\\"
+;;a <> b
+;;a != b
+;;a = b
+;;a == b"
 `;
 
 exports[`jsx.js 1`] = `
@@ -309,7 +318,7 @@ let y =
                                   let pathFromState =
                                     Routes.stateToPath
                                       latestComponentBag.state in
-                                  if currentActualPath == pathFromState
+                                  if currentActualPath = pathFromState
                                   then None
                                   else
                                     dispatchEventless
@@ -356,7 +365,7 @@ let icon =
   [@JSX ])
 let _ =
   ((MessengerSharedPhotosAlbumViewPhotoReact.createElement
-      ?ref:(if (foo ## bar) === baz
+      ?ref:(if (foo ## bar) == baz
             then Some (foooooooooooooooooooooooo setRefChild)
             else None) ~key:(node ## legacy_attachment_id) ~children:[] ())
   [@JSX ])
