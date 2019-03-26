@@ -687,6 +687,19 @@ let x = !box
 let sum = (- a) - (- b)"
 `;
 
+exports[`uncurried.js 1`] = `
+"let f = ((fun a -> fun b -> a + b)[@bs ])
+let f = ((fun a -> ((fun b -> a + b)[@bs ]))[@bs ])
+let f = ((fun a -> fun b -> ((fun c -> fun d -> ((a + b) + c) + d)[@bs ]))
+  [@bs ])
+let f =
+  ((fun a -> ((fun b -> ((fun c -> ((fun d -> ())[@attr4 ]))[@bs ][@attr3 ]))
+      [@attr2 ]))
+  [@bs ][@attr ])
+;;((add 1 2)[@bs ])
+;;((((((add 2 3 4)[@bs ]) 5 6 7)[@bs ]) 8 9 10)[@bs ])"
+`;
+
 exports[`while.js 1`] = `
 ";;while not eofReached do
     let a = 1 in let b = 2 in Lexbuf.next (); (a + b) |. Js.log done

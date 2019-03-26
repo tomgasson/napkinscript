@@ -515,8 +515,8 @@ module Grammar = struct
     | _ -> false
 
   let isParameterStart = function
+    | Token.Tilde | Dot -> true
     | token when isPatternStart token -> true
-    | Token.Tilde -> true
     | _ -> false
 
   (* TODO: overparse Uident ? *)
@@ -550,8 +550,8 @@ module Grammar = struct
     | _ -> false
 
   let isTypeParameterStart = function
+    | Token.Tilde | Dot -> true
     | token when isTypExprStart token -> true
-    | Token.Tilde -> true
     | _ -> false
 
   let isTypeParamStart = function
@@ -581,8 +581,8 @@ module Grammar = struct
     | _ -> false
 
   let isArgumentStart = function
+    | Token.Tilde | Dot -> true
     | t when isExprStart t -> true
-    | Token.Tilde -> true
     | _ -> false
 
   let isListElement grammar token =
@@ -1676,6 +1676,7 @@ module NapkinScript = struct
   end
 
   let jsxAttr = (Location.mknoloc "JSX", Parsetree.PStr [])
+  let uncurryAttr = (Location.mknoloc "bs", Parsetree.PStr [])
 
   type typDefOrExt =
     | TypeDef of (Asttypes.rec_flag * Parsetree.type_declaration list)
@@ -2428,13 +2429,18 @@ module NapkinScript = struct
     in
     Parser.eatBreadcrumb p;
     let endPos = p.prevEndPos in
-    let arrowExpr = List.fold_right (fun (attrs, lbl, defaultExpr, pat, startPos) expr ->
-      Ast_helper.Exp.fun_ ~loc:(mkLoc startPos endPos) ~attrs lbl defaultExpr pat expr
-    ) parameters body
+    let arrowExpr =
+      List.fold_right (fun (uncurried, attrs, lbl, defaultExpr, pat, startPos) expr ->
+        let attrs = if uncurried then uncurryAttr::attrs else attrs in
+        Ast_helper.Exp.fun_ ~loc:(mkLoc startPos endPos) ~attrs lbl defaultExpr pat expr
+      ) parameters body
     in
     {arrowExpr with pexp_loc = {arrowExpr.pexp_loc with loc_start = startPos}}
 
 	(*
+   * uncurried_parameter ::=
+   *   | . parameter
+   *
 	 * parameter ::=
 	 *   | pattern
    *   | pattern : type
@@ -2447,7 +2453,7 @@ module NapkinScript = struct
 	 *   | ~ labelName = ?
 	 *   | ~ labelName as pattern = ?
 	 *   | ~ labelName as pattern : type = ?
-	 *
+   *
 	 * labelName ::= lident
    *)
   and parseParameter p =
@@ -2455,6 +2461,7 @@ module NapkinScript = struct
     (* TODO: this is a shift reduce conflict, we reduce here :)
      * let f = ( @attr x ) => x + 1; -> on pattern x or on Pexp_fun? *)
     let attrs = parseAttributes p in
+    let uncurried = Parser.optional p Token.Dot in
     let (lbl, pat) = match p.Parser.token with
     | Tilde ->
       Parser.next p;
@@ -2509,13 +2516,13 @@ module NapkinScript = struct
       begin match p.Parser.token with
       | Question ->
         Parser.next p;
-        (attrs, lbl, None, pat, startPos)
+        (uncurried, attrs, lbl, None, pat, startPos)
       | _ ->
         let expr = parseExpr p in
-        (attrs, lbl, Some expr, pat, startPos)
+        (uncurried, attrs, lbl, Some expr, pat, startPos)
       end
     | _ ->
-      (attrs, lbl, None, pat, startPos)
+      (uncurried, attrs, lbl, None, pat, startPos)
 
   and parseParameterList p =
     let parameters =
@@ -2541,6 +2548,7 @@ module NapkinScript = struct
       Parser.next p;
       let loc = mkLoc startPos p.Parser.prevEndPos in
       [(
+        false,
         [],
         Asttypes.Nolabel,
         None,
@@ -2550,7 +2558,7 @@ module NapkinScript = struct
     | Underscore ->
       Parser.next p;
       let loc = mkLoc startPos p.Parser.prevEndPos in
-      [[], Asttypes.Nolabel, None, Ast_helper.Pat.any ~loc (), startPos]
+      [false, [], Asttypes.Nolabel, None, Ast_helper.Pat.any ~loc (), startPos]
     | Lparen ->
       Parser.next p;
       begin match p.Parser.token with
@@ -2560,7 +2568,7 @@ module NapkinScript = struct
         let unitPattern = Ast_helper.Pat.construct
           ~loc (Location.mkloc (Longident.Lident "()") loc) None
         in
-        [[], Asttypes.Nolabel, None, unitPattern, startPos]
+        [false, [], Asttypes.Nolabel, None, unitPattern, startPos]
       | _ -> parseParameterList p
       end
     | token ->
@@ -3198,7 +3206,7 @@ module NapkinScript = struct
             let ident = Location.mkloc (Longident.last pathIdent.txt) loc in
             let a = parseEs6ArrowExpression
               ~parameters:[
-                ([], Asttypes.Nolabel, None, Ast_helper.Pat.var ident, startPos)
+                (false, [], Asttypes.Nolabel, None, Ast_helper.Pat.var ident, startPos)
                 ]
                p
             in
@@ -3588,8 +3596,12 @@ module NapkinScript = struct
    *   | ~ label-name =   expr : type
    *   | ~ label-name = ? expr
    *   | ~ label-name = ? expr : type
+   *
+   *  uncurried_argument ::=
+   *   | . argument
    *)
   and parseArgument p =
+    let uncurried = Parser.optional p Dot in
     match p.Parser.token with
     | Tilde ->
       Parser.next p;
@@ -3606,7 +3618,7 @@ module NapkinScript = struct
         begin match p.Parser.token with
         | Question ->
           Parser.next p;
-          (Asttypes.Optional ident, identExpr)
+          (uncurried, Asttypes.Optional ident, identExpr)
         | Equal ->
           Parser.next p;
           let label = match p.Parser.token with
@@ -3616,15 +3628,15 @@ module NapkinScript = struct
           | _ ->
             Labelled ident
           in
-          (label, parseConstrainedExpr p)
+          (uncurried, label, parseConstrainedExpr p)
         | _ ->
-          (Labelled ident, identExpr)
+          (uncurried, Labelled ident, identExpr)
         end
       | t ->
         Parser.err p (Diagnostics.lident t);
-        (Nolabel, Recover.defaultExpr ())
+        (uncurried, Nolabel, Recover.defaultExpr ())
       end
-    | _ -> (Nolabel, parseConstrainedExpr p)
+    | _ -> (uncurried, Nolabel, parseConstrainedExpr p)
 
   and parseCallExpr p funExpr =
     Parser.expect Lparen p;
@@ -3641,7 +3653,7 @@ module NapkinScript = struct
     | [] ->
       let loc = mkLoc startPos p.prevEndPos in
      (* No args -> unit sugar: `foo()` *)
-      [
+      [ false,
         Asttypes.Nolabel,
         Ast_helper.Exp.construct
           ~loc (Location.mkloc (Longident.Lident "()") loc) None
@@ -3649,7 +3661,31 @@ module NapkinScript = struct
     | args -> args
     in
     let loc = {funExpr.pexp_loc with loc_end = p.prevEndPos } in
-    let apply = Ast_helper.Exp.apply ~loc funExpr args in
+
+    let rec group grp acc = function
+    | (uncurried, lbl, expr)::xs ->
+        let (_u, grp) = grp in
+        if uncurried == true then
+          group (true, [lbl, expr]) ((_u, (List.rev grp))::acc) xs
+        else
+          group (_u, ((lbl, expr)::grp)) acc xs
+    | [] ->
+        let (_u, grp) = grp in
+        List.rev ((_u, (List.rev grp))::acc)
+    in
+    let args = match args with
+    | (u, lbl, expr)::args -> group (u, [lbl, expr]) [] args
+    | [] -> []
+    in
+    let apply = List.fold_left (fun callBody group ->
+      let (uncurried, args) = group in
+      if uncurried then
+        let attrs = [uncurryAttr] in
+        Ast_helper.Exp.apply ~loc ~attrs callBody args
+      else
+        Ast_helper.Exp.apply ~loc callBody args
+    ) funExpr args
+    in
     Parser.eatBreadcrumb p;
     apply
 
@@ -3923,10 +3959,14 @@ module NapkinScript = struct
     *  | type_expr
     *  | ~ident: type_expr
     *  | ~ident: type_expr=?
+    *
+    * uncurried_type_parameter ::=
+    *  | . type_parameter
     *)
   and parseTypeParameter p =
     let startPos = p.Parser.startPos in
     let attrs = parseAttributes p in
+    let uncurried = Parser.optional p Dot in
     match p.Parser.token with
     | Tilde ->
       Parser.next p;
@@ -3942,12 +3982,12 @@ module NapkinScript = struct
       | Equal ->
         Parser.next p;
         Parser.expect Question p;
-        (attrs, Asttypes.Optional name, typ, startPos)
+        (uncurried, attrs, Asttypes.Optional name, typ, startPos)
       | _ ->
-        (attrs, Asttypes.Labelled name, typ, startPos)
+        (uncurried, attrs, Asttypes.Labelled name, typ, startPos)
       end
     | _ ->
-      (attrs, Asttypes.Nolabel, parseTypExpr p, startPos)
+      (uncurried, attrs, Asttypes.Nolabel, parseTypExpr p, startPos)
 
   (* (int, ~x:string, float) *)
   and parseTypeParameters p =
@@ -3963,7 +4003,8 @@ module NapkinScript = struct
     Parser.expect EqualGreater p;
     let returnType = parseTypExpr ~alias:false p in
     let endPos = p.prevEndPos in
-    List.fold_right (fun (attrs, argLbl, typ, startPos) t ->
+    List.fold_right (fun (uncurried, attrs, argLbl, typ, startPos) t ->
+      let attrs = if uncurried then uncurryAttr::attrs else attrs in
       Ast_helper.Typ.arrow ~loc:(mkLoc startPos endPos) ~attrs argLbl typ t
     ) parameters returnType
 

@@ -139,6 +139,16 @@ let (t : < age: int [@attr ] ;name: string [@attr ]  ;.. >  Js.t list) = x
 let (t : string list) = x"
 `;
 
+exports[`uncurried.js 1`] = `
+"type nonrec t = {
+  mutable field: ((float -> int -> bool -> unit)[@bs ]) }
+type nonrec t = ((float -> int -> bool -> unit)[@bs ])
+external setTimeout : ((unit -> unit)[@bs ]) -> int -> timerId = \\"setTimeout\\"
+[@@bs.val ]
+external setTimeout :
+  (((unit -> unit) -> int -> timerId)[@bs ]) = \\"setTimeout\\""
+`;
+
 exports[`var.js 1`] = `
 "type nonrec t = 'a
 let (t : 'a) = x
