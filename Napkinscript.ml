@@ -4526,6 +4526,24 @@ module NapkinScript = struct
         (None, Asttypes.Public, Parsetree.Ptype_record fields)
       end
 
+  and parsePrivateEqOrRepr p =
+    Parser.expect Private p;
+    match p.Parser.token with
+    | Lbrace ->
+      let (manifest, _ ,kind) = parseRecordOrBsObjectDecl p in
+      (manifest, Asttypes.Private, kind)
+    | Uident _ ->
+      let (manifest, _, kind) = parseTypeEquationOrConstrDecl p in
+      (manifest, Asttypes.Private, kind)
+    | Bar | DotDot ->
+      let (_, kind) = parseTypeRepresentation p in
+      (None, Asttypes.Private, kind)
+    | t when Grammar.isTypExprStart t ->
+      (Some (parseTypExpr p), Asttypes.Private, Parsetree.Ptype_abstract)
+    | _ ->
+      let (_, kind) = parseTypeRepresentation p in
+      (None, Asttypes.Private, kind)
+
   and parseTypeEquationAndRepresentation p =
     match p.Parser.token with
     | Equal ->
@@ -4535,7 +4553,9 @@ module NapkinScript = struct
         parseTypeEquationOrConstrDecl p
       | Lbrace ->
         parseRecordOrBsObjectDecl p
-      | Bar | Private | DotDot ->
+      | Private ->
+        parsePrivateEqOrRepr p
+      | Bar | DotDot ->
         let (priv, kind) = parseTypeRepresentation p in
         (None, priv, kind)
       | _ ->

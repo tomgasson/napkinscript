@@ -84,6 +84,8 @@ type nonrec t =
   | White: grayscale -> ((t)[@onGadt ]) [@onConstr ]"
 `;
 
+exports[`privateTypeEquation.js 1`] = `"type nonrec t = private string"`;
+
 exports[`recordDeclaration.js 1`] = `
 "type nonrec t = {
   x: int }
