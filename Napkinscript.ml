@@ -1157,7 +1157,7 @@ module Scanner = struct
     *
     *  To keep compatibility with ocaml's locations, we need to
     *  track the previous position of the scanner. End position
-    *  is not inclusive in Ocaml!. e.g. token `12` spans [8, 10[
+    *  is *not inclusive* in Ocaml!. e.g. token `12` spans [8, 10[
     *  If we're scanning the token `12`, the scanner will be
     *  at offset 10 (eof) when the token is scanned. Accurate
     *  reporting of the end requires the previous position.
