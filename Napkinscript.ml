@@ -1001,10 +1001,11 @@ module Scanner = struct
     mutable lineOffset: int; (* current line offset *)
     mutable lnum: int; (* current line number *)
     mutable mode: mode list;
+    mutable prevPos: Lexing.position;
   }
 
-	let setDiamondMode scanner =
-		scanner.mode <- Diamond::scanner.mode
+  let setDiamondMode scanner =
+    scanner.mode <- Diamond::scanner.mode
 
   let setTemplateMode scanner =
     scanner.mode <- Template::scanner.mode
@@ -1050,21 +1051,6 @@ module Scanner = struct
     pos_cnum = scanner.offset;
   }
 
-  (* TODO: refactor, won't work if char width > 1 char *)
-  let computeEndPosition scanner = Lexing.{
-    pos_fname = scanner.filename;
-    (* line number *)
-    pos_lnum =
-      if scanner.offset < scanner.lineOffset then scanner.lnum - 1 else scanner.lnum;
-    (* offset of the beginning of the line (number
-       of characters between the beginning of the scanner and the beginning
-       of the line) *)
-    pos_bol = scanner.lineOffset; (* Unsound *)
-    (* [pos_cnum] is the offset of the position (number of
-       characters between the beginning of the scanner and the position). *)
-    pos_cnum = scanner.offset;
-  }
-
   let printPos p =
     print_endline ("cnum: " ^ (string_of_int p.Lexing.pos_cnum));
     print_endline ("lnum: " ^ (string_of_int p.Lexing.pos_lnum));
@@ -1073,6 +1059,30 @@ module Scanner = struct
     print_endline ("-------------------")
 
   let next scanner =
+   (* |l|e|t| |x| |=| |1|2|eof
+    * ------------------------
+    *  0 1 2 3 4 5 6 7 8 9 10
+    *
+    *  To keep compatibility with ocaml's locations, we need to
+    *  track the previous position of the scanner.
+    *  If we're scanning the token `12`, the scanner will be
+    *  at offset 10 (eof) when the token is scanned. Accurate
+    *  reporting of the end requires the previous position.
+    *  I.e. the real ending (according ocaml's view of the world)
+    *  is at offset 9, not offset 10. It gets a bit trickier with
+    *  tokens spanning multiple lines (strings, comments etc.): a naive
+    *  offset - 1 wouldn't work, what is the lineOffset of the previous
+    *  position? By keeping track of the previous position, we can
+    *  just take that to report accurate end positions.
+    *  We might want to break compat with Ocaml standards in the future.
+    *  Storing the extra field is probably not so great for performance.
+    *  Should be measured ofcourse, but it is something to keep in mind.
+    *)
+    scanner.prevPos <- { scanner.prevPos with
+      pos_lnum = scanner.lnum;
+      pos_bol = scanner.lineOffset;
+      pos_cnum = scanner.offset;
+    };
     if scanner.rdOffset < (Bytes.length scanner.src) then (
       scanner.offset <- scanner.rdOffset;
       let ch = Bytes.get scanner.src scanner.rdOffset in
@@ -1104,6 +1114,12 @@ module Scanner = struct
       lineOffset = 0;
       lnum = 1;
       mode = [];
+      prevPos = Lexing.{
+        pos_fname = filename;
+        pos_lnum = 0;
+        pos_bol = 0;
+        pos_cnum = 0;
+      };
     } in
     next scanner;
     scanner
@@ -1482,7 +1498,7 @@ module Scanner = struct
       )
     end
     in
-    let endPos = computeEndPosition scanner in
+    let endPos = scanner.prevPos in
     (startPos, endPos, token)
 
   and scanForwardSlashOrTupleEnding scanner =
@@ -5576,9 +5592,9 @@ module NapkinScript = struct
    * Also what about type-expressions and specifications?
    * @attr(:myType) ???
    *)
-  and parsePayload cnumEndAttrId p =
+  and parsePayload p =
     let structure = match p.Parser.token with
-    | Lparen when p.startPos.pos_cnum = cnumEndAttrId + 1 ->
+    | Lparen when p.startPos.pos_cnum = p.prevEndPos.pos_cnum + 1 ->
       Parser.next p;
       let item = parseStructureItem p in
       Parser.expect Rparen p;
@@ -5591,8 +5607,7 @@ module NapkinScript = struct
   and parseAttribute p =
     Parser.expect At p;
     let attrId = parseAttributeId p in
-    let cnumEndAttrId = p.Parser.prevEndPos.pos_cnum - 1 in
-    let payload = parsePayload cnumEndAttrId p in
+    let payload = parsePayload p in
     (attrId, payload)
 
   and parseAttributes p =
@@ -5615,8 +5630,7 @@ module NapkinScript = struct
     let startPos = p.Parser.startPos in
     Parser.expect AtAt p;
     let attrId = parseAttributeId p in
-    let cnumEndAttrId = p.Parser.prevEndPos.pos_cnum - 1 in
-    let payload = parsePayload cnumEndAttrId p in
+    let payload = parsePayload p in
     let attribute = (attrId, payload) in
     let loc = mkLoc startPos p.prevEndPos in
     (loc, attribute)
@@ -5661,8 +5675,7 @@ module NapkinScript = struct
     else
       Parser.expect Percent p;
     let attrId = parseAttributeId p in
-    let cnumEndAttrId = p.Parser.prevEndPos.pos_cnum - 1 in
-    let payload = parsePayload cnumEndAttrId p in
+    let payload = parsePayload p in
     let loc = mkLoc startPos p.prevEndPos in
     (loc, (attrId, payload))
 end
