@@ -1,6 +1,6 @@
 (* Uncomment for release, to output 4.02 binary ast *)
-(* open Migrate_parsetree *)
-(* module To_402 = Convert(OCaml_406)(OCaml_402) *)
+open Migrate_parsetree
+module To_402 = Convert(OCaml_406)(OCaml_402)
 
 module IO: sig
   val readFile: string -> string
@@ -652,6 +652,7 @@ module Grammar = struct
         token = Token.Rparen || token = Forwardslash || token = Rbracket
     | TypExprList ->
         token = Rparen || token = Forwardslash || token = GreaterThan
+        || token = Equal
     | ModExprList ->
         token = Rparen
     | PatternList | PatternOcamlList | PatternRecord ->
@@ -1116,6 +1117,32 @@ module Scanner = struct
     pos_cnum = scanner.offset;
   }
 
+  let position scanner = Lexing.{
+    pos_fname = scanner.filename;
+    (* line number *)
+    pos_lnum = scanner.lnum;
+    (* offset of the beginning of the line (number
+       of characters between the beginning of the scanner and the beginning
+       of the line) *)
+    pos_bol = scanner.lineOffset;
+    (* [pos_cnum] is the offset of the position (number of
+       characters between the beginning of the scanner and the position). *)
+    pos_cnum = scanner.offset;
+  }
+
+  let computeEndPosition scanner = Lexing.{
+    pos_fname = scanner.filename;
+    (* line number *)
+    pos_lnum = if scanner.ch = 10 then scanner.lnum - 1 else scanner.lnum;
+    (* offset of the beginning of the line (number
+       of characters between the beginning of the scanner and the beginning
+       of the line) *)
+    pos_bol = if scanner.ch = 10 then scanner.prevPos.pos_bol else scanner.lineOffset;
+    (* [pos_cnum] is the offset of the position (number of
+       characters between the beginning of the scanner and the position). *)
+    pos_cnum = scanner.offset;
+  }
+
   let printPos p =
     print_endline ("cnum: " ^ (string_of_int p.Lexing.pos_cnum));
     print_endline ("lnum: " ^ (string_of_int p.Lexing.pos_lnum));
@@ -1129,19 +1156,19 @@ module Scanner = struct
     *  0 1 2 3 4 5 6 7 8 9 10
     *
     *  To keep compatibility with ocaml's locations, we need to
-    *  track the previous position of the scanner.
+    *  track the previous position of the scanner. End position
+    *  is not inclusive in Ocaml!. e.g. token `12` spans [8, 10[
     *  If we're scanning the token `12`, the scanner will be
     *  at offset 10 (eof) when the token is scanned. Accurate
     *  reporting of the end requires the previous position.
-    *  I.e. the real ending (according ocaml's view of the world)
-    *  is at offset 9, not offset 10. It gets a bit trickier with
-    *  tokens spanning multiple lines (strings, comments etc.): a naive
-    *  offset - 1 wouldn't work, what is the lineOffset of the previous
-    *  position? By keeping track of the previous position, we can
+    *  Our current scanner logic will arrive at eof and already mark
+    *  that position as "consumed". I.e. if it's a `\n`, lineOffset etc.
+    *  will already the next line!
+    *  By keeping track of the previous position, we can
     *  just take that to report accurate end positions.
     *  We might want to break compat with Ocaml standards in the future.
     *  Storing the extra field is probably not so great for performance.
-    *  Should be measured ofcourse, but it is something to keep in mind.
+    *  I don't feel good about the current solution, TODO: refactor
     *)
     scanner.prevPos <- { scanner.prevPos with
       pos_lnum = scanner.lnum;
@@ -1153,7 +1180,10 @@ module Scanner = struct
       let ch = Bytes.get scanner.src scanner.rdOffset in
       if ch = '\n' then begin
         scanner.lineOffset <- scanner.offset + 1;
-        scanner.lnum <- scanner.lnum + 1
+        scanner.lnum <- scanner.lnum + 1;
+        scanner.prevPos <- { scanner.prevPos with
+          pos_cnum = scanner.prevPos.pos_cnum + 1
+        }
       end;
       scanner.rdOffset <- scanner.rdOffset + 1;
       scanner.ch <- int_of_char ch
@@ -1562,7 +1592,7 @@ module Scanner = struct
         token
       )
     end in
-    let endPos = scanner.prevPos in
+    let endPos = computeEndPosition scanner in
     (startPos, endPos, token)
 
   and scanForwardSlashOrTupleEnding scanner =
@@ -5753,7 +5783,7 @@ Solution: you need to pull out each field you want explicitly."
    *)
   and parsePayload p =
     let structure = match p.Parser.token with
-    | Lparen when p.startPos.pos_cnum = p.prevEndPos.pos_cnum + 1 ->
+    | Lparen when p.startPos.pos_cnum = p.prevEndPos.pos_cnum  ->
       Parser.next p;
       let item = parseStructureItem p in
       Parser.expect Rparen p;
@@ -5917,18 +5947,18 @@ end = struct
       in
       match action with
       | ProcessImplementation ->
-        process parseImplementation (Pprintast.structure Format.std_formatter) recover filename
+        (* process parseImplementation (Pprintast.structure Format.std_formatter) recover filename *)
         (* process parseImplementation (Printast.implementation Format.std_formatter) recover filename *)
-        (* process parseImplementation (fun ast -> *)
-          (* let ast402 = To_402.copy_structure ast in *)
-          (* Ast_io.to_channel stdout filename (Ast_io.Impl ((module OCaml_402), ast402)) *)
-        (* ) recover filename *)
+        process parseImplementation (fun ast ->
+          let ast402 = To_402.copy_structure ast in
+          Ast_io.to_channel stdout filename (Ast_io.Impl ((module OCaml_402), ast402))
+        ) recover filename
       | ProcessInterface ->
-        process parseInterface (Pprintast.signature Format.std_formatter) recover filename
-        (* process parseInterface (fun ast -> *)
-          (* let ast402 = To_402.copy_signature ast in *)
-          (* Ast_io.to_channel stdout filename (Ast_io.Intf ((module OCaml_402), ast402)) *)
-        (* ) recover filename *)
+        (* process parseInterface (Pprintast.signature Format.std_formatter) recover filename *)
+        process parseInterface (fun ast ->
+          let ast402 = To_402.copy_signature ast in
+          Ast_io.to_channel stdout filename (Ast_io.Intf ((module OCaml_402), ast402))
+        ) recover filename
     with
     | _ -> exit 1
 end
