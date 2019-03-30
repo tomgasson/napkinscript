@@ -1,6 +1,6 @@
 (* Uncomment for release, to output 4.02 binary ast *)
-open Migrate_parsetree
-module To_402 = Convert(OCaml_406)(OCaml_402)
+(* open Migrate_parsetree
+module To_402 = Convert(OCaml_406)(OCaml_402) *)
 
 module IO: sig
   val readFile: string -> string
@@ -3467,9 +3467,15 @@ module NapkinScript = struct
     | Else ->
       Parser.leaveBreadcrumb p Grammar.ElseBranch;
       Parser.next p;
-      Parser.expect  Lbrace p;
-      let elseExpr = parseExprBlock p in
-      Parser.expect Rbrace p;
+      let elseExpr = match p.token with
+      | If ->
+        parseIfExpression p
+      | _ ->
+        Parser.expect  Lbrace p;
+        let blockExpr = parseExprBlock p in
+        Parser.expect Rbrace p;
+        blockExpr
+      in
       Parser.eatBreadcrumb p;
       Some elseExpr
     | _ ->
@@ -5739,17 +5745,17 @@ end = struct
       in
       match action with
       | ProcessImplementation ->
-        (* process parseImplementation (Pprintast.structure Format.std_formatter) recover filename *)
-        process parseImplementation (fun ast ->
+        process parseImplementation (Pprintast.structure Format.std_formatter) recover filename
+        (* process parseImplementation (fun ast ->
           let ast402 = To_402.copy_structure ast in
           Ast_io.to_channel stdout filename (Ast_io.Impl ((module OCaml_402), ast402))
-        ) recover filename
+        ) recover filename  *)
       | ProcessInterface ->
-        (* process parseInterface (Pprintast.signature Format.std_formatter) recover filename *)
-        process parseInterface (fun ast ->
+        process parseInterface (Pprintast.signature Format.std_formatter) recover filename
+        (* process parseInterface (fun ast ->
           let ast402 = To_402.copy_signature ast in
           Ast_io.to_channel stdout filename (Ast_io.Intf ((module OCaml_402), ast402))
-        ) recover filename
+        ) recover filename  *)
     with
     | _ -> exit 1
 end

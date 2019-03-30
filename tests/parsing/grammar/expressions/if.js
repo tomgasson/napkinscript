@@ -15,3 +15,14 @@ let ifThenElse = if foo {
 } else {
   doStuff(x, y, z,)
 } 
+
+let ifElseIfThen =
+  if foo == bar {
+    f()
+  } else if foo == bar2 {
+    f1()
+  } else if foo == bar3 {
+    f2()
+  } else {
+    f3()
+  }
