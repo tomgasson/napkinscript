@@ -8,7 +8,7 @@ test: build-native
 	./node_modules/.bin/jest
 
 debug: build
-	./lib/napkinscript.exe file.js
+	./lib/napkinscript.exe -recover file.js
 
 debugi: build
 	./lib/napkinscript.exe file.jsi

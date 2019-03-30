@@ -303,7 +303,7 @@ let _ = <div
     event2,
     event3,
     event4,
-    event5,
+    event5
   / => {
     doStuff()
     bar(foo)
@@ -322,7 +322,7 @@ let _ = <div
     event2,
     event3,
     event4,
-    event5,
+    event5
   / =>
     doStuff()
   }

@@ -1,6 +1,6 @@
 (* Uncomment for release, to output 4.02 binary ast *)
-(* open Migrate_parsetree
-module To_402 = Convert(OCaml_406)(OCaml_402) *)
+(* open Migrate_parsetree *)
+(* module To_402 = Convert(OCaml_406)(OCaml_402) *)
 
 module IO: sig
   val readFile: string -> string
@@ -417,6 +417,8 @@ module Grammar = struct
     | PatternMatchCase
     | LetBinding
     | PatternList
+    | PatternOcamlList
+    | PatternRecord
 
     | TypeDef
     | TypeConstrName
@@ -437,6 +439,8 @@ module Grammar = struct
     | RecordRows
     | RecordRowsStringKey
     | ArgumentList
+    | Signature
+    | Structure
 
   let toString = function
     | OpenDescription -> "an open description"
@@ -471,6 +475,8 @@ module Grammar = struct
     | ConstructorDeclaration -> "a constructor declaration"
     | ExprList -> "multiple expressions"
     | PatternList -> "multiple patterns"
+    | PatternOcamlList -> "a list pattern"
+    | PatternRecord -> "a record pattern"
     | ParameterList -> "parameters"
     | StringFieldDeclarations -> "string field declarations"
     | FieldDeclarations -> "field declarations"
@@ -481,13 +487,17 @@ module Grammar = struct
     | RecordRows -> "rows of a record"
     | RecordRowsStringKey -> "rows of a record with string keys"
     | ArgumentList -> "arguments"
+    | Signature -> "signature"
+    | Structure -> "structure"
 
-  let isStructureItemStart = function
-    | Token.Open
+
+  let isSignatureItemStart = function
+    | Token.At
     | Let
     | Typ
     | External
     | Exception
+    | Open
     | Include
     | Module
     | AtAt
@@ -497,12 +507,26 @@ module Grammar = struct
   let isExprStart = function
     | Token.True | False
     | Int _ | String _ | Float _ | Backtick
-    | Uident _ | Lident _ | Band
-    | Lparen
-    | List | Lbracket | Lbrace | Forwardslash
+    | Uident _ | Lident _
+    | Lparen | List | Lbracket | Lbrace | Forwardslash
     | LessThan
-    | Minus | MinusDot | Plus | PlusDot
-    | Percent | At -> true
+    | Minus | MinusDot | Plus | PlusDot | Bang | Band
+    | Percent | At
+    | If | Switch | While | For | Assert | Lazy -> true
+    | _ -> false
+
+ let isStructureItemStart = function
+    | Token.Open
+    | Let
+    | Typ
+    | External
+    | Exception
+    | Include
+    | Module
+    | AtAt
+    | PercentPercent
+    | At -> true
+    | t when isExprStart t -> true
     | _ -> false
 
   let isPatternStart = function
@@ -585,6 +609,20 @@ module Grammar = struct
     | t when isExprStart t -> true
     | _ -> false
 
+  let isPatternMatchStart = function
+    | Token.Bar -> true
+    | t when isPatternStart t -> true
+    | _ -> false
+
+  let isPatternOcamlListStart = function
+    | Token.DotDotDot -> true
+    | t when isPatternStart t -> true
+    | _ -> false
+
+  let isPatternRecordItemStart = function
+    | Token.DotDotDot | Uident _ | Lident _ | Underscore -> true
+    | _ -> false
+
   let isListElement grammar token =
     match grammar with
     | ExprList -> isExprStart token
@@ -601,7 +639,31 @@ module Grammar = struct
     | RecordRows -> isRecordRowStart token
     | RecordRowsStringKey -> isRecordRowStringKeyStart token
     | ArgumentList -> isArgumentStart token
+    | Signature -> isSignatureItemStart token
+    | Structure -> isStructureItemStart token
+    | PatternMatching -> isPatternMatchStart token
+    | PatternOcamlList -> isPatternOcamlListStart token
+    | PatternRecord -> isPatternRecordItemStart token
     | _ -> false
+
+  let isListTerminator grammar token =
+    match grammar with
+    | ExprList  ->
+        token = Token.Rparen || token = Forwardslash || token = Rbracket
+    | TypExprList ->
+        token = Rparen || token = Forwardslash || token = GreaterThan
+    | ModExprList ->
+        token = Rparen
+    | PatternList | PatternOcamlList | PatternRecord ->
+        token = Forwardslash || token = Rbracket || token = Rparen
+        || token = EqualGreater (* pattern matching =>*)
+        || token = In (* for expressions *)
+        || token = Equal (* let {x} = foo *)
+    | _ -> false
+
+
+  let isPartOf grammar token =
+    isListElement grammar token || isListTerminator grammar token
 end
 
 module Reporting = struct
@@ -828,6 +890,8 @@ module Diagnostics: sig
 
   val makeReport: t list -> string -> string
 
+  val getStartPos: t -> Lexing.position
+
 end = struct
   type category =
     | Unexpected of (Token.t * ((Grammar.t * Lexing.position) list))
@@ -859,6 +923,8 @@ end = struct
     length: int; (* or endPos? *)
     category: category;
   }
+
+  let getStartPos {startPos} = startPos
 
   let computeLineCol {startPos} =
      (startPos.Lexing.pos_lnum, startPos.pos_cnum - startPos.pos_bol + 1)
@@ -989,7 +1055,6 @@ module Scanner = struct
     | Tuple -> "tuple"
     | Jsx -> "jsx"
     | Diamond -> "diamond"
-
 
   type t = {
     filename: string;
@@ -1178,7 +1243,7 @@ module Scanner = struct
         let len = scanner.rdOffset - scanner.offset in
         scanner.err ~startPos ~len Diagnostics.unclosedString
       else if scanner.ch == CharacterCodes.doubleQuote then (
-        next scanner
+        next scanner;
       ) else if scanner.ch == CharacterCodes.backslash then (
         next scanner;
         let char_for_backslash = function
@@ -1496,8 +1561,7 @@ module Scanner = struct
         let (_, _, token) = scan scanner in
         token
       )
-    end
-    in
+    end in
     let endPos = scanner.prevPos in
     (startPos, endPos, token)
 
@@ -1533,10 +1597,7 @@ module Scanner = struct
       Token.LessThanSlash
     else
       Token.LessThan
-
 end
-
-
 
 module Parser = struct
   type t = {
@@ -1550,14 +1611,19 @@ module Parser = struct
     mutable diagnostics: Diagnostics.t list;
   }
 
-  let err p error =
+  let err ?startPos p error =
     let d = Diagnostics.make
       ~filename:p.scanner.filename
-      ~startPos:p.startPos
+      ~startPos:(match startPos with | Some pos -> pos | None -> p.startPos)
       ~len:(p.endPos.pos_cnum - p.startPos.pos_cnum)
       error
     in
     p.diagnostics <- d::p.diagnostics
+
+  let dropLastDiagnostic p =
+    match p.diagnostics with
+    | _::ds -> p.diagnostics <- ds
+    | [] -> ()
 
   let rec next p =
     let (startPos, endPos, token) = Scanner.scan p.scanner in
@@ -1683,13 +1749,37 @@ module NapkinScript = struct
     (* let recoverLident p = *)
       (* Location.mknoloc "_" loc *)
 
-
     let recoverEqualGreater p =
       Parser.expect EqualGreater p;
       match p.Parser.token with
       | MinusGreater -> Parser.next p
       | _ -> ()
+
+    let shouldAbortListParse p =
+      let rec check breadcrumbs =
+        match breadcrumbs with
+        | [] -> false
+        | (grammar, _)::rest ->
+          if Grammar.isPartOf grammar p.Parser.token then
+            true
+          else
+            check rest
+      in
+      check p.breadcrumbs
+
   end
+
+  module ErrorMessages = struct
+    let listPatternSpread = "List pattern matches only supports one `...` spread, at the end.
+Explanation: a list spread at the tail is efficient, but a spread in the middle would create new list(s); out of performance concern, our pattern matching currently guarantees to never create new intermediate data."
+
+    let recordPatternSpread = "Record's `...` spread is not supported in pattern matches.
+Explanation: you can't collect a subset of a record's field into its own record, since a record needs an explicit declaration and that subset wouldn't have one.
+Solution: you need to pull out each field you want explicitly."
+
+  let recordPatternUnderscore = "Record patterns only supports one `_`, at the end."
+  end
+
 
   let jsxAttr = (Location.mknoloc "JSX", Parsetree.PStr [])
   let uncurryAttr = (Location.mknoloc "bs", Parsetree.PStr [])
@@ -1697,6 +1787,10 @@ module NapkinScript = struct
   type typDefOrExt =
     | TypeDef of (Asttypes.rec_flag * Parsetree.type_declaration list)
     | TypeExt of Parsetree.type_extension
+
+  type recordPatternItem =
+    | PatUnderscore
+    | PatField of (Ast_helper.lid * Parsetree.pattern)
 
   type context =
     | OrdinaryExpr
@@ -2065,30 +2159,114 @@ module NapkinScript = struct
     constant
 
   let parseCommaDelimitedList p ~grammar ~closing ~f =
+    Parser.leaveBreadcrumb p grammar;
     let rec loop nodes =
       if Grammar.isListElement grammar p.Parser.token then (
         let node = f p in
-        let hasComma = Parser.optional p Comma in
-        if hasComma then
-          if p.Parser.token = closing then
-            List.rev (node::nodes)
-          else
-            loop (node::nodes)
+        if Parser.optional p Comma then
+          loop (node::nodes)
+        else if p.token = closing || p.token = Eof then
+          List.rev (node::nodes)
         else (
-          if p.token = closing || p.token = Eof then
-            List.rev (node::nodes)
-          else (
-            Parser.expect Comma p;
-            if p.token = Semicolon then Parser.next p;
-            loop (node::nodes)
-          )
+          Parser.expect Comma p;
+          if p.token = Semicolon then Parser.next p;
+          loop (node::nodes)
         )
-      ) else if p.token = closing || p.token = Eof then
+      ) else if p.token = Eof then (
         List.rev nodes
-      else
+      ) else if p.token = closing then (
         List.rev nodes
+      ) else (
+        if Recover.shouldAbortListParse p then (
+          Parser.dropLastDiagnostic p; (* we don't expect a `,` *)
+          List.rev nodes
+        ) else (
+          Parser.err p (Diagnostics.unexpected p.token p.breadcrumbs);
+          Parser.next p;
+          loop nodes
+        )
+      )
     in
-    loop []
+    let nodes = loop [] in
+    Parser.eatBreadcrumb p;
+    nodes
+
+  let parseCommaDelimitedReversedList p ~grammar ~closing ~f =
+    Parser.leaveBreadcrumb p grammar;
+    let rec loop nodes =
+      if Grammar.isListElement grammar p.Parser.token then (
+        let node = f p in
+        if Parser.optional p Comma then
+          loop (node::nodes)
+        else if p.token = closing || p.token = Eof then
+          node::nodes
+        else (
+          Parser.expect Comma p;
+          if p.token = Semicolon then Parser.next p;
+          loop (node::nodes)
+        )
+      ) else if p.token = Eof then (
+        nodes
+      ) else if p.token = closing then (
+        nodes
+      )  else (
+        if Recover.shouldAbortListParse p then (
+          Parser.dropLastDiagnostic p; (* we don't expect a `,` *)
+          nodes
+        ) else (
+          Parser.err p (Diagnostics.unexpected p.token p.breadcrumbs);
+          Parser.next p;
+          loop nodes
+        )
+      )
+    in
+    let nodes = loop [] in
+    Parser.eatBreadcrumb p;
+    nodes
+
+  let parseDelimitedList p ~grammar ~closing ~f =
+    Parser.leaveBreadcrumb p grammar;
+    let rec loop nodes =
+      if p.Parser.token = Token.Eof || p.token = closing then
+        List.rev nodes
+      else if Grammar.isListElement grammar p.token then
+        let node = f p in
+        loop (node::nodes)
+      else (* trouble *) (
+        if Recover.shouldAbortListParse p then
+          List.rev nodes
+        else (
+          Parser.err p (Diagnostics.unexpected p.token p.breadcrumbs);
+          Parser.next p;
+          loop nodes
+        )
+      )
+    in
+    let nodes = loop [] in
+    Parser.eatBreadcrumb p;
+    nodes
+
+  let parseList p ~grammar  ~f =
+    Parser.leaveBreadcrumb p grammar;
+    let rec loop nodes =
+      if p.Parser.token = Token.Eof then
+        List.rev nodes
+      else if Grammar.isListElement grammar p.token then
+        let node = f p in
+        loop (node::nodes)
+      else (* trouble *) (
+        if Recover.shouldAbortListParse p then
+          List.rev nodes
+        else (
+          Parser.err p (Diagnostics.unexpected p.token p.breadcrumbs);
+          Parser.next p;
+          loop nodes
+        )
+      )
+    in
+    let nodes = loop [] in
+    Parser.eatBreadcrumb p;
+    nodes
 
   (* let-binding	::=	pattern =  expr   *)
      (* ∣	 value-name  { parameter }  [: typexpr]  [:> typexpr] =  expr   *)
@@ -2271,80 +2449,100 @@ module NapkinScript = struct
 		| _ ->
     (Location.mkloc label.txt (mkLoc startPos pattern.ppat_loc.loc_end), pattern)
 
+   (* TODO: there are better representations than PatField|Underscore ? *)
+  and parseRecordPatternItem p =
+    match p.Parser.token with
+    | DotDotDot ->
+      Parser.next p;
+      (true, PatField (parseRecordPatternField p))
+    | Uident _ | Lident _ ->
+      (false, PatField (parseRecordPatternField p))
+    | Underscore ->
+      Parser.next p;
+      (false, PatUnderscore)
+    | _ ->
+      (false, PatField (parseRecordPatternField p))
 
   and parseRecordPattern ~attrs p =
     let startPos = p.startPos in
     Parser.expect Lbrace p;
-    let firstField = parseRecordPatternField p in
-    let rec loop p fields =
-      match p.Parser.token with
-      | Rbrace ->
-        (List.rev fields, Asttypes.Closed)
-      | Underscore ->
-        Parser.next p;
-        ignore (Parser.optional p Comma);
-        (List.rev fields, Asttypes.Open)
-      | Comma ->
-        Parser.next p;
-        loop p fields
-      | Uident _ | Lident _ ->
-        let field = parseRecordPatternField p in
-        loop p (field::fields)
-      | token ->
-        Parser.err p(Diagnostics.unexpected token p.breadcrumbs);
-        loop p fields
+    let rawFields =
+      parseCommaDelimitedReversedList p
+       ~grammar:PatternRecord
+       ~closing:Rbrace
+       ~f:parseRecordPatternItem
     in
-    let (fields, closedFlag) = loop p [firstField] in
-    let endPos = p.endPos in
     Parser.expect Rbrace p;
-    let loc = mkLoc startPos endPos in
+    let (fields, closedFlag) =
+      let (rawFields, flag) = match rawFields with
+      | (_hasSpread, PatUnderscore)::rest ->
+        (rest, Asttypes.Open)
+      | rawFields ->
+        (rawFields, Asttypes.Closed)
+      in
+      List.fold_left (fun (fields, flag) curr ->
+        let (hasSpread, field) = curr in
+        match field with
+        | PatField field ->
+          if hasSpread then (
+            let (_, pattern) = field in
+            Parser.err ~startPos:pattern.Parsetree.ppat_loc.loc_start p (Diagnostics.message ErrorMessages.recordPatternSpread)
+          );
+          (field::fields, flag)
+        | PatUnderscore ->
+          (fields, flag)
+      ) ([], flag) rawFields
+    in
+    let loc = mkLoc startPos p.prevEndPos in
     Ast_helper.Pat.record ~loc ~attrs fields closedFlag
 
   and parseTuplePattern ~attrs p =
     let startPos = p.startPos in
     Parser.expect Forwardslash p;
     let patterns =
-      parseCommaDelimitedList
-        p ~grammar:Grammar.PatternList ~closing:Forwardslash ~f:parseConstrainedPattern
+      parseCommaDelimitedList p
+        ~grammar:Grammar.PatternList
+        ~closing:Forwardslash
+        ~f:parseConstrainedPattern
     in
     Parser.expect Forwardslash p;
     let loc = mkLoc startPos p.prevEndPos in
     Ast_helper.Pat.tuple ~loc ~attrs patterns
 
+  and parsePatternListItem p =
+    match p.Parser.token with
+    | DotDotDot ->
+      Parser.next p;
+      (true, parseConstrainedPattern p)
+    | _ ->
+      (false, parseConstrainedPattern p)
+
   and parseListPattern ~attrs p =
     let startPos = p.Parser.startPos in
     Parser.expect List p;
     Parser.expect Lparen p;
-    let rec loop p patterns = match p.Parser.token with
-    | Rparen ->
-      Parser.next p;
-      patterns
-    | Comma -> Parser.next p; loop p patterns
-    | DotDotDot ->
-      Parser.next p;
-      let pattern = parseConstrainedPattern p in
-      loop p ((true, pattern)::patterns)
-    | _ ->
-      let pattern = parseConstrainedPattern p in
-      loop p ((false, pattern)::patterns)
+    let listPatterns =
+      parseCommaDelimitedReversedList p
+        ~grammar:Grammar.PatternOcamlList
+        ~closing:Rparen
+        ~f:parsePatternListItem
     in
-    let listPatterns = loop p [] in
+    Parser.expect Rparen p;
     let endPos = p.prevEndPos in
     let loc = mkLoc startPos endPos in
+    let filterSpread (hasSpread, pattern) =
+      if hasSpread then (
+        Parser.err ~startPos:pattern.Parsetree.ppat_loc.loc_start p (Diagnostics.message ErrorMessages.listPatternSpread);
+        pattern
+      ) else
+        pattern
+    in
     match listPatterns with
     | (true, pattern)::patterns ->
-      let patterns =
-        patterns
-        |> List.map snd
-        |> List.rev
-      in
+      let patterns = patterns |> List.map filterSpread |> List.rev in
       makeListPattern loc patterns (Some pattern)
     | patterns ->
-     let patterns =
-        patterns
-        |> List.map snd
-        |> List.rev
-      in
+      let patterns = patterns |> List.map filterSpread |> List.rev in
       makeListPattern loc patterns None
 
   and parseArrayPattern ~attrs p =
@@ -3588,17 +3786,13 @@ module NapkinScript = struct
 
   and parsePatternMatching p =
     Parser.leaveBreadcrumb p Grammar.PatternMatching;
-    (* '{' consumed *)
-    let rec loop p cases =
-      match p.Parser.token with
-      | Rbrace ->
-        List.rev cases
-      | _ ->
-        let case = parsePatternMatchCase p in
-        loop p (case::cases)
+    let cases =
+      parseDelimitedList
+        ~grammar:Grammar.PatternMatching
+        ~closing:Rbrace
+        ~f:parsePatternMatchCase
+        p
     in
-    let cases = loop p [] in
-    Parser.eatBreadcrumb p;
     cases
 
   and parseSwitchExpression p =
@@ -4852,25 +5046,7 @@ module NapkinScript = struct
     Ast_helper.Te.constructor ~loc ~attrs name kind
 
   and parseStructure p : Parsetree.structure =
-    let rec parse p acc = match p.Parser.token with
-      | Eof | Rbrace -> acc
-      | prevToken ->
-        let item = parseStructureItem p in
-        ignore (Parser.optional p Semicolon);
-        (* let () = match p.Parser.token with *)
-        (* | Semicolon -> Parser.next p *)
-        (* (* TODO: this is shady *) *)
-        (* | Open | Let | Typ | External | Include | Module | Eof *)
-        (* | String _ | Int _ | Float _ | Lbrace | Lparen | True | False *)
-        (* | Backtick | Uident _ | Lident _ | Lbracket | Assert | Lazy *)
-        (* | If | For | While | Switch | LessThan | Rbrace -> () *)
-        (* | At when prevToken <> Let && prevToken <> Module -> () *)
-        (* | _ -> Parser.expect Semicolon p *)
-        (* in *)
-        parse p (item::acc)
-    in
-    let structure = parse p [] in
-    List.rev structure
+    parseList p ~grammar:Grammar.Structure ~f:parseStructureItem
 
   and parseStructureItem p =
     let startPos = p.Parser.startPos in
@@ -4904,6 +5080,7 @@ module NapkinScript = struct
     | _ ->
       Ast_helper.Str.eval ~attrs (parseExpr p)
     in
+    Parser.optional p Semicolon |> ignore;
     let loc = mkLoc startPos p.prevEndPos in
     {item with pstr_loc = loc}
 
@@ -4923,7 +5100,13 @@ module NapkinScript = struct
       Ast_helper.Mod.ident ~loc:longident.loc longident
     | Lbrace ->
       Parser.next p;
-      let structure = Ast_helper.Mod.structure (parseStructure p) in
+      let structure = Ast_helper.Mod.structure (
+        parseDelimitedList
+          ~grammar:Grammar.Structure
+          ~closing:Rbrace
+          ~f:parseStructureItem
+          p
+      ) in
       Parser.expect Rbrace p;
       let endPos = p.prevEndPos in
       {structure with pmod_loc = mkLoc startPos endPos}
@@ -5206,11 +5389,7 @@ module NapkinScript = struct
       let mty = parseModuleType p in
       Parser.expect Rparen p;
       {mty with pmty_loc = mkLoc startPos p.prevEndPos}
-    | Lbrace ->
-      Parser.next p;
-      let spec = parseSpecification p in
-      Parser.expect Rbrace p;
-      spec
+    | Lbrace -> parseSpecification p
     | Module -> (* TODO: check if this is still atomic when implementing first class modules*)
       parseModuleTypeOf p
     | Percent ->
@@ -5375,42 +5554,19 @@ module NapkinScript = struct
     Ast_helper.Mty.typeof_ ~loc:(mkLoc startPos p.prevEndPos) moduleExpr
 
   and parseSpecification p =
-    (* { consumed *)
-    let rec loop p spec =
-      let item = parseSignatureItem p in
-      let () = match p.Parser.token with
-      | Semicolon -> Parser.next p
-      | Let | Typ | At | AtAt | PercentPercent | External | Exception | Open | Include | Module | Rbrace | Eof -> ()
-      | _ -> Parser.expect Semicolon p
-      in
-      let spec = (item::spec) in
-      match p.Parser.token with
-      | Rbrace | Eof -> spec
-      | _ -> loop p spec
+    Parser.expect Lbrace p;
+    let spec =
+      parseDelimitedList ~grammar:Grammar.Signature ~closing:Rbrace ~f:parseSignatureItem p
     in
-    Ast_helper.Mty.signature (List.rev (loop p []))
+    Parser.expect Rbrace p;
+    Ast_helper.Mty.signature spec
 
   and parseSignature p =
-    let rec loop p spec =
-      if p.Parser.token = Eof then
-        spec
-      else
-        let item = parseSignatureItem p in
-        let () = match p.Parser.token with
-        | Semicolon -> Parser.next p
-        | Let | Typ | At | AtAt | PercentPercent | External | Exception | Open | Include | Module | Rbrace | Eof -> ()
-        | _ -> Parser.expect Semicolon p
-        in
-        let spec = (item::spec) in
-        match p.Parser.token with
-        | Rbrace | Eof -> spec
-        | _ -> loop p spec
-    in
-    List.rev (loop p [])
+    parseList ~grammar:Grammar.Signature ~f:parseSignatureItem p
 
   and parseSignatureItem p =
     let attrs = parseAttributes p in
-    match p.Parser.token with
+    let item = match p.Parser.token with
     | Let ->
       parseSignLetDesc ~attrs p
     | Typ ->
@@ -5455,6 +5611,9 @@ module NapkinScript = struct
     | token ->
       Parser.err p (Diagnostics.unexpected token p.breadcrumbs);
       Recover.defaultSignatureItem()
+    in
+    Parser.optional p Semicolon |> ignore;
+    item
 
   (* module rec module-name :  module-type  { and module-name:  module-type } *)
   and parseRecModuleSpec ~attrs p =
@@ -5759,16 +5918,17 @@ end = struct
       match action with
       | ProcessImplementation ->
         process parseImplementation (Pprintast.structure Format.std_formatter) recover filename
-        (* process parseImplementation (fun ast ->
-          let ast402 = To_402.copy_structure ast in
-          Ast_io.to_channel stdout filename (Ast_io.Impl ((module OCaml_402), ast402))
-        ) recover filename  *)
+        (* process parseImplementation (Printast.implementation Format.std_formatter) recover filename *)
+        (* process parseImplementation (fun ast -> *)
+          (* let ast402 = To_402.copy_structure ast in *)
+          (* Ast_io.to_channel stdout filename (Ast_io.Impl ((module OCaml_402), ast402)) *)
+        (* ) recover filename *)
       | ProcessInterface ->
         process parseInterface (Pprintast.signature Format.std_formatter) recover filename
-        (* process parseInterface (fun ast ->
-          let ast402 = To_402.copy_signature ast in
-          Ast_io.to_channel stdout filename (Ast_io.Intf ((module OCaml_402), ast402))
-        ) recover filename  *)
+        (* process parseInterface (fun ast -> *)
+          (* let ast402 = To_402.copy_signature ast in *)
+          (* Ast_io.to_channel stdout filename (Ast_io.Intf ((module OCaml_402), ast402)) *)
+        (* ) recover filename *)
     with
     | _ -> exit 1
 end
