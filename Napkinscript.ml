@@ -1,6 +1,6 @@
 (* Uncomment for release, to output 4.02 binary ast *)
-open Migrate_parsetree
-module To_402 = Convert(OCaml_406)(OCaml_402)
+(* open Migrate_parsetree *)
+(* module To_402 = Convert(OCaml_406)(OCaml_402) *)
 
 module IO: sig
   val readFile: string -> string
@@ -1952,33 +1952,52 @@ Solution: you need to pull out each field you want explicitly."
       else if token = Token.EqualEqualEqual then "=="
       else Token.toString token
     in
+    let loc = mkLoc startPos endPos in
     let operator = Location.mkloc
-      (Longident.Lident stringifiedToken) (mkLoc startPos endPos)
+      (Longident.Lident stringifiedToken) loc
     in
-    Ast_helper.Exp.ident operator
+    Ast_helper.Exp.ident ~loc operator
 
   let negateString s =
     if String.length s > 0 && s.[0] = '-'
     then String.sub s 1 (String.length s - 1)
     else "-" ^ s
 
-  let makeUnaryExpr token expr =
-    match token, expr.Parsetree.pexp_desc with
-    | (Token.Plus | PlusDot), Pexp_constant((Pconst_integer _ | Pconst_float _)) -> expr
+  let makeUnaryExpr startPos tokenEnd token operand =
+    match token, operand.Parsetree.pexp_desc with
+    | (Token.Plus | PlusDot), Pexp_constant((Pconst_integer _ | Pconst_float _)) ->
+      operand
     | (Minus | MinusDot), Pexp_constant(Pconst_integer (n,m)) ->
-      {expr with pexp_desc = Pexp_constant(Pconst_integer (negateString n,m))}
+      {operand with pexp_desc = Pexp_constant(Pconst_integer (negateString n,m))}
     | (Minus | MinusDot), Pexp_constant(Pconst_float (n,m)) ->
-      {expr with pexp_desc = Pexp_constant(Pconst_float (negateString n,m))}
+      {operand with pexp_desc = Pexp_constant(Pconst_float (negateString n,m))}
     | (Token.Plus | PlusDot | Minus | MinusDot ), _ ->
-       let operator = "~" ^ Token.toString token in
-       Ast_helper.Exp.apply
-         (Ast_helper.Exp.ident (Location.mknoloc (Longident.Lident operator)))
-         [Nolabel, expr]
-    | Token.Bang, _ ->
+      let tokenLoc = mkLoc startPos tokenEnd in
+      let operator = "~" ^ Token.toString token in
       Ast_helper.Exp.apply
-        (Ast_helper.Exp.ident (Location.mknoloc (Longident.Lident "not")))
-        [Nolabel, expr]
-    | _ -> expr
+        ~loc:(mkLoc startPos operand.Parsetree.pexp_loc.loc_end)
+        (Ast_helper.Exp.ident ~loc:tokenLoc
+          (Location.mkloc (Longident.Lident operator) tokenLoc))
+        [Nolabel, operand]
+    | Token.Bang, _ ->
+      let tokenLoc = mkLoc startPos tokenEnd in
+      Ast_helper.Exp.apply
+        ~loc:(mkLoc startPos operand.Parsetree.pexp_loc.loc_end)
+        (Ast_helper.Exp.ident ~loc:tokenLoc
+          (Location.mkloc (Longident.Lident "not") tokenLoc))
+        [Nolabel, operand]
+    | Token.Band, _ ->
+      let tokenLoc = mkLoc startPos tokenEnd in
+      let operator =
+        Ast_helper.Exp.ident ~loc:tokenLoc
+          (Location.mkloc (Longident.Lident "!") tokenLoc)
+      in
+      Ast_helper.Exp.apply
+        ~loc:(mkLoc startPos operand.Parsetree.pexp_loc.loc_end)
+        operator
+        [Nolabel, operand]
+    | _ ->
+      operand
 
   let makeListExpression loc seq extOpt =
     let rec handleSeq = function
@@ -2995,29 +3014,14 @@ Solution: you need to pull out each field you want explicitly."
    * -> -. 1.6
    *)
   and parseUnaryExpr p =
+    let startPos = p.Parser.startPos in
     match p.Parser.token with
-    | (Minus | MinusDot | Plus | PlusDot | Bang) as token ->
+    | (Minus | MinusDot | Plus | PlusDot | Bang | Band) as token ->
       Parser.leaveBreadcrumb p Grammar.ExprUnary;
+      let tokenEnd = p.endPos in
       Parser.next p;
-      let unaryExpr = makeUnaryExpr token (parseUnaryExpr p) in
-      Parser.eatBreadcrumb p;
-      unaryExpr
-    | Band (* & *) ->
-      Parser.leaveBreadcrumb p Grammar.ExprUnary;
-      let startPos = p.startPos in
-      Parser.next p;
-      let refAccess =
-        let loc = mkLoc startPos p.prevEndPos in
-        let op = Location.mkloc (Longident.Lident "!") loc in
-        Ast_helper.Exp.ident ~loc op
-      in
-      let arg = parseUnaryExpr p in
-      let loc = mkLoc startPos arg.pexp_loc.loc_end in
-      let unaryExpr = Ast_helper.Exp.apply
-        ~loc
-        refAccess
-        [Nolabel, arg]
-      in
+      let operand = parseUnaryExpr p in
+      let unaryExpr = makeUnaryExpr startPos tokenEnd token operand  in
       Parser.eatBreadcrumb p;
       unaryExpr
     | _ ->
@@ -3050,9 +3054,11 @@ Solution: you need to pull out each field you want explicitly."
         Parser.leaveBreadcrumb p (Grammar.ExprBinaryAfterOp token);
         let startPos = p.startPos in
         Parser.next p;
-        let endPos = p.startPos in
+        let endPos = p.prevEndPos in
         let b = parseBinaryExpr p (tokenPrec + 1) in
+        let loc = mkLoc a.Parsetree.pexp_loc.loc_start b.pexp_loc.loc_end in
         let expr = Ast_helper.Exp.apply
+          ~loc
           (makeInfixOperator token startPos endPos)
           [Nolabel, a; Nolabel, b]
         in
@@ -5947,18 +5953,18 @@ end = struct
       in
       match action with
       | ProcessImplementation ->
-        (* process parseImplementation (Pprintast.structure Format.std_formatter) recover filename *)
+        process parseImplementation (Pprintast.structure Format.std_formatter) recover filename
         (* process parseImplementation (Printast.implementation Format.std_formatter) recover filename *)
-        process parseImplementation (fun ast ->
-          let ast402 = To_402.copy_structure ast in
-          Ast_io.to_channel stdout filename (Ast_io.Impl ((module OCaml_402), ast402))
-        ) recover filename
+        (* process parseImplementation (fun ast -> *)
+          (* let ast402 = To_402.copy_structure ast in *)
+          (* Ast_io.to_channel stdout filename (Ast_io.Impl ((module OCaml_402), ast402)) *)
+        (* ) recover filename *)
       | ProcessInterface ->
-        (* process parseInterface (Pprintast.signature Format.std_formatter) recover filename *)
-        process parseInterface (fun ast ->
-          let ast402 = To_402.copy_signature ast in
-          Ast_io.to_channel stdout filename (Ast_io.Intf ((module OCaml_402), ast402))
-        ) recover filename
+        process parseInterface (Pprintast.signature Format.std_formatter) recover filename
+        (* process parseInterface (fun ast -> *)
+          (* let ast402 = To_402.copy_signature ast in *)
+          (* Ast_io.to_channel stdout filename (Ast_io.Intf ((module OCaml_402), ast402)) *)
+        (* ) recover filename *)
     with
     | _ -> exit 1
 end
