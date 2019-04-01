@@ -1,7 +1,3 @@
-(* Uncomment for release, to output 4.02 binary ast *)
-open Migrate_parsetree
-module To_402 = Convert(OCaml_406)(OCaml_402)
-
 module IO: sig
   val readFile: string -> string
 end = struct
@@ -5878,6 +5874,7 @@ end
 (* command line flags *)
 module Clflags: sig
   val recover: bool ref
+  val print: string ref
   val files: string list ref
 
   val parse: unit -> unit
@@ -5888,15 +5885,20 @@ end = struct
   let files = ref []
   let addFilename filename = files := filename::(!files)
 
+  let print = ref ""
+
   let usage = "Usage: napkinscript <options> <file>\nOptions are:"
 
-  let spec = [("-recover", Arg.Unit (fun () -> recover := true), "Emit partial ast")]
+  let spec = [
+    ("-recover", Arg.Unit (fun () -> recover := true), "Emit partial ast");
+    ("-print", Arg.String (fun txt -> print := txt), "Print either binary, ocaml or ast")
+  ]
 
   let parse () = Arg.parse spec addFilename usage
 end
 
 module Driver: sig
-  val processFile: recover: bool -> string -> unit
+  val processFile: recover: bool -> target: string -> string -> unit
 end = struct
   type 'a file_kind =
     | Structure: Parsetree.structure file_kind
@@ -5944,7 +5946,25 @@ end = struct
     | ProcessImplementation
     | ProcessInterface
 
-  let processFile ~recover filename =
+  let printImplementation ~target filename ast =
+    match target with
+    | "ml" | "ocaml" -> Pprintast.structure Format.std_formatter ast
+    | "ast" -> Printast.implementation Format.std_formatter ast
+    | _ -> (* default binary *)
+      output_string stdout Config.ast_impl_magic_number;
+      output_value stdout filename;
+      output_value stdout ast
+
+  let printInterface ~target filename ast =
+    match target with
+    | "ml" | "ocaml" -> Pprintast.signature Format.std_formatter ast
+    | "ast" -> Printast.interface Format.std_formatter ast
+    | _ -> (* default binary *)
+      output_string stdout Config.ast_intf_magic_number;
+      output_value stdout filename;
+      output_value stdout ast
+
+  let processFile ~recover ~target filename =
     try
       let len = String.length filename in
       let action =
@@ -5953,26 +5973,16 @@ end = struct
       in
       match action with
       | ProcessImplementation ->
-        (* process parseImplementation (Pprintast.structure Format.std_formatter) recover filename *)
-        (* process parseImplementation (Printast.implementation Format.std_formatter) recover filename *)
-        process parseImplementation (fun ast ->
-          let ast402 = To_402.copy_structure ast in
-          Ast_io.to_channel stdout filename (Ast_io.Impl ((module OCaml_402), ast402))
-        ) recover filename
+        process parseImplementation (printImplementation ~target filename) recover filename
       | ProcessInterface ->
-        (* process parseInterface (Pprintast.signature Format.std_formatter) recover filename *)
-        process parseInterface (fun ast ->
-          let ast402 = To_402.copy_signature ast in
-          Ast_io.to_channel stdout filename (Ast_io.Intf ((module OCaml_402), ast402))
-        ) recover filename
+        process parseInterface (printInterface ~target filename) recover filename
     with
     | _ -> exit 1
 end
 
-
 let () =
   Clflags.parse ();
   List.iter (fun filename ->
-    Driver.processFile ~recover:!Clflags.recover filename
+    Driver.processFile ~recover:!Clflags.recover ~target:!Clflags.print filename
   ) !Clflags.files;
   exit 0

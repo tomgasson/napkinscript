@@ -10,8 +10,8 @@ authors: "Iwan <valcke.maxim@gmail.com>"
 license: "MIT"
 homepage: "https://github.com/iwankaramazow/napkinscript"
 bug-reports: "https://github.com/iwankaramazow/napkinscript/issues"
-depends: [ "ocaml" ]
+depends: ["ocaml"]
 build: [
-  [make "build"]
+  [make "build-native"]
 ]
-install: [make "build"]
+install: [make "build-native"]

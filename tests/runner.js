@@ -5,7 +5,7 @@ let cp = require("child_process");
 let parser = path.join(process.cwd(), "./lib/napkinscript.exe");
 
 function parseFile(filename, recover) {
-  let args = [];
+  let args = ["-print", "ml"];
   if (recover) args.push("-recover");
   args.push(filename);
   return cp.spawnSync(parser, args);

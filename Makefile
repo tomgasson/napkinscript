@@ -8,10 +8,9 @@ test: build-native
 	./node_modules/.bin/jest
 
 debug: build
-	./lib/napkinscript.exe -recover file.js
+	./lib/napkinscript.exe -print ml -recover file.js
 
 debugi: build
-	./lib/napkinscript.exe file.jsi
+	./lib/napkinscript.exe -print ml -recover file.jsi
 
-release:
-	ocamlfind ocamlopt -O3 -o ./lib/napkinscript.exe Napkinscript.ml -package ocaml-migrate-parsetree -linkpkg
+release: build-native
