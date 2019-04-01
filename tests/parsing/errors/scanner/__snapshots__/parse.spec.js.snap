@@ -8,7 +8,9 @@ let newX = x +. (newVelocity *. secondPerFrame)
 
 Parse error: /Users/Iwan/Development/napkinscript/tests/parsing/errors/scanner/oldDerefOp.js, line: 1, col: 50
 
-[31m1[0m |  let newVelocity = velocity +. a *. secondPerFrame[31m^[0m;
+
+[31m1[0m │  let newVelocity = velocity +. a *. secondPerFrame[31m^[0m;
+2 │  let newX = x +. newVelocity *. secondPerFrame^;
 
 Hmm, not sure what I should do here with this character.
 If you're trying to deref an expression, use \`&foo\` instead.
@@ -16,7 +18,9 @@ If you're trying to deref an expression, use \`&foo\` instead.
 
 Parse error: /Users/Iwan/Development/napkinscript/tests/parsing/errors/scanner/oldDerefOp.js, line: 2, col: 46
 
-[31m2[0m |  let newX = x +. newVelocity *. secondPerFrame[31m^[0m;
+
+1 │  let newVelocity = velocity +. a *. secondPerFrame^;
+[31m2[0m │  let newX = x +. newVelocity *. secondPerFrame[31m^[0m;
 
 Hmm, not sure what I should do here with this character.
 If you're trying to deref an expression, use \`&foo\` instead.
@@ -33,7 +37,9 @@ exports[`unclosedComment.js 1`] = `
 
 Parse error: /Users/Iwan/Development/napkinscript/tests/parsing/errors/scanner/unclosedComment.js, line: 3, col: 1
 
-[31m3[0m |  [31m[0m
+
+1 │  /* eof
+2 │   * reached
 
 This comment seems to be missing a closing \`*/\`
 
@@ -50,14 +56,18 @@ let z = \\"eof \\"
 
 Parse error: /Users/Iwan/Development/napkinscript/tests/parsing/errors/scanner/unclosedString.js, line: 2, col: 0
 
-[31m2[0m |  let z = \\"eof 
+
+1 │  let x = \\"unclosed
+[31m2[0m │  let z = \\"eof 
 
 This string is missing a double quote at the end
 
 
 Parse error: /Users/Iwan/Development/napkinscript/tests/parsing/errors/scanner/unclosedString.js, line: 3, col: 0
 
-[31m3[0m |  
+
+1 │  let x = \\"unclosed
+2 │  let z = \\"eof 
 
 This string is missing a double quote at the end
 

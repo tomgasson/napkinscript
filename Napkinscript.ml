@@ -656,8 +656,9 @@ module Grammar = struct
         || token = EqualGreater (* pattern matching =>*)
         || token = In (* for expressions *)
         || token = Equal (* let {x} = foo *)
+    | ExprBlock -> token = Rbrace
+    | Structure -> token = Rbrace
     | _ -> false
-
 
   let isPartOf grammar token =
     isListElement grammar token || isListTerminator grammar token
@@ -681,6 +682,7 @@ module Reporting = struct
     let text txt = Text (txt)
     let indent i d = Indent (i, d)
     let append d1 d2 = Append (d1, d2)
+    let nil = Nil
 
     type stack =
       | Empty
@@ -752,9 +754,6 @@ module Reporting = struct
       in
       loop (push Empty doc) Flat 0;
       Buffer.contents buffer
-
-
-
   end
 
   type color =
@@ -772,22 +771,21 @@ module Reporting = struct
   }
 
   let highlight ~from ~len txt =
-    if from < 0 then txt else
+    if from < 0 || (String.length txt) == 0 || (from >= String.length txt) then txt else
     let before = String.sub txt 0 from in
     let content =
-      "\027[31m" ^ String.sub txt from len ^ "\027[0m"
+      "\027[31m" ^ (String.sub txt from len) ^ "\027[0m"
     in
-    let after =
-      String.sub txt (from + len) (String.length txt - (from + len))
-    in
+    let after = String.sub txt (from + len) (String.length txt - (from + len)) in
     before ^ content ^ after
 
   let underline ~from ~len txt =
     let open TerminalDoc in
     let indent = String.make from ' ' in
     let underline = String.make len '^' in
+    let line = highlight ~from:0 ~len underline in
     group ~break:Always
-      (append (text txt) (text (indent ^ underline)))
+      (append (text txt) (text (indent ^ line)))
 
   let applyStyle ~from ~len style txt =
     let open TerminalDoc in
@@ -821,36 +819,76 @@ module Reporting = struct
     | [] -> []
     | x::xs -> x::(take (n -1) xs)
 
-  let renderCodeContext (src : string) startPos endPos =
+  (* TODO: cleanup *)
+  let renderCodeContext ~missing (src : string) startPos endPos =
     let open Lexing in
     let startCol = (startPos.pos_cnum - startPos.pos_bol) in
     let endCol = (endPos.pos_cnum - endPos.pos_bol) in
-    let lines =
-      String.split_on_char '\n' src
-      |> drop startPos.pos_lnum
-      |> take (endPos.pos_lnum - startPos.pos_lnum + 1)
+    let startLine = max 1 (startPos.pos_lnum - 2) in (* 2 lines before *)
+    let lines =  String.split_on_char '\n' src in
+    let endLine =
+      let len = List.length lines in
+      min len (startPos.pos_lnum + 3) (* 2 lines after *)
     in
-    match lines with
-    | x::xs ->
-      let d =
-        let open TerminalDoc in
-        let rowNr =
-          let txt = string_of_int startPos.pos_lnum in
-          let len = String.length txt in
-          highlight ~from:0 ~len txt in
-        let len = if endCol >= 0 then
+    let lines =
+      lines
+      |> drop startLine
+      |> take (endLine - startLine)
+      |> Array.of_list
+    in
+
+    let renderLine x ix =
+      let x = if ix = startPos.pos_lnum then
+          begin match missing with
+          | Some len -> x ^ (String.make 10 ' ')
+          | None -> x
+          end
+        else
+          x
+      in
+
+      let open TerminalDoc in
+      let rowNr =
+        let txt = string_of_int ix in
+        let len = String.length txt in
+        if ix = startPos.pos_lnum then
+          highlight ~from:0 ~len txt
+        else txt
+      in
+      let len =
+        if endCol >= 0 then
           endCol - startCol
         else
           1
-        in
-        group ~break:Never
-          (append
-            (append (text rowNr) (text " |"))
-            (indent 2
-              (text (highlight ~from:startCol ~len x))))
       in
-      TerminalDoc.toString ~width:80 d
-    | _ -> ""
+      let line =
+        if ix = startPos.pos_lnum then
+          begin match missing with
+          | Some len ->
+            underline
+            ~from:(startCol + String.length (String.length (string_of_int ix) |> string_of_int) + 5) ~len x
+          | None ->
+            text (highlight ~from:startCol ~len x)
+          end
+        else text x
+      in
+      group ~break:Never
+        (append
+          (append (text rowNr) (text " │"))
+          (indent 2 line))
+    in
+
+    let reportDoc = ref TerminalDoc.nil in
+
+    for i = 0 to (Array.length lines - 1) do
+      let line = Array.get lines i in
+      reportDoc :=
+        let open TerminalDoc in
+        let ix = startLine + i in
+        group ~break:Always (append !reportDoc (renderLine line ix))
+    done;
+
+    TerminalDoc.toString ~width:80 !reportDoc
 
   type problem =
     | Unexpected of Token.t
@@ -933,7 +971,12 @@ end = struct
     in
     let code =
       let endPos = {t.startPos with pos_cnum = t.startPos.pos_cnum + t.length} in
-      Reporting.renderCodeContext src t.startPos endPos
+      let missing = match t.category with
+      | Expected (_, _, t) ->
+        Some (String.length (Token.toString t))
+      | _ -> None
+      in
+      Reporting.renderCodeContext ~missing src t.startPos endPos
     in
     let explanation = match t.category with
     | Uident currentToken ->
@@ -1210,8 +1253,7 @@ module Scanner = struct
     let rec scan () =
       if scanner.ch == CharacterCodes.eof then
         let startPos = position scanner in
-        let len = scanner.rdOffset - scanner.offset in
-        scanner.err ~startPos ~len Diagnostics.unclosedString
+        scanner.err ~startPos ~len:1 Diagnostics.unclosedString
       else if scanner.ch == CharacterCodes.doubleQuote then (
         next scanner;
       ) else if scanner.ch == CharacterCodes.backslash then (
@@ -1598,7 +1640,7 @@ module Parser = struct
   let err ?startPos p error =
     let d = Diagnostics.make
       ~filename:p.scanner.filename
-      ~startPos:(match startPos with | Some pos -> pos | None -> p.startPos)
+      ~startPos:( match startPos with | Some pos -> pos | None -> p.startPos)
       ~len:(p.endPos.pos_cnum - p.startPos.pos_cnum)
       error
     in
@@ -1675,7 +1717,7 @@ module Parser = struct
       next p
     else
       let error = Diagnostics.expected ?grammar p.prevEndPos token in
-      err p error
+      err ~startPos:p.prevEndPos p error
 
   let lookahead p callback =
     let scannerCopy = {p.scanner with filename = p.scanner.filename} in

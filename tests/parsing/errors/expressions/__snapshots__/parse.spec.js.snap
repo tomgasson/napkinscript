@@ -1,0 +1,33 @@
+// Jest Snapshot v1, https://goo.gl/fbAQLP
+
+exports[`block.js 1`] = `
+"=====Parsetree==========================================
+let findThreadByIdLinearScan ~threads  ~id  =
+  Js.Array2.findi ThreadsModel.threads
+    (fun thread ->
+       fun i ->
+         let thisId =
+           match thread with
+           | ServerData.OneToOne { otherPersonIDWhichIsAlsoThreadID } ->
+               otherPersonIDWhichIsAlsoThreadID
+           | Group { id } -> id
+           | Unknown { id } ->
+               (unknown.id |. Js.String.make) |. FBID.ofStringUnsafe in
+         thisId == id)
+=====Errors=============================================
+
+Parse error: /Users/Iwan/Development/napkinscript/tests/parsing/errors/expressions/block.js, line: 14, col: 4
+
+
+12 │  
+13 │      thisId === id
+[31m14[0m │    }          
+         [31m^[0m
+15 │  }
+
+Did you forget a \`)\` here? 
+
+
+
+========================================================"
+`;
