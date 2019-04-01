@@ -16,7 +16,7 @@ let findThreadByIdLinearScan ~threads  ~id  =
          thisId == id)
 =====Errors=============================================
 
-Parse error: /Users/Iwan/Development/napkinscript/tests/parsing/errors/expressions/block.js, line: 14, col: 4
+Parse error: /napkinscript/tests/parsing/errors/expressions/block.js, line: 14, col: 4
 
 
 12 │  

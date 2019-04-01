@@ -6,7 +6,7 @@ let newVelocity = velocity +. (a *. secondPerFrame)
 let newX = x +. (newVelocity *. secondPerFrame)
 =====Errors=============================================
 
-Parse error: /Users/Iwan/Development/napkinscript/tests/parsing/errors/scanner/oldDerefOp.js, line: 1, col: 50
+Parse error: /napkinscript/tests/parsing/errors/scanner/oldDerefOp.js, line: 1, col: 50
 
 
 [31m1[0m │  let newVelocity = velocity +. a *. secondPerFrame[31m^[0m;
@@ -16,7 +16,7 @@ Hmm, not sure what I should do here with this character.
 If you're trying to deref an expression, use \`&foo\` instead.
 
 
-Parse error: /Users/Iwan/Development/napkinscript/tests/parsing/errors/scanner/oldDerefOp.js, line: 2, col: 46
+Parse error: /napkinscript/tests/parsing/errors/scanner/oldDerefOp.js, line: 2, col: 46
 
 
 1 │  let newVelocity = velocity +. a *. secondPerFrame^;
@@ -35,7 +35,7 @@ exports[`unclosedComment.js 1`] = `
 
 =====Errors=============================================
 
-Parse error: /Users/Iwan/Development/napkinscript/tests/parsing/errors/scanner/unclosedComment.js, line: 3, col: 1
+Parse error: /napkinscript/tests/parsing/errors/scanner/unclosedComment.js, line: 3, col: 1
 
 
 1 │  /* eof
@@ -54,7 +54,7 @@ let x = \\"unclosed\\"
 let z = \\"eof \\"
 =====Errors=============================================
 
-Parse error: /Users/Iwan/Development/napkinscript/tests/parsing/errors/scanner/unclosedString.js, line: 2, col: 0
+Parse error: /napkinscript/tests/parsing/errors/scanner/unclosedString.js, line: 2, col: 0
 
 
 1 │  let x = \\"unclosed
@@ -63,7 +63,7 @@ Parse error: /Users/Iwan/Development/napkinscript/tests/parsing/errors/scanner/u
 This string is missing a double quote at the end
 
 
-Parse error: /Users/Iwan/Development/napkinscript/tests/parsing/errors/scanner/unclosedString.js, line: 3, col: 0
+Parse error: /napkinscript/tests/parsing/errors/scanner/unclosedString.js, line: 3, col: 0
 
 
 1 │  let x = \\"unclosed
