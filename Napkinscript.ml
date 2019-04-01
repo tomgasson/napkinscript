@@ -22,7 +22,7 @@ end = struct
 end
 
 module CharacterCodes = struct
-  let eol = -1
+  let eof = -1
 
   let space = 0x0020
   let newline = 0x0A (* \n *)
@@ -1063,7 +1063,6 @@ module Scanner = struct
     mutable lineOffset: int; (* current line offset *)
     mutable lnum: int; (* current line number *)
     mutable mode: mode list;
-    mutable prevPos: Lexing.position;
   }
 
   let setDiamondMode scanner =
@@ -1113,32 +1112,6 @@ module Scanner = struct
     pos_cnum = scanner.offset;
   }
 
-  let position scanner = Lexing.{
-    pos_fname = scanner.filename;
-    (* line number *)
-    pos_lnum = scanner.lnum;
-    (* offset of the beginning of the line (number
-       of characters between the beginning of the scanner and the beginning
-       of the line) *)
-    pos_bol = scanner.lineOffset;
-    (* [pos_cnum] is the offset of the position (number of
-       characters between the beginning of the scanner and the position). *)
-    pos_cnum = scanner.offset;
-  }
-
-  let computeEndPosition scanner = Lexing.{
-    pos_fname = scanner.filename;
-    (* line number *)
-    pos_lnum = if scanner.ch = 10 then scanner.lnum - 1 else scanner.lnum;
-    (* offset of the beginning of the line (number
-       of characters between the beginning of the scanner and the beginning
-       of the line) *)
-    pos_bol = if scanner.ch = 10 then scanner.prevPos.pos_bol else scanner.lineOffset;
-    (* [pos_cnum] is the offset of the position (number of
-       characters between the beginning of the scanner and the position). *)
-    pos_cnum = scanner.offset;
-  }
-
   let printPos p =
     print_endline ("cnum: " ^ (string_of_int p.Lexing.pos_cnum));
     print_endline ("lnum: " ^ (string_of_int p.Lexing.pos_lnum));
@@ -1147,40 +1120,9 @@ module Scanner = struct
     print_endline ("-------------------")
 
   let next scanner =
-   (* |l|e|t| |x| |=| |1|2|eof
-    * ------------------------
-    *  0 1 2 3 4 5 6 7 8 9 10
-    *
-    *  To keep compatibility with ocaml's locations, we need to
-    *  track the previous position of the scanner. End position
-    *  is *not inclusive* in Ocaml!. e.g. token `12` spans [8, 10[
-    *  If we're scanning the token `12`, the scanner will be
-    *  at offset 10 (eof) when the token is scanned. Accurate
-    *  reporting of the end requires the previous position.
-    *  Our current scanner logic will arrive at eof and already mark
-    *  that position as "consumed". I.e. if it's a `\n`, lineOffset etc.
-    *  will already the next line!
-    *  By keeping track of the previous position, we can
-    *  just take that to report accurate end positions.
-    *  We might want to break compat with Ocaml standards in the future.
-    *  Storing the extra field is probably not so great for performance.
-    *  I don't feel good about the current solution, TODO: refactor
-    *)
-    scanner.prevPos <- { scanner.prevPos with
-      pos_lnum = scanner.lnum;
-      pos_bol = scanner.lineOffset;
-      pos_cnum = scanner.offset;
-    };
     if scanner.rdOffset < (Bytes.length scanner.src) then (
       scanner.offset <- scanner.rdOffset;
       let ch = Bytes.get scanner.src scanner.rdOffset in
-      if ch = '\n' then begin
-        scanner.lineOffset <- scanner.offset + 1;
-        scanner.lnum <- scanner.lnum + 1;
-        scanner.prevPos <- { scanner.prevPos with
-          pos_cnum = scanner.prevPos.pos_cnum + 1
-        }
-      end;
       scanner.rdOffset <- scanner.rdOffset + 1;
       scanner.ch <- int_of_char ch
     ) else (
@@ -1205,12 +1147,6 @@ module Scanner = struct
       lineOffset = 0;
       lnum = 1;
       mode = [];
-      prevPos = Lexing.{
-        pos_fname = filename;
-        pos_lnum = 0;
-        pos_bol = 0;
-        pos_cnum = 0;
-      };
     } in
     next scanner;
     scanner
@@ -1222,12 +1158,20 @@ module Scanner = struct
     callback scannerCopy
 
   let skipWhitespace scanner =
-    while
-      (scanner.ch == CharacterCodes.space) ||
-      (scanner.ch == CharacterCodes.tab) ||
-      (scanner.ch == CharacterCodes.newline)
-    do next scanner
-    done
+    let rec scan () =
+      if scanner.ch == CharacterCodes.space || scanner.ch == CharacterCodes.tab then (
+        next scanner;
+        scan()
+      ) else if CharacterCodes.isLineBreak scanner.ch then (
+        scanner.lineOffset <- scanner.offset + 1;
+        scanner.lnum <- scanner.lnum + 1;
+        next scanner;
+        scan()
+      ) else (
+        ()
+      )
+    in
+    scan()
 
   let scanIdentifier scanner =
     let startOff = scanner.offset in
@@ -1264,7 +1208,7 @@ module Scanner = struct
     let buffer = Buffer.create 256 in
 
     let rec scan () =
-      if scanner.ch == CharacterCodes.eol then
+      if scanner.ch == CharacterCodes.eof then
         let startPos = position scanner in
         let len = scanner.rdOffset - scanner.offset in
         scanner.err ~startPos ~len Diagnostics.unclosedString
@@ -1283,6 +1227,8 @@ module Scanner = struct
         next scanner;
         scan ()
       ) else if CharacterCodes.isLineBreak scanner.ch then (
+        scanner.lineOffset <- scanner.offset + 1;
+        scanner.lnum <- scanner.lnum + 1;
         let startPos = position scanner in
         let len = scanner.rdOffset - scanner.offset in
         scanner.err ~startPos ~len Diagnostics.unclosedString;
@@ -1303,6 +1249,10 @@ module Scanner = struct
     do
       next scanner
     done;
+    if CharacterCodes.isLineBreak scanner.ch then (
+      scanner.lineOffset <- scanner.offset + 1;
+      scanner.lnum <- scanner.lnum + 1;
+    );
     next scanner;
     Token.Comment (
       Bytes.sub_string scanner.src startOff (scanner.offset - 1 - startOff)
@@ -1315,11 +1265,15 @@ module Scanner = struct
          peek scanner == CharacterCodes.forwardslash then (
         next scanner;
         next scanner
-      ) else if scanner.ch == CharacterCodes.eol then (
+      ) else if scanner.ch == CharacterCodes.eof then (
         let startPos = position scanner in
         let len = scanner.rdOffset - scanner.offset in
         scanner.err ~startPos ~len Diagnostics.unclosedComment
       ) else (
+        if CharacterCodes.isLineBreak scanner.ch then (
+          scanner.lineOffset <- scanner.offset + 1;
+          scanner.lnum <- scanner.lnum + 1;
+        );
         next scanner;
         scan ()
       )
@@ -1333,7 +1287,7 @@ module Scanner = struct
     let startOff = scanner.offset in
 
     let rec scan () =
-      if scanner.ch == CharacterCodes.eol then (
+      if scanner.ch == CharacterCodes.eof then (
         let startPos = position scanner in
         let len = scanner.rdOffset - scanner.offset in
         scanner.err ~startPos ~len Diagnostics.unclosedTemplate;
@@ -1360,6 +1314,10 @@ module Scanner = struct
           popMode scanner Template;
           Token.TemplatePart contents
       ) else (
+        if CharacterCodes.isLineBreak scanner.ch then (
+          scanner.lineOffset <- scanner.offset + 1;
+          scanner.lnum <- scanner.lnum + 1;
+        );
         next scanner;
         scan()
       )
@@ -1588,7 +1546,7 @@ module Scanner = struct
         token
       )
     end in
-    let endPos = computeEndPosition scanner in
+    let endPos = position scanner in
     (startPos, endPos, token)
 
   and scanForwardSlashOrTupleEnding scanner =
