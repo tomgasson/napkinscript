@@ -2723,8 +2723,8 @@ Solution: you need to pull out each field you want explicitly."
     let startPos = p.Parser.startPos in
     (* TODO: this is a shift reduce conflict, we reduce here :)
      * let f = ( @attr x ) => x + 1; -> on pattern x or on Pexp_fun? *)
-    let attrs = parseAttributes p in
     let uncurried = Parser.optional p Token.Dot in
+    let attrs = parseAttributes p in
     let (lbl, pat) = match p.Parser.token with
     | Tilde ->
       Parser.next p;
@@ -4217,8 +4217,8 @@ Solution: you need to pull out each field you want explicitly."
     *)
   and parseTypeParameter p =
     let startPos = p.Parser.startPos in
-    let attrs = parseAttributes p in
     let uncurried = Parser.optional p Dot in
+    let attrs = parseAttributes p in
     match p.Parser.token with
     | Tilde ->
       Parser.next p;
@@ -4250,15 +4250,17 @@ Solution: you need to pull out each field you want explicitly."
     Parser.expect Rparen p;
     params
 
-  and parseEs6ArrowType p =
+  and parseEs6ArrowType ~attrs p =
     let parameters = parseTypeParameters p in
     Parser.expect EqualGreater p;
     let returnType = parseTypExpr ~alias:false p in
     let endPos = p.prevEndPos in
-    List.fold_right (fun (uncurried, attrs, argLbl, typ, startPos) t ->
+    let typ = List.fold_right (fun (uncurried, attrs, argLbl, typ, startPos) t ->
       let attrs = if uncurried then uncurryAttr::attrs else attrs in
       Ast_helper.Typ.arrow ~loc:(mkLoc startPos endPos) ~attrs argLbl typ t
     ) parameters returnType
+    in
+    {typ with ptyp_attributes = typ.ptyp_attributes @ attrs}
 
   (*
    * typexpr ::=
@@ -4284,7 +4286,7 @@ Solution: you need to pull out each field you want explicitly."
     Parser.leaveBreadcrumb p Grammar.TypeExpression;
     let attrs = parseAttributes p in
     let typ = if es6Arrow && isEs6ArrowType p then
-      parseEs6ArrowType p
+      parseEs6ArrowType ~attrs p
     else
       let typ = parseAtomicTypExpr ~attrs p in
       match p.Parser.token with
