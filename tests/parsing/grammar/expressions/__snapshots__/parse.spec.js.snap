@@ -1,5 +1,14 @@
 // Jest Snapshot v1, https://goo.gl/fbAQLP
 
+exports[`apply.js 1`] = `
+";;foo (fun _ -> bla) blaz
+;;foo (fun _ -> bla) blaz
+;;foo ((fun _ -> bla)[@bs ]) blaz
+;;foo (fun _ -> bla) (fun _ -> blaz)
+;;List.map (fun x -> x + 1) myList
+;;List.reduce (fun acc -> fun curr -> acc + curr) 0 myList"
+`;
+
 exports[`array.js 1`] = `
 "let x = [|1;2;3|]
 let x = [|1;2;3|]
@@ -720,6 +729,25 @@ let f =
   [@bs ])
 ;;((add 1 2)[@bs ])
 ;;((((((add 2 3 4)[@bs ]) 5 6 7)[@bs ]) 8 9 10)[@bs ])"
+`;
+
+exports[`underscoreApply.js 1`] = `
+"let l =
+  ([1; 2; 3] |. (fun __x -> List.map (fun i -> i + 1) __x)) |.
+    (fun __x -> List.filter (fun i -> i > 0) __x)
+let l = (fun i -> i + 1) |. (fun __x -> List.map __x [|1;2;3|])
+let x __x = List.length __x
+let nested x __x = List.length __x
+let incr ~v  = v + 1
+let l1 = ([1; 2; 3] |> (List.map (fun __x -> incr ~v:__x))) |> List.length
+let l2 = ([1; 2; 3] |> (List.map (fun __x -> incr ~v:__x))) |> List.length
+let optParam ?v  () = if v = None then 0 else 1
+let l1 =
+  ([Some 1; None; Some 2] |> (List.map (fun __x -> optParam ?v:__x ()))) |>
+    List.length
+let l2 =
+  ([Some 1; None; Some 2] |> (List.map (fun __x -> optParam ?v:__x ()))) |>
+    List.length"
 `;
 
 exports[`while.js 1`] = `

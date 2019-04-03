@@ -601,7 +601,7 @@ module Grammar = struct
     | _ -> false
 
   let isArgumentStart = function
-    | Token.Tilde | Dot -> true
+    | Token.Tilde | Dot | Underscore -> true
     | t when isExprStart t -> true
     | _ -> false
 
@@ -2053,6 +2053,37 @@ Solution: you need to pull out each field you want explicitly."
     match Longident.flatten longident |> List.rev with
     | [] -> ""
     | ident::_ -> ident
+
+  (**
+    * process the occurrence of _ in the arguments of a function application
+    * replace _ with a new variable, currently __x, in the arguments
+    * return a wrapping function that wraps ((__x) => ...) around an expression
+    * e.g. foo(_, 3) becomes (__x) => foo(__x, 3)
+    *)
+  let processUnderscoreApplication args =
+    let open Parsetree in
+    let exp_question = ref None in
+    let hidden_var = "__x" in
+    let check_arg ((lab, exp) as arg) =
+      match exp.pexp_desc with
+      | Pexp_ident ({ txt = Lident "_"} as id) ->
+        let new_id = Location.mkloc (Longident.Lident hidden_var) id.loc in
+        let new_exp = Ast_helper.Exp.mk (Pexp_ident new_id) ~loc:exp.pexp_loc in
+        exp_question := Some new_exp;
+        (lab, new_exp)
+      | _ ->
+        arg
+    in
+    let args = List.map check_arg args in
+    let wrap exp_apply =
+      match !exp_question with
+      | Some {pexp_loc=loc} ->
+        let pattern = Ast_helper.Pat.mk (Ppat_var (Location.mkloc hidden_var loc)) ~loc in
+        Ast_helper.Exp.mk (Pexp_fun (Nolabel, None, pattern, exp_apply)) ~loc
+      | None ->
+        exp_apply
+    in
+    (args, wrap)
 
   (* Ldot (Ldot (Lident "Foo", "Bar"), "baz") *)
   let parseValuePath p =
@@ -3839,14 +3870,17 @@ Solution: you need to pull out each field you want explicitly."
 
   (*
    * argument ::=
+   *   | _                            (* syntax sugar *)
    *   | expr
    *   | expr : type
    *   | ~ label-name
    *   | ~ label-name
    *   | ~ label-name ?
    *   | ~ label-name =   expr
+   *   | ~ label-name =   _           (* syntax sugar *)
    *   | ~ label-name =   expr : type
    *   | ~ label-name = ? expr
+   *   | ~ label-name = ? _           (* syntax sugar *)
    *   | ~ label-name = ? expr : type
    *
    *  uncurried_argument ::=
@@ -3855,6 +3889,14 @@ Solution: you need to pull out each field you want explicitly."
   and parseArgument p =
     let uncurried = Parser.optional p Dot in
     match p.Parser.token with
+    (* foo(_), do not confuse with foo(_ => x), TODO: performance *)
+    | Underscore when not (isEs6ArrowExpression ~inTernary:false p) ->
+      let loc = mkLoc p.startPos p.endPos in
+      Parser.next p;
+      let exp = Ast_helper.Exp.ident ~loc (
+        Location.mkloc (Longident.Lident "_") loc
+      ) in
+      (uncurried, Asttypes.Nolabel, exp)
     | Tilde ->
       Parser.next p;
       let startPos = p.startPos in
@@ -3880,7 +3922,16 @@ Solution: you need to pull out each field you want explicitly."
           | _ ->
             Labelled ident
           in
-          (uncurried, label, parseConstrainedExpr p)
+          let expr = match p.Parser.token with
+          | Underscore ->
+            let loc = mkLoc p.startPos p.endPos in
+            Parser.next p;
+            Ast_helper.Exp.ident ~loc (
+              Location.mkloc (Longident.Lident "_") loc
+            )
+          | _ -> parseConstrainedExpr p
+          in
+          (uncurried, label, expr)
         | _ ->
           (uncurried, Labelled ident, identExpr)
         end
@@ -3931,11 +3982,14 @@ Solution: you need to pull out each field you want explicitly."
     in
     let apply = List.fold_left (fun callBody group ->
       let (uncurried, args) = group in
-      if uncurried then
+      let (args, wrap) = processUnderscoreApplication args in
+      let exp = if uncurried then
         let attrs = [uncurryAttr] in
         Ast_helper.Exp.apply ~loc ~attrs callBody args
       else
         Ast_helper.Exp.apply ~loc callBody args
+      in
+      wrap exp
     ) funExpr args
     in
     Parser.eatBreadcrumb p;
