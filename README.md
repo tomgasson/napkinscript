@@ -1,7 +1,7 @@
 # napkinscript [![Build Status](https://travis-ci.org/IwanKaramazow/napkinscript.svg?branch=master)](https://travis-ci.org/IwanKaramazow/napkinscript) [![Build status](https://ci.appveyor.com/api/projects/status/a8d1hx0xi17tk14j?svg=true)](https://ci.appveyor.com/project/IwanKaramazow/napkinscript)
 
 ## Getting Started
-Install napkinscript using [`yarn`](https://yarnpkg.com/en/package/jest):
+Install napkinscript using [`yarn`](https://yarnpkg.com/en/package/napkinscript):
 
 ```bash
 yarn add --dev napkinscript
@@ -17,6 +17,13 @@ Update your `bsconfig.json`:
 ```javascript
   "pp-flags": "napkinscript",
 ```
+
+Note: if you still need an 4.02.3 ast, add:
+```javascript
+  "pp-flags": "napkinscript -ancient",
+```
+
+
 
 ## Dev Setup
 

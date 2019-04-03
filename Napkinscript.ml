@@ -5930,12 +5930,14 @@ end
 
 (* command line flags *)
 module Clflags: sig
+  val ancient: bool ref
   val recover: bool ref
   val print: string ref
   val files: string list ref
 
   val parse: unit -> unit
 end = struct
+  let ancient = ref false
   let recover = ref false
   let setRecover () = recover := true
 
@@ -5948,7 +5950,8 @@ end = struct
 
   let spec = [
     ("-recover", Arg.Unit (fun () -> recover := true), "Emit partial ast");
-    ("-print", Arg.String (fun txt -> print := txt), "Print either binary, ocaml or ast")
+    ("-print", Arg.String (fun txt -> print := txt), "Print either binary, ocaml or ast");
+    ("-ancient", Arg.Unit (fun () -> ancient := true), "Output 4.02.3 binary ast");
   ]
 
   let parse () = Arg.parse spec addFilename usage
@@ -6008,18 +6011,32 @@ end = struct
     | "ml" | "ocaml" -> Pprintast.structure Format.std_formatter ast
     | "ast" -> Printast.implementation Format.std_formatter ast
     | _ -> (* default binary *)
-      output_string stdout Config.ast_impl_magic_number;
-      output_value stdout filename;
-      output_value stdout ast
+			if !Clflags.ancient then (
+				let open Migrate_parsetree in
+				let module Convert = Convert(OCaml_406)(OCaml_402) in
+        let ast402 = Convert.copy_structure ast in
+				Ast_io.to_channel stdout filename (Ast_io.Impl ((module OCaml_402), ast402))
+			) else (
+				output_string stdout Config.ast_impl_magic_number;
+				output_value stdout filename;
+				output_value stdout ast
+			)
 
   let printInterface ~target filename ast =
     match target with
     | "ml" | "ocaml" -> Pprintast.signature Format.std_formatter ast
     | "ast" -> Printast.interface Format.std_formatter ast
     | _ -> (* default binary *)
-      output_string stdout Config.ast_intf_magic_number;
-      output_value stdout filename;
-      output_value stdout ast
+			if !Clflags.ancient then (
+				let open Migrate_parsetree in
+				let module Convert = Convert(OCaml_406)(OCaml_402) in
+        let ast402 = Convert.copy_signature ast in
+				Ast_io.to_channel stdout filename (Ast_io.Intf ((module OCaml_402), ast402))
+			) else (
+				output_string stdout Config.ast_intf_magic_number;
+				output_value stdout filename;
+				output_value stdout ast
+			)
 
   let processFile ~recover ~target filename =
     try
