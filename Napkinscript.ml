@@ -2347,8 +2347,6 @@ Solution: you need to pull out each field you want explicitly."
   (* let-binding	::=	pattern =  expr   *)
      (* ∣	 value-name  { parameter }  [: typexpr]  [:> typexpr] =  expr   *)
      (* ∣	 value-name :  poly-typexpr =  expr   *)
-  (* let parseLetBinding p = *)
-    (* let   *)
 
    (* pattern	::=	value-name   *)
      (* ∣	 _   *)
@@ -4125,6 +4123,12 @@ Solution: you need to pull out each field you want explicitly."
           let typ = parseTypExpr p in
           let loc = mkLoc startPos p.prevEndPos in
           Ast_helper.Typ.poly ~loc vars typ
+        | EqualGreater ->
+          Parser.next p;
+          let typ = Ast_helper.Typ.var ~loc:var.loc var.txt in
+          let returnType = parseTypExpr ~alias:false p in
+          let loc = mkLoc typ.Parsetree.ptyp_loc.loc_start p.prevEndPos in
+          Ast_helper.Typ.arrow ~loc Asttypes.Nolabel typ returnType
         | _ ->
           Ast_helper.Typ.var ~loc:var.loc var.txt
         end

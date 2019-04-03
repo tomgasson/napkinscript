@@ -73,6 +73,15 @@ let (t : [%raw.typ ]) = x
 let (t : [%raw.typ \\"ex\\"]) = x"
 `;
 
+exports[`poly.js 1`] = `
+"external getLogger :
+  unit ->
+    <
+      log: 'a -> unit  ;log2: 'a . int -> int  ;log3: 'a 'b . 'a -> 'b -> int
+                                                    > 
+      Js.t = \\"./src/logger.mock.js\\""
+`;
+
 exports[`tuple.js 1`] = `
 "type nonrec t = (string * int)
 type nonrec t = (int option * string option)
