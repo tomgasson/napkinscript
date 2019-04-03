@@ -2046,7 +2046,7 @@ Solution: you need to pull out each field you want explicitly."
     let jsDotTCtor =
       Location.mkloc (Longident.Ldot (Longident.Lident "Js", "t")) loc
     in
-    Ast_helper.Typ.constr ?attrs jsDotTCtor [obj]
+    Ast_helper.Typ.constr ~loc ?attrs jsDotTCtor [obj]
 
   (* TODO: diagnostic reporting *)
   let lidentOfPath longident =
@@ -3446,7 +3446,7 @@ Solution: you need to pull out each field you want explicitly."
         Parser.optional p Comma |> ignore;
         parseRecordExprWithStringKeys (field, fieldExpr) p
       | _ ->
-        let constant = Ast_helper.Exp.constant (Parsetree.Pconst_string(s, None)) in
+        let constant = Ast_helper.Exp.constant ~loc:field.loc (Parsetree.Pconst_string(s, None)) in
         let a = parsePrimaryExpr ~operand:constant p in
         let e = parseBinaryExpr ~a p 1 in
         let e = parseTernaryExpr e p in
@@ -3559,17 +3559,14 @@ Solution: you need to pull out each field you want explicitly."
       (field, Ast_helper.Exp.ident ~loc:field.loc  field)
 
   and parseRecordExprWithStringKeys firstRow p =
-    let startPos = p.Parser.startPos in
     let rows = firstRow::(
       parseCommaDelimitedList ~grammar:Grammar.RecordRowsStringKey ~closing:Rbrace ~f:parseRecordRowWithStringKey p
     ) in
-    let recordStrExpr =
-      Ast_helper.Exp.record rows None
-      |> Ast_helper.Str.eval
-    in
-    let endPos = p.prevEndPos in
-    let loc = mkLoc startPos endPos in
-    Ast_helper.Exp.extension
+    let loc = mkLoc ((fst firstRow).loc.loc_start) p.endPos in
+    let recordStrExpr = Ast_helper.Str.eval ~loc (
+      Ast_helper.Exp.record ~loc rows None
+    ) in
+    Ast_helper.Exp.extension ~loc
       (Location.mkloc "bs.obj" loc, Parsetree.PStr [recordStrExpr])
 
   and parseRecordExpr ?(spread=None) rows p =
