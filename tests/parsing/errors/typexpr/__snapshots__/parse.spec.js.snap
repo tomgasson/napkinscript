@@ -1,0 +1,21 @@
+// Jest Snapshot v1, https://goo.gl/fbAQLP
+
+exports[`typeConstructorArgs.js 1`] = `
+"=====Parsetree==========================================
+type nonrec 'a node = {
+  _value: 'a Js.Nullable.value }
+=====Errors=============================================
+
+File \\"/napkinscript/tests/parsing/errors/typexpr/typeConstructorArgs.js\\", line: 2, characters 28-29:
+
+
+1 │  type node<'a> = {
+[31m2[0m │    _value: Js.Nullable.value[31m([0m'a)
+3 │  }
+
+Type constructor args require diamonds, like: Belt.Map.String.t<int>
+
+
+
+========================================================"
+`;

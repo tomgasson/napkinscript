@@ -702,6 +702,7 @@ module Grammar = struct
         || token = Equal (* let {x} = foo *)
     | ExprBlock -> token = Rbrace
     | Structure -> token = Rbrace
+    | TypeParams -> token = Rparen
     | _ -> false
 
   let isPartOf grammar token =
@@ -4238,19 +4239,8 @@ Solution: you need to pull out each field you want explicitly."
       {t with ptyp_loc = mkLoc startPos endPos}
     | Uident _ | Lident _ | List ->
       let constr = parseValuePath p in
-      (* TODO extract this whole block into reusable logic, cf. type equation *)
-      begin match p.Parser.token with
-      | LessThan ->
-        let args = parseTypeConstructorArgs p in
-        Ast_helper.Typ.constr ~loc:(mkLoc startPos p.prevEndPos) ~attrs constr args
-      | Lparen ->
-        let msg = "Type constructor args require diamonds, like: Belt.Map.String.t<int>" in
-        Parser.err p (Diagnostics.message msg);
-        let args = parseTypeConstructorArgs p in
-        Ast_helper.Typ.constr ~loc:(mkLoc startPos p.prevEndPos) ~attrs constr args
-      | _ ->
-        Ast_helper.Typ.constr ~loc:constr.loc ~attrs constr []
-      end
+      let args =  parseTypeConstructorArgs p in
+      Ast_helper.Typ.constr ~loc:(mkLoc startPos p.prevEndPos) ~attrs constr args
     | Percent ->
       let (loc, extension) = parseExtension p in
       Ast_helper.Typ.extension ~loc extension
@@ -4415,15 +4405,29 @@ Solution: you need to pull out each field you want explicitly."
     Parser.expect Forwardslash p;
     Ast_helper.Typ.tuple ~loc:(mkLoc startPos p.prevEndPos) types
 
+  (* Js.Nullable.value<'a> *)
   and parseTypeConstructorArgs p =
-		Scanner.setDiamondMode p.scanner;
-		Parser.expect LessThan p;
-		let typeArgs =
-      parseCommaDelimitedList ~grammar:Grammar.TypExprList ~closing:GreaterThan ~f:parseTypExpr p
-		in
-		Parser.expect GreaterThan p;
-		Scanner.popMode p.scanner Diamond;
-		typeArgs
+    let opening = p.Parser.token in
+    match opening with
+    | LessThan | Lparen ->
+      if p.token = Lparen then (
+        let msg = "Type constructor args require diamonds, like: Belt.Map.String.t<int>" in
+        Parser.err p (Diagnostics.message msg)
+      );
+      Scanner.setDiamondMode p.scanner;
+      Parser.next p;
+      let typeArgs =
+        parseCommaDelimitedList ~grammar:Grammar.TypExprList ~closing:GreaterThan ~f:parseTypExpr p
+      in
+      let () = match p.token with
+      | Rparen when opening = Token.Lparen ->
+        Parser.next p
+      | _ ->
+        Parser.expect GreaterThan p
+      in
+      Scanner.popMode p.scanner Diamond;
+      typeArgs
+    | _ -> []
 
   and parseConstructorTypeArgs p =
 		Scanner.setDiamondMode p.Parser.scanner;
@@ -4750,11 +4754,19 @@ Solution: you need to pull out each field you want explicitly."
    *  | <type-param>
  	 *  ∣	<type-param, type-param>
  	 *  ∣	<type-param, type-param, type-param>
- 	 *  ∣	<type-param, type-param, type-param,> *)
+ 	 *  ∣	<type-param, type-param, type-param,>
+   *
+   *  TODO: when we have pretty-printer show an error
+   *  with the actual code corrected. *)
   and parseTypeParams p =
-    match p.Parser.token with
-    | LessThan ->
+    let opening = p.Parser.token in
+    match opening with
+    | LessThan | Lparen when p.startPos.pos_lnum == p.prevEndPos.pos_lnum ->
       Parser.leaveBreadcrumb p Grammar.TypeParams;
+      if (p.token = Lparen) then (
+        let msg = "Type params require diamonds, example: type node<'a>" in
+        Parser.err p (Diagnostics.message msg)
+      );
       Parser.next p;
       let params =
         parseCommaDelimitedList
@@ -4763,22 +4775,12 @@ Solution: you need to pull out each field you want explicitly."
           ~f:parseTypeParam
           p
       in
-      Parser.expect GreaterThan p;
-      Parser.eatBreadcrumb p;
-      params
-    | Lparen when p.startPos.pos_lnum == p.prevEndPos.pos_lnum ->
-      let msg = "Type parameters start with diamonds, example: type foo<'a>" in
-      Parser.err p (Diagnostics.message msg);
-      Parser.leaveBreadcrumb p Grammar.TypeParams;
-      Parser.next p;
-      let params =
-        parseCommaDelimitedList
-          ~grammar:Grammar.TypeParams
-          ~closing:GreaterThan
-          ~f:parseTypeParam
-          p
+      let () = match p.token with
+      | Rparen when opening = Token.Lparen ->
+        Parser.next p
+      | _ ->
+        Parser.expect GreaterThan p
       in
-      Parser.expect GreaterThan p;
       Parser.eatBreadcrumb p;
       params
     | _ -> []
@@ -4826,12 +4828,8 @@ Solution: you need to pull out each field you want explicitly."
         let typeConstr =
           parseValuePathTail p uidentStartPos (Longident.Lident uident)
         in
-        let typ = parseTypeAlias p (match p.Parser.token with
-        | LessThan ->
-          let args = parseTypeConstructorArgs p in
-          Ast_helper.Typ.constr typeConstr args
-        | _ ->
-          Ast_helper.Typ.constr typeConstr []
+        let typ = parseTypeAlias p (
+          Ast_helper.Typ.constr typeConstr (parseTypeConstructorArgs p)
         ) in
         begin match p.token with
         | Equal ->

@@ -1,0 +1,21 @@
+// Jest Snapshot v1, https://goo.gl/fbAQLP
+
+exports[`typeParams.js 1`] = `
+"=====Parsetree==========================================
+type nonrec 'a node = {
+  _value: 'a Js.Nullable.value }
+=====Errors=============================================
+
+File \\"/napkinscript/tests/parsing/errors/typeDef/typeParams.js\\", line: 1, characters 10-11:
+
+
+[31m1[0m │  type node[31m([0m'a) = {
+2 │    _value: Js.Nullable.value<'a>
+3 │  }
+
+Type params require diamonds, example: type node<'a>
+
+
+
+========================================================"
+`;
