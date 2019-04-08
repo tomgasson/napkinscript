@@ -1,3 +1,47 @@
+module MachTime: sig
+  type t
+
+  val init: unit -> unit
+  val now: unit -> t
+
+  val diff: t -> t -> t
+  val print: t -> float
+end = struct
+  type t = Int64.t
+
+  (* TODO: we could do this inside caml_absolute_time *)
+  external init: unit -> unit = "caml_mach_initialize"
+  external now: unit -> t = "caml_mach_absolute_time"
+
+  let diff t1 t2 = Int64.sub t2 t1
+  let print t =
+    let ms = (Int64.to_float t) *. 1e-6 in
+    ms
+end
+
+module Profile: sig
+  val record : name:string -> (unit -> 'a) -> 'a
+  val print: unit -> unit
+end = struct
+  let state = Hashtbl.create 2
+
+  let record ~name f =
+    let startTime = MachTime.now() in
+    let result = f() in
+    let endTime = MachTime.now() in
+
+    Hashtbl.add state name (MachTime.diff startTime endTime);
+    result
+
+  let print () =
+    let report = Hashtbl.fold (fun k v acc ->
+      let line = Printf.sprintf "%s: %fms\n" k (MachTime.print v) in
+      acc ^ line
+    ) state "\n\n"
+    in
+    print_endline report
+end
+
 module IO: sig
   val readFile: string -> string
 end = struct
@@ -5932,6 +5976,7 @@ end
 module Clflags: sig
   val ancient: bool ref
   val recover: bool ref
+  val profile: bool ref
   val print: string ref
   val files: string list ref
 
@@ -5939,6 +5984,7 @@ module Clflags: sig
 end = struct
   let ancient = ref false
   let recover = ref false
+  let profile = ref false
   let setRecover () = recover := true
 
   let files = ref []
@@ -5952,6 +5998,7 @@ end = struct
     ("-recover", Arg.Unit (fun () -> recover := true), "Emit partial ast");
     ("-print", Arg.String (fun txt -> print := txt), "Print either binary, ocaml or ast");
     ("-ancient", Arg.Unit (fun () -> ancient := true), "Output 4.02.3 binary ast");
+    ("-profile", Arg.Unit (fun () -> profile := true), "Enable performance profiling");
   ]
 
   let parse () = Arg.parse spec addFilename usage
@@ -5989,18 +6036,18 @@ end = struct
     parseFile Signature filename
 
   let process parseFn printFn recover filename =
-    let (ast, report) = parseFn filename in
+    let (ast, report) =
+      Profile.record ~name:"parser" (fun () -> parseFn filename)
+    in
     match report with
     | Some report when recover = true ->
       printFn ast;
       prerr_string report;
-      exit 0
     | Some report ->
       prerr_string report;
       exit 1
     | None ->
-      printFn ast;
-      exit 0
+      printFn ast
 
   type action =
     | ProcessImplementation
@@ -6011,32 +6058,32 @@ end = struct
     | "ml" | "ocaml" -> Pprintast.structure Format.std_formatter ast
     | "ast" -> Printast.implementation Format.std_formatter ast
     | _ -> (* default binary *)
-			if !Clflags.ancient then (
-				let open Migrate_parsetree in
-				let module Convert = Convert(OCaml_406)(OCaml_402) in
+      if !Clflags.ancient then (
+        let open Migrate_parsetree in
+        let module Convert = Convert(OCaml_406)(OCaml_402) in
         let ast402 = Convert.copy_structure ast in
-				Ast_io.to_channel stdout filename (Ast_io.Impl ((module OCaml_402), ast402))
-			) else (
+        Ast_io.to_channel stdout filename (Ast_io.Impl ((module OCaml_402), ast402))
+      ) else (
 				output_string stdout Config.ast_impl_magic_number;
 				output_value stdout filename;
 				output_value stdout ast
-			)
+      )
 
   let printInterface ~target filename ast =
     match target with
     | "ml" | "ocaml" -> Pprintast.signature Format.std_formatter ast
     | "ast" -> Printast.interface Format.std_formatter ast
     | _ -> (* default binary *)
-			if !Clflags.ancient then (
-				let open Migrate_parsetree in
-				let module Convert = Convert(OCaml_406)(OCaml_402) in
+      if !Clflags.ancient then (
+        let open Migrate_parsetree in
+        let module Convert = Convert(OCaml_406)(OCaml_402) in
         let ast402 = Convert.copy_signature ast in
-				Ast_io.to_channel stdout filename (Ast_io.Intf ((module OCaml_402), ast402))
-			) else (
+        Ast_io.to_channel stdout filename (Ast_io.Intf ((module OCaml_402), ast402))
+      ) else (
 				output_string stdout Config.ast_intf_magic_number;
 				output_value stdout filename;
 				output_value stdout ast
-			)
+      )
 
   let processFile ~recover ~target filename =
     try
@@ -6055,8 +6102,10 @@ end = struct
 end
 
 let () =
+  MachTime.init();
   Clflags.parse ();
   List.iter (fun filename ->
     Driver.processFile ~recover:!Clflags.recover ~target:!Clflags.print filename
   ) !Clflags.files;
+  if !Clflags.profile then Profile.print();
   exit 0

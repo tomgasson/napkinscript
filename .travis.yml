@@ -14,7 +14,7 @@ script:
   - bash -ex .travis-opam.sh
   - npm install
   - opam switch create 4.06.1
-  - eval $(opam env)
+  - eval $(opam config env)
   - ocamlopt -v
   - make test
 
