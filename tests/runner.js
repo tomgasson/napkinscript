@@ -10,7 +10,7 @@ function parseFile(filename, recover) {
   args.push(filename);
   return cp.spawnSync(parser, args);
 }
-// Parse error: /home/travis/build/IwanKaramazow/napkinscript/tests/parsing/errors/scanner/oldDerefOp.js, line: 1, col: 50
+// File "/home/travis/build/IwanKaramazow/napkinscript/tests/parsing/errors/scanner/oldDerefOp.js", line: 1, characters 4-5:
 // test output contains the full path of the file
 // this differs between multiple machines
 // Just drop "/home/travis/build/IwanKaramazow" to make the file path machine independent
@@ -19,10 +19,14 @@ let makeReproducibleFilename = txt => {
   let lines = txt.split("\n");
   for (let i = 0; i < lines.length; i++) {
     let txt = lines[i];
-    if (txt.indexOf("Parse error") === -1) {
+    if (
+      txt.indexOf("File") === -1 ||
+      txt.indexOf("line") === -1 ||
+      txt.indexOf("characters") === -1
+    ) {
       continue;
     }
-    let prefix = txt.substring(0, 13);
+    let prefix = txt.substring(0, 6); // Keep `File "`-prefix
     let suffix = txt.substring(txt.indexOf("/napkinscript"), txt.length);
     lines[i] = prefix + suffix;
   }

@@ -1010,8 +1010,14 @@ end = struct
 
   let toString t src =
     let (line, col) = computeLineCol t in
+    let endCol =
+      let endPos = {t.startPos with pos_cnum = t.startPos.pos_cnum + t.length} in
+      let (_, col) = (endPos.Lexing.pos_lnum, endPos.pos_cnum - endPos.pos_bol + 1) in
+      col
+    in
     let locationInfo =
-      Printf.sprintf "Parse error: %s, line: %d, col: %d" t.filename line col
+      Printf.sprintf (* ReasonLanguageServer requires the following format *)
+        "File \"%s\", line: %d, characters %d-%d:" t.filename line col endCol
     in
     let code =
       let endPos = {t.startPos with pos_cnum = t.startPos.pos_cnum + t.length} in
