@@ -3672,7 +3672,7 @@ Solution: you need to pull out each field you want explicitly."
         | True | False | Int _ | Float _ | String _ | Lident _ | Uident _
         | Lparen | List | Lbracket | Lbrace | Forwardslash | Assert
         | Lazy | If | For | While | Switch | Open | Module | Exception | Let
-        | LessThan | Backtick ->
+        | LessThan | Backtick | Percent ->
           parseExprBlock p
         | _ ->
           Ast_helper.Exp.construct (Location.mknoloc (Longident.Lident "()")) None
@@ -3682,7 +3682,7 @@ Solution: you need to pull out each field you want explicitly."
       | True | False | Int _ | Float _ | String _ | Lident _ | Uident _
       | Lparen | List | Lbracket | Lbrace | Forwardslash | Assert
       | Lazy | If | For | While | Switch | Open | Module | Exception | Let
-      | LessThan | Backtick ->
+      | LessThan | Backtick | Percent ->
         parseExprBlock p
       | _ ->
         Ast_helper.Exp.construct (Location.mknoloc (Longident.Lident "()")) None
@@ -3697,7 +3697,7 @@ Solution: you need to pull out each field you want explicitly."
       | True | False | Int _ | Float _ | String _ | Lident _ | Uident _
       | Lparen | List | Lbracket | Lbrace | Forwardslash | Assert
       | Lazy | If | For | While | Switch | Open | Module | Exception | Let
-      | LessThan | Backtick ->
+      | LessThan | Backtick | Percent ->
         let e2 = parseExprBlock p in
         Ast_helper.Exp.sequence e1 e2
       | _ -> e1
@@ -3727,7 +3727,7 @@ Solution: you need to pull out each field you want explicitly."
         Parser.next p;
         begin match p.Parser.token with
         (* seq expr start *)
-        | At | Minus | MinusDot | Plus | PlusDot | Bang | Band
+        | At | Percent | Minus | MinusDot | Plus | PlusDot | Bang | Band
         | True | False | Int _ | String _ | Lident _ | Uident _
         | Lparen | List | Lbracket | Lbrace | Forwardslash | Assert
         | Lazy | If | For | While | Switch | Open | Module | Exception | Let
@@ -3744,7 +3744,7 @@ Solution: you need to pull out each field you want explicitly."
           | True | False | Int _ | String _ | Lident _ | Uident _
           | Lparen | List | Lbracket | Lbrace | Forwardslash | Assert
           | Lazy | If | For | While | Switch | Open | Module | Exception | Let
-          | LessThan | Backtick -> true
+          | LessThan | Backtick | Percent -> true
           | _ -> false
           end
         ->
@@ -3754,7 +3754,7 @@ Solution: you need to pull out each field you want explicitly."
           | True | False | Int _ | String _ | Lident _ | Uident _
           | Lparen | List | Lbracket | Lbrace | Forwardslash | Assert
           | Lazy | If | For | While | Switch | Open | Module | Exception | Let
-          | LessThan | Backtick ->
+          | LessThan | Backtick | Percent ->
             let next = parseExprBlockItem p in
             ignore(Parser.optional p Semicolon);
             Ast_helper.Exp.sequence item next

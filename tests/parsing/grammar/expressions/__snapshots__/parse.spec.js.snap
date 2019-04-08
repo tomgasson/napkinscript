@@ -87,7 +87,9 @@ let res =
   let a = \\"a is always a string\\" in
   print_string a; (let b = 30 in print_int b)
 let nestedLet = let _ = 1 in ()
-let nestedLet = let _ = 1 in 2"
+let nestedLet = let _ = 1 in 2
+let init () = foo (1 == 1); [%assert 1 == 2]
+let init () = [%assert 1 == 2]; foo (1 == 1); [%assert 1 == 2]"
 `;
 
 exports[`bracedOrRecord.js 1`] = `

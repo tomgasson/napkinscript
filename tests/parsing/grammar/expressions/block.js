@@ -103,3 +103,18 @@ let nestedLet = {
   let _ = 1
   2
 }
+
+let init = () => {
+  foo(
+    1===1
+  )
+  %assert(1 === 2)
+}
+
+let init = () => {
+  %assert(1 === 2)
+  foo(
+    1===1
+  )
+  %assert(1 === 2)
+}
