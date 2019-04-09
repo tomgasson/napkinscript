@@ -1020,7 +1020,7 @@ end = struct
     let endchar = t.endPos.pos_cnum - t.startPos.pos_cnum + startchar in
     let locationInfo =
       Printf.sprintf (* ReasonLanguageServer requires the following format *)
-        "File \"%s\", line: %d, characters %d-%d:"
+        "File \"%s\", line %d, characters %d-%d:"
         t.filename
         t.startPos.pos_lnum
         startchar

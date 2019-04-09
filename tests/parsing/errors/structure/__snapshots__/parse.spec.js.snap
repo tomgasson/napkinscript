@@ -11,7 +11,7 @@ let (keyTable : int Belt.Map.String.t) = [%napkinscript.exprhole ]
 let foo = [%napkinscript.exprhole ]
 =====Errors=============================================
 
-File \\"/napkinscript/tests/parsing/errors/structure/letBinding.js\\", line: 2, characters 17-20:
+File \\"/napkinscript/tests/parsing/errors/structure/letBinding.js\\", line 2, characters 17-20:
 
 
 1 │  // missing =
@@ -23,7 +23,7 @@ File \\"/napkinscript/tests/parsing/errors/structure/letBinding.js\\", line: 2, 
 Did you forget a \`=\` here? 
 
 
-File \\"/napkinscript/tests/parsing/errors/structure/letBinding.js\\", line: 8, characters 11-13:
+File \\"/napkinscript/tests/parsing/errors/structure/letBinding.js\\", line 8, characters 11-13:
 
 
 6 │  let x = {
@@ -36,7 +36,7 @@ File \\"/napkinscript/tests/parsing/errors/structure/letBinding.js\\", line: 8, 
 Did you forget a \`=\` here? 
 
 
-File \\"/napkinscript/tests/parsing/errors/structure/letBinding.js\\", line: 14, characters 18-26:
+File \\"/napkinscript/tests/parsing/errors/structure/letBinding.js\\", line 14, characters 18-26:
 
 
 12 │  let t = {
@@ -49,7 +49,7 @@ File \\"/napkinscript/tests/parsing/errors/structure/letBinding.js\\", line: 14,
 Did you forget a \`=\` here? 
 
 
-File \\"/napkinscript/tests/parsing/errors/structure/letBinding.js\\", line: 18, characters 38-43:
+File \\"/napkinscript/tests/parsing/errors/structure/letBinding.js\\", line 18, characters 38-43:
 
 
 16 │  }
@@ -61,7 +61,7 @@ File \\"/napkinscript/tests/parsing/errors/structure/letBinding.js\\", line: 18,
 This let-binding misses an expression
 
 
-File \\"/napkinscript/tests/parsing/errors/structure/letBinding.js\\", line: 20, characters 9-11:
+File \\"/napkinscript/tests/parsing/errors/structure/letBinding.js\\", line 20, characters 9-11:
 
 
 18 │  let keyTable: Belt.Map.String.t<int> =

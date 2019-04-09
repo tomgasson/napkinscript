@@ -5,7 +5,7 @@ exports[`arrow.js 1`] = `
 external add_nat : nat -> int = \\"add_nat_bytecode\\" \\"add_nat_native\\"
 =====Errors=============================================
 
-File \\"/napkinscript/tests/parsing/errors/typexpr/arrow.js\\", line: 2, characters 21-24:
+File \\"/napkinscript/tests/parsing/errors/typexpr/arrow.js\\", line 2, characters 21-24:
 
 
 1 │  // notice usage of -> instead of =>
@@ -27,7 +27,7 @@ type nonrec 'a t = 'a Belt.Map.t
 type nonrec 'a t = private 'a Belt.Map.t
 =====Errors=============================================
 
-File \\"/napkinscript/tests/parsing/errors/typexpr/typeConstructorArgs.js\\", line: 2, characters 27-28:
+File \\"/napkinscript/tests/parsing/errors/typexpr/typeConstructorArgs.js\\", line 2, characters 27-28:
 
 
 1 │  type node<'a> = {
@@ -38,7 +38,7 @@ File \\"/napkinscript/tests/parsing/errors/typexpr/typeConstructorArgs.js\\", li
 Type constructor args require diamonds, like: Belt.Map.String.t<int>
 
 
-File \\"/napkinscript/tests/parsing/errors/typexpr/typeConstructorArgs.js\\", line: 5, characters 23-24:
+File \\"/napkinscript/tests/parsing/errors/typexpr/typeConstructorArgs.js\\", line 5, characters 23-24:
 
 
 3 │  }
@@ -49,7 +49,7 @@ File \\"/napkinscript/tests/parsing/errors/typexpr/typeConstructorArgs.js\\", li
 Type constructor args require diamonds, like: Belt.Map.String.t<int>
 
 
-File \\"/napkinscript/tests/parsing/errors/typexpr/typeConstructorArgs.js\\", line: 6, characters 31-32:
+File \\"/napkinscript/tests/parsing/errors/typexpr/typeConstructorArgs.js\\", line 6, characters 31-32:
 
 
 4 │  

@@ -5,7 +5,7 @@ exports[`array.js 1`] = `
 let xs = x.map (fun key -> [|key;(predicates.(key))|])
 =====Errors=============================================
 
-File \\"/napkinscript/tests/parsing/errors/expressions/array.js\\", line: 2, characters 43-44:
+File \\"/napkinscript/tests/parsing/errors/expressions/array.js\\", line 2, characters 43-44:
 
 
 1 │  // missing ] before )
@@ -25,7 +25,7 @@ exports[`arrow.js 1`] = `
     (fun elements -> fun providerId -> let x = 1 in let b = 2 in x + b)
 =====Errors=============================================
 
-File \\"/napkinscript/tests/parsing/errors/expressions/arrow.js\\", line: 1, characters 52-55:
+File \\"/napkinscript/tests/parsing/errors/expressions/arrow.js\\", line 1, characters 52-55:
 
 
 [31m1[0m │  Object.keys(providers).reduce((elements, providerId] => {          
@@ -61,7 +61,7 @@ let x = loop 0 (Nil |. (push doc))
   | Join (doc1, doc2) -> (buffer |. (Buffer.add_string indentation); loop ())
 =====Errors=============================================
 
-File \\"/napkinscript/tests/parsing/errors/expressions/block.js\\", line: 14, characters 3-5:
+File \\"/napkinscript/tests/parsing/errors/expressions/block.js\\", line 14, characters 3-5:
 
 
 12 │  
@@ -74,7 +74,7 @@ File \\"/napkinscript/tests/parsing/errors/expressions/block.js\\", line: 14, ch
 Did you forget a \`)\` here? 
 
 
-File \\"/napkinscript/tests/parsing/errors/expressions/block.js\\", line: 18, characters 24-26:
+File \\"/napkinscript/tests/parsing/errors/expressions/block.js\\", line 18, characters 24-26:
 
 
 16 │  
@@ -87,7 +87,7 @@ File \\"/napkinscript/tests/parsing/errors/expressions/block.js\\", line: 18, ch
 Did you forget a \`)\` here? 
 
 
-File \\"/napkinscript/tests/parsing/errors/expressions/block.js\\", line: 26, characters 6-8:
+File \\"/napkinscript/tests/parsing/errors/expressions/block.js\\", line 26, characters 6-8:
 
 
 24 │  | Join(doc1, doc2) =>
@@ -108,7 +108,7 @@ exports[`if.js 1`] = `
 ;;if match then let a = 1 in a + 1
 =====Errors=============================================
 
-File \\"/napkinscript/tests/parsing/errors/expressions/if.js\\", line: 2, characters 10-16:
+File \\"/napkinscript/tests/parsing/errors/expressions/if.js\\", line 2, characters 10-16:
 
 
 1 │  // missing brace below
@@ -132,7 +132,7 @@ exports[`setField.js 1`] = `
   else sideEffect ()
 =====Errors=============================================
 
-File \\"/napkinscript/tests/parsing/errors/expressions/setField.js\\", line: 4, characters 29-31:
+File \\"/napkinscript/tests/parsing/errors/expressions/setField.js\\", line 4, characters 29-31:
 
 
 2 │    let a = 1
