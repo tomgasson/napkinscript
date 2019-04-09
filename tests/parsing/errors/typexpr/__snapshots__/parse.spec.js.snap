@@ -37,7 +37,7 @@ File \\"/napkinscript/tests/parsing/errors/typexpr/typeConstructorArgs.js\\", li
 3 │  }
 4 │  
 
-Type constructor args require diamonds, like: Belt.Map.String.t<int>
+Type parameters need to be wrapped in angle brackets, not parentheses, like so: \\"Belt.Map.String.t<int>\\"
 
 
 File \\"/napkinscript/tests/parsing/errors/typexpr/typeConstructorArgs.js\\", line 5, characters 23-24:
@@ -49,7 +49,7 @@ File \\"/napkinscript/tests/parsing/errors/typexpr/typeConstructorArgs.js\\", li
 6 │  type t<'a> = private Belt.Map.t('a)
 7 │  
 
-Type constructor args require diamonds, like: Belt.Map.String.t<int>
+Type parameters need to be wrapped in angle brackets, not parentheses, like so: \\"Belt.Map.String.t<int>\\"
 
 
 File \\"/napkinscript/tests/parsing/errors/typexpr/typeConstructorArgs.js\\", line 6, characters 31-32:
@@ -61,7 +61,7 @@ File \\"/napkinscript/tests/parsing/errors/typexpr/typeConstructorArgs.js\\", li
 7 │  
 8 │  type t = option<<node<int>>
 
-Type constructor args require diamonds, like: Belt.Map.String.t<int>
+Type parameters need to be wrapped in angle brackets, not parentheses, like so: \\"Belt.Map.String.t<int>\\"
 
 
 File \\"/napkinscript/tests/parsing/errors/typexpr/typeConstructorArgs.js\\", line 9, characters 15-16:
@@ -71,7 +71,7 @@ File \\"/napkinscript/tests/parsing/errors/typexpr/typeConstructorArgs.js\\", li
 8 │  type t = option<<node<int>>
 [31m9[0m │  type t = option[31m([0m<node<int>>)
 
-Type constructor args require diamonds, like: Belt.Map.String.t<int>
+Type parameters need to be wrapped in angle brackets, not parentheses, like so: \\"Belt.Map.String.t<int>\\"
 
 
 File \\"/napkinscript/tests/parsing/errors/typexpr/typeConstructorArgs.js\\", line 9, characters 27-28:

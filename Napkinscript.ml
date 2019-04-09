@@ -4450,12 +4450,13 @@ Solution: you need to pull out each field you want explicitly."
     match opening with
     | LessThan | Lparen ->
       if p.token = Lparen then (
-        let msg = "Type constructor args require diamonds, like: Belt.Map.String.t<int>" in
+        let msg = "Type parameters need to be wrapped in angle brackets, not parentheses, like so: \"Belt.Map.String.t<int>\"" in
         Parser.err p (Diagnostics.message msg)
       );
       Scanner.setDiamondMode p.scanner;
       Parser.next p;
       let typeArgs =
+        (* TODO: change Grammar.TypExprList to TypArgList!!! *)
         parseCommaDelimitedList ~grammar:Grammar.TypExprList ~closing:GreaterThan ~f:parseTypeConstructorArg p
       in
       let () = match p.token with
