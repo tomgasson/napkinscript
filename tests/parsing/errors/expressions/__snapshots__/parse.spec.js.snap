@@ -1,5 +1,45 @@
 // Jest Snapshot v1, https://goo.gl/fbAQLP
 
+exports[`array.js 1`] = `
+"=====Parsetree==========================================
+let xs = x.map (fun key -> [|key;(predicates.(key))|])
+=====Errors=============================================
+
+File \\"/napkinscript/tests/parsing/errors/expressions/array.js\\", line: 2, characters 43-44:
+
+
+1 │  // missing ] before )
+[31m2[0m │  let xs = x.map(key => [key, predicates[key])          
+                                                 [31m^[0m
+
+Did you forget a \`]\` here? 
+
+
+
+========================================================"
+`;
+
+exports[`arrow.js 1`] = `
+"=====Parsetree==========================================
+;;(Object.keys providers).reduce
+    (fun elements -> fun providerId -> let x = 1 in let b = 2 in x + b)
+=====Errors=============================================
+
+File \\"/napkinscript/tests/parsing/errors/expressions/arrow.js\\", line: 1, characters 52-55:
+
+
+[31m1[0m │  Object.keys(providers).reduce((elements, providerId] => {          
+                                                          [31m^[0m
+2 │    let x = 1
+3 │    let b = 2
+
+Did you forget a \`)\` here? 
+
+
+
+========================================================"
+`;
+
 exports[`block.js 1`] = `
 "=====Parsetree==========================================
 let findThreadByIdLinearScan ~threads  ~id  =
@@ -14,9 +54,14 @@ let findThreadByIdLinearScan ~threads  ~id  =
            | Unknown { id } ->
                (unknown.id |. Js.String.make) |. FBID.ofStringUnsafe in
          thisId == id)
+let x = loop 0 (Nil |. (push doc))
+;;match stack with
+  | Empty -> [%napkinscript.exprhole ]
+  | Cons (doc, rest) -> ()
+  | Join (doc1, doc2) -> (buffer |. (Buffer.add_string indentation); loop ())
 =====Errors=============================================
 
-File \\"/napkinscript/tests/parsing/errors/expressions/block.js\\", line: 14, characters 4-5:
+File \\"/napkinscript/tests/parsing/errors/expressions/block.js\\", line: 14, characters 3-5:
 
 
 12 │  
@@ -24,8 +69,79 @@ File \\"/napkinscript/tests/parsing/errors/expressions/block.js\\", line: 14, ch
 [31m14[0m │    }          
          [31m^[0m
 15 │  }
+16 │  
 
 Did you forget a \`)\` here? 
+
+
+File \\"/napkinscript/tests/parsing/errors/expressions/block.js\\", line: 18, characters 24-26:
+
+
+16 │  
+17 │  let x = {
+[31m18[0m │    loop(0, Nil->push(doc)          
+                              [31m^[0m
+19 │  } // closing ) above is missing
+20 │  
+
+Did you forget a \`)\` here? 
+
+
+File \\"/napkinscript/tests/parsing/errors/expressions/block.js\\", line: 26, characters 6-8:
+
+
+24 │  | Join(doc1, doc2) =>
+25 │  	buffer->Buffer.add_string(indentation)
+[31m26[0m │  	loop(          
+            [31m^[0m
+27 │  }
+
+Did you forget a \`)\` here? 
+
+
+
+========================================================"
+`;
+
+exports[`if.js 1`] = `
+"=====Parsetree==========================================
+;;if match then let a = 1 in a + 1
+=====Errors=============================================
+
+File \\"/napkinscript/tests/parsing/errors/expressions/if.js\\", line: 2, characters 10-16:
+
+
+1 │  // missing brace below
+[31m2[0m │  if (match)          
+                [31m^[0m
+3 │    let a = 1
+4 │    a + 1
+
+Did you forget a \`{\` here? 
+
+
+
+========================================================"
+`;
+
+exports[`setField.js 1`] = `
+"=====Parsetree==========================================
+;;if match
+  then
+    let a = 1 in (m.left).compatibleTypeArgs <- ([%napkinscript.exprhole ])
+  else sideEffect ()
+=====Errors=============================================
+
+File \\"/napkinscript/tests/parsing/errors/expressions/setField.js\\", line: 4, characters 29-31:
+
+
+2 │    let a = 1
+3 │  	// notice missing expression after = 
+[31m4[0m │    m.left.compatibleTypeArgs =
+5 │  } else {
+6 │    sideEffect()
+
+It seems that this record field mutation misses an expression
 
 
 

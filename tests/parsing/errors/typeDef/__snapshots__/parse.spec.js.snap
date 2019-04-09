@@ -1,12 +1,32 @@
 // Jest Snapshot v1, https://goo.gl/fbAQLP
 
+exports[`typeDef.js 1`] = `
+"=====Parsetree==========================================
+type stack =
+  | Empty 
+=====Errors=============================================
+
+File \\"/napkinscript/tests/parsing/errors/typeDef/typeDef.js\\", line: 1, characters 14-18:
+
+
+[31m1[0m │  type rec stack          
+                    [31m^[0m
+2 │    | Empty
+
+Did you forget a \`=\` here? 
+
+
+
+========================================================"
+`;
+
 exports[`typeParams.js 1`] = `
 "=====Parsetree==========================================
 type nonrec 'a node = {
   _value: 'a Js.Nullable.value }
 =====Errors=============================================
 
-File \\"/napkinscript/tests/parsing/errors/typeDef/typeParams.js\\", line: 1, characters 10-11:
+File \\"/napkinscript/tests/parsing/errors/typeDef/typeParams.js\\", line: 1, characters 9-10:
 
 
 [31m1[0m │  type node[31m([0m'a) = {

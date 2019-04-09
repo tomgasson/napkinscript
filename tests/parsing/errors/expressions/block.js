@@ -13,3 +13,15 @@ let findThreadByIdLinearScan = (~threads, ~id) => {
     thisId === id
   }
 }
+
+let x = {
+  loop(0, Nil->push(doc)
+} // closing ) above is missing
+
+switch stack {
+| Empty =>
+| Cons(doc, rest) => ()
+| Join(doc1, doc2) =>
+	buffer->Buffer.add_string(indentation)
+	loop(
+}

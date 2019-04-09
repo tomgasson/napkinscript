@@ -703,6 +703,7 @@ module Grammar = struct
     | ExprBlock -> token = Rbrace
     | Structure -> token = Rbrace
     | TypeParams -> token = Rparen
+    | ParameterList -> token = EqualGreater || token = Lbrace
     | _ -> false
 
   let isPartOf grammar token =
@@ -868,7 +869,7 @@ module Reporting = struct
   let renderCodeContext ~missing (src : string) startPos endPos =
     let open Lexing in
     let startCol = (startPos.pos_cnum - startPos.pos_bol) in
-    let endCol = (endPos.pos_cnum - endPos.pos_bol) in
+    let endCol = endPos.pos_cnum - startPos.pos_cnum + startCol in
     let startLine = max 1 (startPos.pos_lnum - 2) in (* 2 lines before *)
     let lines =  String.split_on_char '\n' src in
     let endLine =
@@ -901,18 +902,27 @@ module Reporting = struct
         else txt
       in
       let len =
-        if endCol >= 0 then
+        let len = if endCol >= 0 then
           endCol - startCol
         else
           1
+        in
+        if (startCol + len) > String.length x then String.length x - startCol - 1 else len
       in
       let line =
         if ix = startPos.pos_lnum then
           begin match missing with
           | Some len ->
             underline
-            ~from:(startCol + String.length (String.length (string_of_int ix) |> string_of_int) + 5) ~len x
+              ~from:(
+              startCol + String.length (String.length (string_of_int ix) |> string_of_int) + 5
+              ) ~len x
           | None ->
+              let len = if startCol + len > String.length x then
+                (String.length x) - startCol
+              else
+                len
+              in
             text (highlight ~from:startCol ~len x)
           end
         else text x
@@ -925,7 +935,8 @@ module Reporting = struct
 
     let reportDoc = ref TerminalDoc.nil in
 
-    for i = 0 to (Array.length lines - 1) do
+    let linesLen = Array.length lines in
+    for i = 0 to (linesLen - 1) do
       let line = Array.get lines i in
       reportDoc :=
         let open TerminalDoc in
@@ -964,13 +975,12 @@ module Diagnostics: sig
   val make:
     filename: string
     -> startPos: Lexing.position
-    -> len: int
+    -> endPos: Lexing.position
     -> category
     -> t
 
   val makeReport: t list -> string -> string
 
-  val getStartPos: t -> Lexing.position
 
 end = struct
   type category =
@@ -1000,34 +1010,29 @@ end = struct
   type t = {
     filename: string;
     startPos: Lexing.position;
-    length: int; (* or endPos? *)
+    endPos: Lexing.position;
     category: category;
   }
 
-  let getStartPos {startPos} = startPos
-
-  let computeLineCol {startPos} =
-     (startPos.Lexing.pos_lnum, startPos.pos_cnum - startPos.pos_bol + 1)
-
   let toString t src =
-    let (line, col) = computeLineCol t in
-    let endCol =
-      let endPos = {t.startPos with pos_cnum = t.startPos.pos_cnum + t.length} in
-      let (_, col) = (endPos.Lexing.pos_lnum, endPos.pos_cnum - endPos.pos_bol + 1) in
-      col
-    in
+    let open Lexing in
+    let  startchar = t.startPos.pos_cnum - t.startPos.pos_bol in
+    let endchar = t.endPos.pos_cnum - t.startPos.pos_cnum + startchar in
     let locationInfo =
       Printf.sprintf (* ReasonLanguageServer requires the following format *)
-        "File \"%s\", line: %d, characters %d-%d:" t.filename line col endCol
+        "File \"%s\", line: %d, characters %d-%d:"
+        t.filename
+        t.startPos.pos_lnum
+        startchar
+        endchar
     in
     let code =
-      let endPos = {t.startPos with pos_cnum = t.startPos.pos_cnum + t.length} in
       let missing = match t.category with
       | Expected (_, _, t) ->
         Some (String.length (Token.toString t))
       | _ -> None
       in
-      Reporting.renderCodeContext ~missing src t.startPos endPos
+      Reporting.renderCodeContext ~missing src t.startPos t.endPos
     in
     let explanation = match t.category with
     | Uident currentToken ->
@@ -1081,12 +1086,18 @@ end = struct
           begin match breadcrumbs, t with
           | (ExprBlock, _) :: _, Rbrace ->
             "It seems that this expression block is empty"
+          | (ExprBlock, _) :: _, Bar -> (* Pattern matching *)
+            "Looks like there might be an expression missing here"
           | (ExprSetField, _) :: _, _ ->
             "It seems that this record field mutation misses an expression"
           | (ExprArrayMutation, _) :: _, _ ->
             "Seems that an expression is missing, with what do I mutate the array?"
           | ((ExprBinaryAfterOp _ | ExprUnary), _) ::_, _ ->
             "Did you forget to write an expression here?"
+          | (Grammar.LetBinding, _)::_, _ ->
+            "This let-binding misses an expression"
+          | _::_, Rbracket ->
+            "Missing expression"
           | _ ->
             "I'm not sure what to parse here when looking at \"" ^ name ^ "\"."
           end
@@ -1107,10 +1118,10 @@ end = struct
     in
     Printf.sprintf "%s\n\n%s\n\n%s\n\n" locationInfo code explanation
 
-  let make ~filename ~startPos ~len category = {
+  let make ~filename ~startPos ~endPos category = {
     filename;
     startPos;
-    length = len;
+    endPos;
     category
   }
 
@@ -1150,7 +1161,11 @@ module Scanner = struct
   type t = {
     filename: string;
     src: bytes;
-    mutable err: startPos: Lexing.position -> len: int -> Diagnostics.category -> unit;
+    mutable err:
+      startPos: Lexing.position
+      -> endPos: Lexing.position
+      -> Diagnostics.category
+      -> unit;
     mutable ch: int; (* current character *)
     mutable offset: int; (* character offset *)
     mutable rdOffset: int; (* reading offset (position after current character) *)
@@ -1234,7 +1249,7 @@ module Scanner = struct
     let scanner = {
       filename;
       src = b;
-      err = (fun ~startPos:_ ~len:_ _ -> ());
+      err = (fun ~startPos:_ ~endPos:_ _ -> ());
       ch = CharacterCodes.space;
       offset = 0;
       rdOffset = 0;
@@ -1301,10 +1316,11 @@ module Scanner = struct
   let scanString scanner =
     let buffer = Buffer.create 256 in
 
+    let startPos = position scanner in
     let rec scan () =
       if scanner.ch == CharacterCodes.eof then
-        let startPos = position scanner in
-        scanner.err ~startPos ~len:1 Diagnostics.unclosedString
+        let endPos = position scanner in
+        scanner.err ~startPos ~endPos Diagnostics.unclosedString
       else if scanner.ch == CharacterCodes.doubleQuote then (
         next scanner;
       ) else if scanner.ch == CharacterCodes.backslash then (
@@ -1322,9 +1338,8 @@ module Scanner = struct
       ) else if CharacterCodes.isLineBreak scanner.ch then (
         scanner.lineOffset <- scanner.offset + 1;
         scanner.lnum <- scanner.lnum + 1;
-        let startPos = position scanner in
-        let len = scanner.rdOffset - scanner.offset in
-        scanner.err ~startPos ~len Diagnostics.unclosedString;
+        let endPos = position scanner in
+        scanner.err ~startPos ~endPos Diagnostics.unclosedString;
         next scanner
       ) else (
         Buffer.add_char buffer (Char.chr scanner.ch);
@@ -1353,15 +1368,15 @@ module Scanner = struct
 
   let scanMultiLineComment scanner =
     let startOff = scanner.offset in
+    let startPos = position scanner in
     let rec scan () =
       if scanner.ch == CharacterCodes.asterisk &&
          peek scanner == CharacterCodes.forwardslash then (
         next scanner;
         next scanner
       ) else if scanner.ch == CharacterCodes.eof then (
-        let startPos = position scanner in
-        let len = scanner.rdOffset - scanner.offset in
-        scanner.err ~startPos ~len Diagnostics.unclosedComment
+        let endPos = position scanner in
+        scanner.err ~startPos ~endPos Diagnostics.unclosedComment
       ) else (
         if CharacterCodes.isLineBreak scanner.ch then (
           scanner.lineOffset <- scanner.offset + 1;
@@ -1378,12 +1393,12 @@ module Scanner = struct
 
   let scanTemplate scanner =
     let startOff = scanner.offset in
+    let startPos = position scanner in
 
     let rec scan () =
       if scanner.ch == CharacterCodes.eof then (
-        let startPos = position scanner in
-        let len = scanner.rdOffset - scanner.offset in
-        scanner.err ~startPos ~len Diagnostics.unclosedTemplate;
+        let endPos = position scanner in
+        scanner.err ~startPos ~endPos Diagnostics.unclosedTemplate;
         popMode scanner Template;
         Token.TemplateTail(
           Bytes.sub_string scanner.src startOff (scanner.offset - 2 - startOff)
@@ -1634,7 +1649,8 @@ module Scanner = struct
       else (
         (* if we arrive here, we're dealing with an unkown character,
          * report the error and continue scanning… *)
-        scanner.err ~startPos ~len:1 (Diagnostics.unknownUchar ch);
+        let endPos = position scanner in
+        scanner.err ~startPos ~endPos (Diagnostics.unknownUchar ch);
         let (_, _, token) = scan scanner in
         token
       )
@@ -1691,8 +1707,8 @@ module Parser = struct
   let err ?startPos p error =
     let d = Diagnostics.make
       ~filename:p.scanner.filename
-      ~startPos:( match startPos with | Some pos -> pos | None -> p.startPos)
-      ~len:(p.endPos.pos_cnum - p.startPos.pos_cnum)
+      ~startPos:(match startPos with | Some pos -> pos | None -> p.startPos)
+      ~endPos:p.endPos
       error
     in
     p.diagnostics <- d::p.diagnostics
@@ -1724,11 +1740,11 @@ module Parser = struct
       errors = [];
       diagnostics = [];
     } in
-    parserState.scanner.err <- (fun ~startPos ~len error ->
+    parserState.scanner.err <- (fun ~startPos ~endPos error ->
       let diagnostic = Diagnostics.make
         ~filename
         ~startPos
-        ~len
+        ~endPos
         error
       in
       parserState.diagnostics <- diagnostic::parserState.diagnostics
@@ -1811,11 +1827,6 @@ module NapkinScript = struct
     let defaultModuleType () = Ast_helper.Mty.signature []
 
 
-    (* TODO: think and implement this a sound a possible *)
-    let recoverAtomicExpr p token =
-      (* Check grammar *)
-      if not (Grammar.isStructureItemStart token) then Parser.next p;
-      defaultExpr ()
 
     (* let recoverUident p = *)
       (* match p.Parser.token with *)
@@ -1843,6 +1854,11 @@ module NapkinScript = struct
             check rest
       in
       check p.breadcrumbs
+
+  (* TODO: think and implement this a sound a possible *)
+    let recoverAtomicExpr p token =
+      if not (shouldAbortListParse p) then Parser.next p;
+      defaultExpr ()
 
   end
 
@@ -1925,9 +1941,19 @@ Solution: you need to pull out each field you want explicitly."
         | _ ->
           goToClosing Rparen state;
           begin match state.Parser.token with
-          | EqualGreater | Lbrace -> true
+          | EqualGreater | Lbrace ->
+              true
           | Colon when not inTernary -> true
-          | _ -> false
+          | _ ->
+            Parser.next state;
+            (* error recovery, peek at the next token,
+             * (elements, providerId] => {
+             *  in the example above, we have an unbalanced ] here
+             *)
+            begin match state.Parser.token with
+            | EqualGreater -> true
+            | _ -> false
+            end
           end
         end
       | _ -> false)
@@ -2305,9 +2331,12 @@ Solution: you need to pull out each field you want explicitly."
         List.rev nodes
       ) else (
         if Recover.shouldAbortListParse p then (
+          (* TODO: is it ok to just randomly drop the expect , ???*)
           Parser.dropLastDiagnostic p; (* we don't expect a `,` *)
           List.rev nodes
         ) else (
+          (* TODO: is it ok to just randomly drop the expect , ???*)
+          Parser.dropLastDiagnostic p; (* we don't expect a `,` *)
           Parser.err p (Diagnostics.unexpected p.token p.breadcrumbs);
           Parser.next p;
           loop nodes
@@ -2975,7 +3004,7 @@ Solution: you need to pull out each field you want explicitly."
         let (loc, extension) = parseExtension p in
         Ast_helper.Exp.extension ~loc extension
       | token ->
-        Parser.err p (Diagnostics.unexpected token p.breadcrumbs);
+        Parser.err ~startPos:p.prevEndPos p (Diagnostics.unexpected token p.breadcrumbs);
         Recover.recoverAtomicExpr p token
     in
     Parser.eatBreadcrumb p;
@@ -4385,7 +4414,11 @@ Solution: you need to pull out each field you want explicitly."
     else
       let typ = parseAtomicTypExpr ~attrs p in
       match p.Parser.token with
-      | EqualGreater when es6Arrow == true ->
+      | (EqualGreater | MinusGreater) as token when es6Arrow == true ->
+        (* error recovery *)
+        if token = MinusGreater then (
+          Parser.expect EqualGreater p;
+        );
         Parser.next p;
         let returnType = parseTypExpr ~alias:false p in
         let loc = mkLoc typ.Parsetree.ptyp_loc.loc_start p.prevEndPos in
@@ -4961,7 +4994,8 @@ Solution: you need to pull out each field you want explicitly."
 
   and parseTypeEquationAndRepresentation p =
     match p.Parser.token with
-    | Equal ->
+    | Equal | Bar as token ->
+      if token = Bar then Parser.expect Equal p;
       Parser.next p;
       begin match p.Parser.token with
       | Uident _ ->

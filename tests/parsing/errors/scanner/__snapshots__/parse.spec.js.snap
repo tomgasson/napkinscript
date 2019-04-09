@@ -6,7 +6,7 @@ let newVelocity = velocity +. (a *. secondPerFrame)
 let newX = x +. (newVelocity *. secondPerFrame)
 =====Errors=============================================
 
-File \\"/napkinscript/tests/parsing/errors/scanner/oldDerefOp.js\\", line: 1, characters 50-51:
+File \\"/napkinscript/tests/parsing/errors/scanner/oldDerefOp.js\\", line: 1, characters 49-50:
 
 
 [31m1[0m │  let newVelocity = velocity +. a *. secondPerFrame[31m^[0m;
@@ -16,7 +16,7 @@ Hmm, not sure what I should do here with this character.
 If you're trying to deref an expression, use \`&foo\` instead.
 
 
-File \\"/napkinscript/tests/parsing/errors/scanner/oldDerefOp.js\\", line: 2, characters 46-47:
+File \\"/napkinscript/tests/parsing/errors/scanner/oldDerefOp.js\\", line: 2, characters 45-46:
 
 
 1 │  let newVelocity = velocity +. a *. secondPerFrame^;
@@ -35,10 +35,10 @@ exports[`unclosedComment.js 1`] = `
 
 =====Errors=============================================
 
-File \\"/napkinscript/tests/parsing/errors/scanner/unclosedComment.js\\", line: 3, characters 1-1:
+File \\"/napkinscript/tests/parsing/errors/scanner/unclosedComment.js\\", line: 1, characters 2-18:
 
 
-1 │  /* eof
+[31m1[0m │  /*[31m eo[0mf
 2 │   * reached
 
 This comment seems to be missing a closing \`*/\`
@@ -51,23 +51,23 @@ This comment seems to be missing a closing \`*/\`
 exports[`unclosedString.js 1`] = `
 "=====Parsetree==========================================
 let x = \\"unclosed\\"
-let z = \\"eof \\"
+let z = \\"eof\\"
 =====Errors=============================================
 
-File \\"/napkinscript/tests/parsing/errors/scanner/unclosedString.js\\", line: 2, characters 0-1:
+File \\"/napkinscript/tests/parsing/errors/scanner/unclosedString.js\\", line: 1, characters 9-17:
 
 
-1 │  let x = \\"unclosed
-[31m2[0m │  let z = \\"eof 
+[31m1[0m │  let x = \\"[31munclosed[0m
+2 │  let z = \\"eof
 
 This string is missing a double quote at the end
 
 
-File \\"/napkinscript/tests/parsing/errors/scanner/unclosedString.js\\", line: 3, characters 0-1:
+File \\"/napkinscript/tests/parsing/errors/scanner/unclosedString.js\\", line: 2, characters 9-12:
 
 
 1 │  let x = \\"unclosed
-2 │  let z = \\"eof 
+[31m2[0m │  let z = \\"[31meof[0m
 
 This string is missing a double quote at the end
 

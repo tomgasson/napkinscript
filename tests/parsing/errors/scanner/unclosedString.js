@@ -1,2 +1,2 @@
 let x = "unclosed
-let z = "eof 
+let z = "eof

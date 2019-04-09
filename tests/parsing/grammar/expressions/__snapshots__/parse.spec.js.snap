@@ -692,7 +692,8 @@ let r = { (make () : myRecord) with foo = bar }"
 exports[`switch.js 1`] = `
 ";;match x with | A -> () | B -> ()
 ;;match a + b with | _ -> ()
-;;match a + b with | _ -> ()"
+;;match a + b with | _ -> ()
+;;match (a, b) with | (Some a, Some b) -> (a + b) + c | _ -> 3"
 `;
 
 exports[`tuple.js 1`] = `

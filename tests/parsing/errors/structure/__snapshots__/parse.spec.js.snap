@@ -1,0 +1,76 @@
+// Jest Snapshot v1, https://goo.gl/fbAQLP
+
+exports[`letBinding.js 1`] = `
+"=====Parsetree==========================================
+let rightResource =
+  (ur.resources).find
+    (fun r -> r.account_id == ((connection.left).account).id)
+let x = let field = p |. parseFieldDeclaration in field
+let t = let (_, _, token) = scanner |. scan in token
+let (keyTable : int Belt.Map.String.t) = [%napkinscript.exprhole ]
+let foo = [%napkinscript.exprhole ]
+=====Errors=============================================
+
+File \\"/napkinscript/tests/parsing/errors/structure/letBinding.js\\", line: 2, characters 17-20:
+
+
+1 │  // missing =
+[31m2[0m │  let rightResource ur.resources.find(          
+                       [31m^[0m
+3 │    r => r.account_id === connection.left.account.id
+4 │  )
+
+Did you forget a \`=\` here? 
+
+
+File \\"/napkinscript/tests/parsing/errors/structure/letBinding.js\\", line: 8, characters 11-13:
+
+
+6 │  let x = {
+7 │    // missing =
+[31m8[0m │    let field p->parseFieldDeclaration           
+                 [31m^[0m
+9 │    field
+10 │  }
+
+Did you forget a \`=\` here? 
+
+
+File \\"/napkinscript/tests/parsing/errors/structure/letBinding.js\\", line: 14, characters 18-26:
+
+
+12 │  let t = {
+13 │  	// missing =
+[31m14[0m │  	let /_, _, token/ scanner->scan          
+                        [31m^[0m
+15 │    token
+16 │  }
+
+Did you forget a \`=\` here? 
+
+
+File \\"/napkinscript/tests/parsing/errors/structure/letBinding.js\\", line: 18, characters 38-43:
+
+
+16 │  }
+17 │  
+[31m18[0m │  let keyTable: Belt.Map.String.t<int> =
+19 │  
+20 │  let foo = 
+
+This let-binding misses an expression
+
+
+File \\"/napkinscript/tests/parsing/errors/structure/letBinding.js\\", line: 20, characters 9-11:
+
+
+18 │  let keyTable: Belt.Map.String.t<int> =
+19 │  
+[31m20[0m │  let foo =[31m[0m 
+
+This let-binding misses an expression
+
+
+
+========================================================"
+`;

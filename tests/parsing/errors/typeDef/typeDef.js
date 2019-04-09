@@ -1,0 +1,2 @@
+type rec stack
+  | Empty
