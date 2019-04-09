@@ -25,6 +25,8 @@ type nonrec 'a node = {
   _value: 'a Js.Nullable.value }
 type nonrec 'a t = 'a Belt.Map.t
 type nonrec 'a t = private 'a Belt.Map.t
+type nonrec t = int node option
+type nonrec t = int node option
 =====Errors=============================================
 
 File \\"/napkinscript/tests/parsing/errors/typexpr/typeConstructorArgs.js\\", line 2, characters 27-28:
@@ -45,6 +47,7 @@ File \\"/napkinscript/tests/parsing/errors/typexpr/typeConstructorArgs.js\\", li
 4 │  
 [31m5[0m │  type t<'a> = Belt.Map.t[31m([0m'a)
 6 │  type t<'a> = private Belt.Map.t('a)
+7 │  
 
 Type constructor args require diamonds, like: Belt.Map.String.t<int>
 
@@ -55,8 +58,30 @@ File \\"/napkinscript/tests/parsing/errors/typexpr/typeConstructorArgs.js\\", li
 4 │  
 5 │  type t<'a> = Belt.Map.t('a)
 [31m6[0m │  type t<'a> = private Belt.Map.t[31m([0m'a)
+7 │  
+8 │  type t = option<<node<int>>
 
 Type constructor args require diamonds, like: Belt.Map.String.t<int>
+
+
+File \\"/napkinscript/tests/parsing/errors/typexpr/typeConstructorArgs.js\\", line 9, characters 15-16:
+
+
+7 │  
+8 │  type t = option<<node<int>>
+[31m9[0m │  type t = option[31m([0m<node<int>>)
+
+Type constructor args require diamonds, like: Belt.Map.String.t<int>
+
+
+File \\"/napkinscript/tests/parsing/errors/typexpr/typeConstructorArgs.js\\", line 9, characters 27-28:
+
+
+7 │  
+8 │  type t = option<<node<int>>
+[31m9[0m │  type t = option(<node<int>>[31m)[0m
+
+I'm not sure what to parse here when looking at \\")\\".
 
 
 

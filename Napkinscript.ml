@@ -671,7 +671,7 @@ module Grammar = struct
     | StringFieldDeclarations -> isStringFieldDeclStart token
     | FieldDeclarations -> isFieldDeclStart token
     | RecordDecl -> isRecordDeclStart token
-    | TypExprList -> isTypExprStart token
+    | TypExprList -> isTypExprStart token || token = Token.LessThan
     | TypeParams -> isTypeParamStart token
     | FunctorArgs -> isFunctorArgStart token
     | ModExprList -> isModExprStart token
@@ -4438,6 +4438,12 @@ Solution: you need to pull out each field you want explicitly."
     Parser.expect Forwardslash p;
     Ast_helper.Typ.tuple ~loc:(mkLoc startPos p.prevEndPos) types
 
+  (* be more robust: option(<node<int>>) option<<node<int>> *)
+  and parseTypeConstructorArg p =
+    if p.Parser.token = Token.LessThan then Parser.next p;
+    let typ = parseTypExpr p in
+    typ
+
   (* Js.Nullable.value<'a> *)
   and parseTypeConstructorArgs p =
     let opening = p.Parser.token in
@@ -4450,7 +4456,7 @@ Solution: you need to pull out each field you want explicitly."
       Scanner.setDiamondMode p.scanner;
       Parser.next p;
       let typeArgs =
-        parseCommaDelimitedList ~grammar:Grammar.TypExprList ~closing:GreaterThan ~f:parseTypExpr p
+        parseCommaDelimitedList ~grammar:Grammar.TypExprList ~closing:GreaterThan ~f:parseTypeConstructorArg p
       in
       let () = match p.token with
       | Rparen when opening = Token.Lparen ->
