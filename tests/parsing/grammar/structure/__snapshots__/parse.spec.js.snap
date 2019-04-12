@@ -32,10 +32,11 @@ exception Exit[@onConstructor ] = Lib.Terminate"
 `;
 
 exports[`externalDefinition.js 1`] = `
-"external clear : t -> int -> unit = \\"\\"
+"external clear : t -> int -> unit = \\"clear\\"
 external add_nat : nat -> int = \\"add_nat_bytecode\\" \\"add_nat_native\\"
 external attachShader :
-  t -> program:webGlProgram -> shader:webGlShader -> unit = \\"\\"[@@bs.send ]"
+  t -> program:webGlProgram -> shader:webGlShader -> unit = \\"attachShader\\"
+[@@bs.send ]"
 `;
 
 exports[`includeStatement.js 1`] = `

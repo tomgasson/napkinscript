@@ -481,6 +481,9 @@ module Grammar = struct
     | ArgumentList
     | Signature
     | Structure
+    | Attribute
+    | TypeConstraint
+    | Primitive
 
   let toString = function
     | OpenDescription -> "an open description"
@@ -529,6 +532,9 @@ module Grammar = struct
     | ArgumentList -> "arguments"
     | Signature -> "signature"
     | Structure -> "structure"
+    | Attribute -> "an attribute"
+    | TypeConstraint -> "constraints on a type"
+    | Primitive -> "an external primitive"
 
 
   let isSignatureItemStart = function
@@ -663,6 +669,10 @@ module Grammar = struct
     | Token.DotDotDot | Uident _ | Lident _ | Underscore -> true
     | _ -> false
 
+  let isAttributeStart = function
+    | Token.At -> true
+    | _ -> false
+
   let isListElement grammar token =
     match grammar with
     | ExprList -> isExprStart token
@@ -684,6 +694,10 @@ module Grammar = struct
     | PatternMatching -> isPatternMatchStart token
     | PatternOcamlList -> isPatternOcamlListStart token
     | PatternRecord -> isPatternRecordItemStart token
+    | Attribute -> isAttributeStart token
+    | TypeConstraint -> token = Constraint
+    | ConstructorDeclaration -> token = Bar
+    | Primitive -> begin match token with Token.String _ -> true | _ -> false end
     | _ -> false
 
   let isListTerminator grammar token =
@@ -704,6 +718,9 @@ module Grammar = struct
     | Structure -> token = Rbrace
     | TypeParams -> token = Rparen
     | ParameterList -> token = EqualGreater || token = Lbrace
+    | Attribute -> token <> At
+    | TypeConstraint -> token <> Constraint
+    | ConstructorDeclaration -> token <> Bar
     | _ -> false
 
   let isPartOf grammar token =
@@ -2402,7 +2419,7 @@ Solution: you need to pull out each field you want explicitly."
     Parser.eatBreadcrumb p;
     nodes
 
-  let parseList p ~grammar  ~f =
+  let parseList p ~grammar ~f =
     Parser.leaveBreadcrumb p grammar;
     let rec loop nodes =
       if p.Parser.token = Token.Eof then
@@ -4683,6 +4700,10 @@ Solution: you need to pull out each field you want explicitly."
    *  | attrs constr-name
    *  | constr-name const-args
    *  | attrs constr-name const-args *)
+   and parseTypeConstructorDeclarationWithBar p =
+    Parser.expect Bar p;
+    parseTypeConstructorDeclaration p
+
    and parseTypeConstructorDeclaration p =
      Parser.leaveBreadcrumb p Grammar.ConstructorDeclaration;
      let attrs = parseAttributes p in
@@ -4705,16 +4726,12 @@ Solution: you need to pull out each field you want explicitly."
     | Some firstConstrDecl ->
       firstConstrDecl
     in
-    let rec loop p acc =
-      match p.Parser.token with
-      | Bar ->
-        Parser.next p;
-        let constrDecl = parseTypeConstructorDeclaration p in
-        loop p (constrDecl::acc)
-      | _ ->
-        List.rev acc
-    in
-    loop p [firstConstrDecl]
+    firstConstrDecl::(
+      parseList
+        ~grammar:Grammar.ConstructorDeclaration
+        ~f:parseTypeConstructorDeclarationWithBar
+        p
+    )
 
   (*
    * type-representation ::=
@@ -4827,6 +4844,7 @@ Solution: you need to pull out each field you want explicitly."
 
   (* type-constraint	::=	constraint ' ident =  typexpr *)
   and parseTypeConstraint p =
+    Parser.expect Constraint p;
     Parser.expect SingleQuote p;
     begin match p.Parser.token with
     | Lident ident ->
@@ -4846,16 +4864,10 @@ Solution: you need to pull out each field you want explicitly."
    *  | type-constraint type-constraint type-constraint (* 0 or more *)
    *)
   and parseTypeConstraints p =
-    let rec loop p constraints =
-      match p.Parser.token with
-      | Constraint ->
-        Parser.next p;
-        let constraint_ = parseTypeConstraint p in
-        loop p (constraint_::constraints)
-      | _ ->
-        List.rev constraints
-    in
-    loop p []
+    parseList
+      ~grammar:Grammar.TypeConstraint
+      ~f:parseTypeConstraint
+      p
 
   and parseTypeEquationOrConstrDecl p =
     let uidentStartPos = p.Parser.startPos in
@@ -5138,22 +5150,23 @@ Solution: you need to pull out each field you want explicitly."
       TypeDef(recFlag, typeDefs)
 
   and parsePrimitive p =
-    let rec loop p prims =
-      match p.Parser.token with
-      | String s ->
-        Parser.next p;
-        loop p (s::prims)
-      | _ ->
-        begin match prims with
-        | [] ->
-          let msg = "An external definition should have at least one primitive. Example: \"setTimeout\""
-          in
-          Parser.err p (Diagnostics.message msg);
-          []
-        | prims -> List.rev prims
-        end
-    in
-    loop p []
+    match p.Parser.token with
+    | String s ->
+      if (String.length s == 0) then (
+        let msg = "An empty external primitive is not supported. Example: \"setTimeout\"" in
+        Parser.err p (Diagnostics.message msg))
+      ;
+      Parser.next p;
+      s
+    | _ -> ""
+
+  and parsePrimitives p =
+    match (parseList ~grammar:Grammar.Primitive ~f:parsePrimitive p) with
+    | [] ->
+      let msg = "An external definition should have at least one primitive. Example: \"setTimeout\"" in
+      Parser.err p (Diagnostics.message msg);
+      []
+    | primitives -> primitives
 
   (* external value-name : typexp = external-declaration *)
   and parseExternalDef ~attrs p =
@@ -5172,7 +5185,7 @@ Solution: you need to pull out each field you want explicitly."
     Parser.expect ~grammar:(Grammar.TypeExpression) Colon p;
     let typExpr = parseTypExpr p in
     Parser.expect Equal p;
-    let prim = parsePrimitive p in
+    let prim = parsePrimitives p in
     let loc = mkLoc startPos p.prevEndPos in
     let vb = Ast_helper.Val.mk ~loc ~attrs ~prim name typExpr in
     Parser.eatBreadcrumb p;
@@ -5948,15 +5961,9 @@ Solution: you need to pull out each field you want explicitly."
     (attrId, payload)
 
   and parseAttributes p =
-    let rec loop p attrs =
-      match p.Parser.token with
-      | At ->
-        let attr = parseAttribute p in
-        loop p (attr::attrs)
-      | _ ->
-        List.rev attrs
-    in
-    loop p []
+    parseList p
+      ~grammar:Grammar.Attribute
+      ~f:parseAttribute
 
   (*
    * standalone-attribute ::=
