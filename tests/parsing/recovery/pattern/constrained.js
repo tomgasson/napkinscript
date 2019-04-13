@@ -1,4 +1,4 @@
 switch x {
 | (a : int => ()
-  // note that this is not ideal: | (a: int => typehole) => exprhole
+  // note that this is not ideal: | (a: int => unit) => exprhole
 }

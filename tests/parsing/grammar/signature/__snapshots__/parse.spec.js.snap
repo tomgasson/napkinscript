@@ -26,6 +26,8 @@ exports[`external.js 1`] = `
     [@@bs.send ]
     external add_nat :
       nat -> int -> int -> int = \\"add_nat_bytecode\\" \\"add_nat_native\\"
+    external svg : unit -> React.element = \\"svg\\"
+    external svg : unit -> React.element = \\"svg\\"
   end"
 `;
 

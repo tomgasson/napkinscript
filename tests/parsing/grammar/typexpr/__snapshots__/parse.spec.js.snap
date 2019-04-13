@@ -171,6 +171,18 @@ external setTimeout :
   (((unit -> unit) -> int -> timerId)[@bs ]) = \\"setTimeout\\""
 `;
 
+exports[`unit.js 1`] = `
+"type nonrec t = unit
+type nonrec t = unit -> unit
+type nonrec t = unit -> unit -> unit
+type nonrec t = unit -> unit
+let f (f : unit -> unit) = f ()
+let f (f : unit -> unit) = f ()
+let f (f : unit -> unit -> unit) = f () ()
+external svg : unit -> React.element = \\"svg\\"
+external thing : unit -> unit = \\"svg\\""
+`;
+
 exports[`var.js 1`] = `
 "type nonrec t = 'a
 let (t : 'a) = x

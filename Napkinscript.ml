@@ -721,6 +721,7 @@ module Grammar = struct
     | Attribute -> token <> At
     | TypeConstraint -> token <> Constraint
     | ConstructorDeclaration -> token <> Bar
+    | Primitive -> token = Semicolon
     | _ -> false
 
   let isPartOf grammar token =
@@ -4279,10 +4280,17 @@ Solution: you need to pull out each field you want explicitly."
       parseTupleType p
     | Lparen ->
       Parser.next p;
-      let t = parseTypExpr p in
-      let endPos = p.endPos in
-      Parser.expect Rparen p;
-      {t with ptyp_loc = mkLoc startPos endPos}
+      begin match p.Parser.token with
+      | Rparen ->
+        Parser.next p;
+        let loc = mkLoc startPos p.prevEndPos in
+        let unitConstr = Location.mkloc (Longident.Lident "unit") loc in
+        Ast_helper.Typ.constr ~attrs unitConstr []
+      | _ ->
+        let t = parseTypExpr p in
+        Parser.expect Rparen p;
+        {t with ptyp_loc = mkLoc startPos p.prevEndPos}
+      end
     | Uident _ | Lident _ | List ->
       let constr = parseValuePath p in
       let args =  parseTypeConstructorArgs p in
@@ -4384,12 +4392,21 @@ Solution: you need to pull out each field you want explicitly."
 
   (* (int, ~x:string, float) *)
   and parseTypeParameters p =
+    let startPos = p.Parser.startPos in
     Parser.expect Lparen p;
-    let params =
-      parseCommaDelimitedList ~grammar:Grammar.TypeParameters ~closing:Rparen ~f:parseTypeParameter p
-    in
-    Parser.expect Rparen p;
-    params
+    match p.Parser.token with
+    | Rparen ->
+      Parser.next p;
+      let loc = mkLoc startPos p.prevEndPos in
+      let unitConstr = Location.mkloc (Longident.Lident "unit") loc in
+      let typ = Ast_helper.Typ.constr unitConstr [] in
+      [(false, [], Asttypes.Nolabel, typ, startPos)]
+    | _ ->
+      let params =
+        parseCommaDelimitedList ~grammar:Grammar.TypeParameters ~closing:Rparen ~f:parseTypeParameter p
+      in
+      Parser.expect Rparen p;
+      params
 
   and parseEs6ArrowType ~attrs p =
     let parameters = parseTypeParameters p in

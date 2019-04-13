@@ -2,10 +2,7 @@
 
 exports[`array.js 1`] = `";;match x with | [|a;b|] -> () | [|a;[|c;d|]|] -> ()"`;
 
-exports[`constrained.js 1`] = `
-";;match x with
-  | (a : int -> [%napkinscript.typehole ]) -> [%napkinscript.exprhole ]"
-`;
+exports[`constrained.js 1`] = `";;match x with | (a : int -> unit) -> [%napkinscript.exprhole ]"`;
 
 exports[`constructor.js 1`] = `
 ";;match x with
