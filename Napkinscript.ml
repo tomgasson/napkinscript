@@ -2026,6 +2026,7 @@ Solution: you need to pull out each field you want explicitly."
           | _ -> false
           end
         end
+      | Tilde -> true
       | _ -> false
     )
 
@@ -4409,16 +4410,39 @@ Solution: you need to pull out each field you want explicitly."
       params
 
   and parseEs6ArrowType ~attrs p =
-    let parameters = parseTypeParameters p in
-    Parser.expect EqualGreater p;
-    let returnType = parseTypExpr ~alias:false p in
-    let endPos = p.prevEndPos in
-    let typ = List.fold_right (fun (uncurried, attrs, argLbl, typ, startPos) t ->
-      let attrs = if uncurried then uncurryAttr::attrs else attrs in
-      Ast_helper.Typ.arrow ~loc:(mkLoc startPos endPos) ~attrs argLbl typ t
-    ) parameters returnType
-    in
-    {typ with ptyp_attributes = typ.ptyp_attributes @ attrs}
+    match p.Parser.token with
+    | Tilde ->
+      Parser.next p;
+      let name = match p.Parser.token with
+      | Lident ident -> Parser.next p; ident
+      | t ->
+        Parser.err p (Diagnostics.lident t);
+        "_"
+      in
+      Parser.expect Colon p;
+      let typ = parseTypExpr ~alias:false ~es6Arrow:false p in
+      let arg = match p.Parser.token with
+      | Equal ->
+        Parser.next p;
+        Parser.expect Question p;
+        Asttypes.Optional name
+      | _ ->
+        Asttypes.Labelled name
+      in
+      Parser.expect EqualGreater p;
+      let returnType = parseTypExpr ~alias:false p in
+      Ast_helper.Typ.arrow arg typ returnType
+    | _ ->
+      let parameters = parseTypeParameters p in
+      Parser.expect EqualGreater p;
+      let returnType = parseTypExpr ~alias:false p in
+      let endPos = p.prevEndPos in
+      let typ = List.fold_right (fun (uncurried, attrs, argLbl, typ, startPos) t ->
+        let attrs = if uncurried then uncurryAttr::attrs else attrs in
+        Ast_helper.Typ.arrow ~loc:(mkLoc startPos endPos) ~attrs argLbl typ t
+      ) parameters returnType
+      in
+      {typ with ptyp_attributes = typ.ptyp_attributes @ attrs}
 
   (*
    * typexpr ::=
