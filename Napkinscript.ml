@@ -283,6 +283,7 @@ module Token = struct
     | Backtick
     | Export
     | BarGreater
+    | Try | Catch
 
   let precedence = function
     | HashEqual | ColonEqual -> 1
@@ -372,6 +373,7 @@ module Token = struct
     | Backtick -> "`"
     | Export -> "export"
     | BarGreater -> "|>"
+    | Try -> "try" | Catch -> "catch"
 
   let keywordTable =
     let keywords = [|
@@ -409,6 +411,8 @@ module Token = struct
       "list", List;
       "export", Export;
       "with", With;
+      "try", Try;
+      "catch", Catch;
     |] in
     let t = Hashtbl.create 50 in
     Array.iter (fun (k, v) ->
@@ -421,7 +425,8 @@ module Token = struct
     | Exception | Assert | Lazy | If | Else | For | In | To
     | Downto | While | Switch | When | External | Typ | Private
     | Mutable | Constraint | Include | Module | Of | Mod
-    | Land | Lor | Lxor | Lsl | Lsr | Asr | List | Export | With -> true
+    | Land | Lor | Lxor | Lsl | Lsr | Asr | List | Export | With
+    | Try | Catch -> true
     | _ -> false
 
   let lookupKeyword str =
@@ -558,7 +563,7 @@ module Grammar = struct
     | LessThan
     | Minus | MinusDot | Plus | PlusDot | Bang | Band
     | Percent | At
-    | If | Switch | While | For | Assert | Lazy -> true
+    | If | Switch | While | For | Assert | Lazy | Try -> true
     | _ -> false
 
  let isStructureItemStart = function
@@ -2757,6 +2762,8 @@ Solution: you need to pull out each field you want explicitly."
       let expr = parseUnaryExpr p in
       let loc = mkLoc startPos p.prevEndPos in
       Ast_helper.Exp.lazy_ ~loc expr
+    | Try ->
+      parseTryExpression ~attrs p
     | If ->
       parseIfExpression p
     | For ->
@@ -3727,7 +3734,7 @@ Solution: you need to pull out each field you want explicitly."
         | True | False | Int _ | Float _ | String _ | Lident _ | Uident _
         | Lparen | List | Lbracket | Lbrace | Forwardslash | Assert
         | Lazy | If | For | While | Switch | Open | Module | Exception | Let
-        | LessThan | Backtick | Percent ->
+        | LessThan | Backtick | Percent | Try ->
           parseExprBlock p
         | _ ->
           Ast_helper.Exp.construct (Location.mknoloc (Longident.Lident "()")) None
@@ -3737,7 +3744,7 @@ Solution: you need to pull out each field you want explicitly."
       | True | False | Int _ | Float _ | String _ | Lident _ | Uident _
       | Lparen | List | Lbracket | Lbrace | Forwardslash | Assert
       | Lazy | If | For | While | Switch | Open | Module | Exception | Let
-      | LessThan | Backtick | Percent ->
+      | LessThan | Backtick | Percent | Try ->
         parseExprBlock p
       | _ ->
         Ast_helper.Exp.construct (Location.mknoloc (Longident.Lident "()")) None
@@ -3752,7 +3759,7 @@ Solution: you need to pull out each field you want explicitly."
       | True | False | Int _ | Float _ | String _ | Lident _ | Uident _
       | Lparen | List | Lbracket | Lbrace | Forwardslash | Assert
       | Lazy | If | For | While | Switch | Open | Module | Exception | Let
-      | LessThan | Backtick | Percent ->
+      | LessThan | Backtick | Percent | Try ->
         let e2 = parseExprBlock p in
         Ast_helper.Exp.sequence e1 e2
       | _ -> e1
@@ -3786,7 +3793,7 @@ Solution: you need to pull out each field you want explicitly."
         | True | False | Int _ | String _ | Lident _ | Uident _
         | Lparen | List | Lbracket | Lbrace | Forwardslash | Assert
         | Lazy | If | For | While | Switch | Open | Module | Exception | Let
-        | LessThan | Backtick ->
+        | LessThan | Backtick | Try ->
           let next = parseExprBlockItem p in
           ignore(Parser.optional p Semicolon);
           Ast_helper.Exp.sequence item next
@@ -3799,7 +3806,7 @@ Solution: you need to pull out each field you want explicitly."
           | True | False | Int _ | String _ | Lident _ | Uident _
           | Lparen | List | Lbracket | Lbrace | Forwardslash | Assert
           | Lazy | If | For | While | Switch | Open | Module | Exception | Let
-          | LessThan | Backtick | Percent -> true
+          | LessThan | Backtick | Percent | Try -> true
           | _ -> false
           end
         ->
@@ -3809,7 +3816,7 @@ Solution: you need to pull out each field you want explicitly."
           | True | False | Int _ | String _ | Lident _ | Uident _
           | Lparen | List | Lbracket | Lbrace | Forwardslash | Assert
           | Lazy | If | For | While | Switch | Open | Module | Exception | Let
-          | LessThan | Backtick | Percent ->
+          | LessThan | Backtick | Percent | Try ->
             let next = parseExprBlockItem p in
             ignore(Parser.optional p Semicolon);
             Ast_helper.Exp.sequence item next
@@ -3820,6 +3827,17 @@ Solution: you need to pull out each field you want explicitly."
       in
       Parser.eatBreadcrumb p;
       blockExpr
+
+  and parseTryExpression ~attrs p =
+    let startPos = p.Parser.startPos in
+    Parser.expect Try p;
+    let expr = parseExpr p in
+    Parser.expect Catch p;
+    Parser.expect Lbrace p;
+    let cases = parsePatternMatching p in
+    Parser.expect Rbrace p;
+    let loc = mkLoc startPos p.prevEndPos in
+    Ast_helper.Exp.try_ ~attrs ~loc expr cases
 
   and parseIfExpression p =
     Parser.leaveBreadcrumb p Grammar.ExprIf;
