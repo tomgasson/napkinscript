@@ -4011,14 +4011,14 @@ Solution: you need to pull out each field you want explicitly."
       (uncurried, Asttypes.Nolabel, exp)
     | Tilde ->
       Parser.next p;
-      let startPos = p.startPos in
       (* TODO: nesting of pattern matches not intuitive for error recovery *)
       begin match p.Parser.token with
       | Lident ident ->
+        let startPos = p.startPos in
         Parser.next p;
-        let endPos = p.startPos in
+        let endPos = p.prevEndPos in
         let loc = mkLoc startPos endPos in
-        let identExpr = Ast_helper.Exp.ident (
+        let identExpr = Ast_helper.Exp.ident ~loc (
           Location.mkloc (Longident.Lident ident) loc
         ) in
         begin match p.Parser.token with

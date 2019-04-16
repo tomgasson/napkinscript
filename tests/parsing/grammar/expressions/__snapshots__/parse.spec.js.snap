@@ -9,6 +9,14 @@ exports[`apply.js 1`] = `
 ;;List.reduce (fun acc -> fun curr -> acc + curr) 0 myList"
 `;
 
+exports[`argument.js 1`] = `
+"let foo ~a  = ((a ())[@bs ]) +. 1.
+let a = ((fun () -> 2)[@bs ])
+let bar = foo ~a
+let comparisonResult = ((compare currentNode.value ~targetValue)[@bs ])
+;;((callback firstNode ~y)[@bs ])"
+`;
+
 exports[`array.js 1`] = `
 "let x = [|1;2;3|]
 let x = [|1;2;3|]
@@ -694,13 +702,6 @@ exports[`switch.js 1`] = `
 ;;match a + b with | _ -> ()
 ;;match a + b with | _ -> ()
 ;;match (a, b) with | (Some a, Some b) -> (a + b) + c | _ -> 3"
-`;
-
-exports[`try.js 1`] = `
-";;try let x = 1 in let y = 2 in dangerousCall (x + y)
-  with | Foo -> Js.log \\"catched Foo\\"
-;;try myDangerousFn () with | Foo -> Js.log \\"catched Foo\\"[@@attr ]
-let x = let y = 1 in try apply y with | _ -> 2"
 `;
 
 exports[`tuple.js 1`] = `
