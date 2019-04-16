@@ -1743,13 +1743,14 @@ module Parser = struct
 
   let rec next p =
     let (startPos, endPos, token) = Scanner.scan p.scanner in
-    p.prevEndPos <- p.endPos;
-    p.token <- token;
-    p.startPos <- startPos;
-    p.endPos <- endPos;
-    match p.token with
+    match token with
     | Comment _ -> next p
-    | _ -> ()
+    | _ -> (
+        p.token <- token;
+        p.prevEndPos <- p.endPos;
+        p.startPos <- startPos;
+        p.endPos <- endPos;
+      )
 
   let make src filename =
     let scanner = Scanner.make (Bytes.of_string src) filename in
