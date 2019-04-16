@@ -14,10 +14,12 @@ script:
   - bash -ex .travis-opam.sh
   - npm install
   - opam switch create 4.06.1
-  - eval $(opam config env)
+  - opam install -y ocamlfind
+  - opam install -y ocaml-migrate-parsetree
+  - eval $(opam env)
   - ocamlopt -v
   - make test
 
 os:
-  - linux
+  # - linux
   - osx
