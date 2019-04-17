@@ -281,7 +281,6 @@ module Token = struct
     | TemplateTail of string
     | TemplatePart of string
     | Backtick
-    | Export
     | BarGreater
     | Try | Catch
 
@@ -371,7 +370,6 @@ module Token = struct
     | TemplatePart text -> text ^ "${"
     | TemplateTail text -> "TemplateTail(" ^ text ^ ")"
     | Backtick -> "`"
-    | Export -> "export"
     | BarGreater -> "|>"
     | Try -> "try" | Catch -> "catch"
 
@@ -409,7 +407,6 @@ module Token = struct
       "lsr", Lsr;
       "asr", Asr;
       "list", List;
-      "export", Export;
       "with", With;
       "try", Try;
       "catch", Catch;
@@ -425,7 +422,7 @@ module Token = struct
     | Exception | Assert | Lazy | If | Else | For | In | To
     | Downto | While | Switch | When | External | Typ | Private
     | Mutable | Constraint | Include | Module | Of | Mod
-    | Land | Lor | Lxor | Lsl | Lsr | Asr | List | Export | With
+    | Land | Lor | Lxor | Lsl | Lsr | Asr | List | With
     | Try | Catch -> true
     | _ -> false
 
@@ -3041,21 +3038,31 @@ Solution: you need to pull out each field you want explicitly."
     Parser.leaveBreadcrumb p Grammar.ExprArrayAccess;
     let lbracket = p.startPos in
     Parser.next p;
+    let stringStart = p.startPos in
     match p.Parser.token with
     | String s ->
       Parser.next p;
+      let stringEnd = p.prevEndPos in
       Parser.expect Rbracket p;
-      let e = Ast_helper.Exp.apply
-        (Ast_helper.Exp.ident (Location.mknoloc (Longident.Lident "##")))
-        [Nolabel, expr; Nolabel, (Ast_helper.Exp.ident (Location.mknoloc (Longident.Lident s)))]
+      let rbracket = p.prevEndPos in
+      let e =
+        let identLoc = mkLoc stringStart stringEnd in
+        let loc = mkLoc lbracket rbracket in
+        Ast_helper.Exp.apply ~loc
+        (Ast_helper.Exp.ident ~loc (Location.mkloc (Longident.Lident "##") loc))
+        [Nolabel, expr; Nolabel, (Ast_helper.Exp.ident ~loc:identLoc (Location.mkloc (Longident.Lident s) identLoc))]
       in
       let e = parsePrimaryExpr ~operand:e p in
+      let equalStart = p.startPos in
       begin match p.token with
       | Equal ->
         Parser.next p;
+        let equalEnd = p.prevEndPos in
         let rhsExpr = parseExpr p in
-        Ast_helper.Exp.apply
-          (Ast_helper.Exp.ident (Location.mknoloc (Longident.Lident "#=")))
+        let loc = mkLoc startPos rhsExpr.pexp_loc.loc_end in
+        let operatorLoc = mkLoc equalStart equalEnd in
+        Ast_helper.Exp.apply ~loc
+          (Ast_helper.Exp.ident ~loc:operatorLoc (Location.mkloc (Longident.Lident "#=") operatorLoc))
           [Nolabel, e; Nolabel, rhsExpr]
       | _ -> e
       end
@@ -5211,13 +5218,7 @@ Solution: you need to pull out each field you want explicitly."
 
   and parsePrimitive p =
     match p.Parser.token with
-    | String s ->
-      if (String.length s == 0) then (
-        let msg = "An empty external primitive is not supported. Example: \"setTimeout\"" in
-        Parser.err p (Diagnostics.message msg))
-      ;
-      Parser.next p;
-      s
+    | String s -> Parser.next p; s
     | _ -> ""
 
   and parsePrimitives p =
