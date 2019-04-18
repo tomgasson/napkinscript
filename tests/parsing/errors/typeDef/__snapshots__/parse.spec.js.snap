@@ -4,6 +4,8 @@ exports[`typeDef.js 1`] = `
 "=====Parsetree==========================================
 type stack =
   | Empty 
+type nonrec t = [%napkinscript.typehole ]
+type nonrec state = [%napkinscript.typehole ]
 =====Errors=============================================
 
 File \\"/napkinscript/tests/parsing/errors/typeDef/typeDef.js\\", line 1, characters 14-18:
@@ -12,8 +14,31 @@ File \\"/napkinscript/tests/parsing/errors/typeDef/typeDef.js\\", line 1, charac
 [31m1[0m │  type rec stack          
                     [31m^[0m
 2 │    | Empty
+3 │  
 
 Did you forget a \`=\` here? 
+
+
+File \\"/napkinscript/tests/parsing/errors/typeDef/typeDef.js\\", line 5, characters 8-30:
+
+
+3 │  
+4 │  // missing type
+[31m5[0m │  type t =
+6 │  
+7 │  // missing type
+
+Missing a type here
+
+
+File \\"/napkinscript/tests/parsing/errors/typeDef/typeDef.js\\", line 8, characters 12-13:
+
+
+6 │  
+7 │  // missing type
+[31m8[0m │  type state =
+
+Missing a type here
 
 
 
