@@ -194,132 +194,158 @@ File \\"/napkinscript/tests/parsing/errors/typexpr/bsObjSugar.js\\", line 24, ch
 I'm missing a type here
 
 
-File \\"/napkinscript/tests/parsing/errors/typexpr/bsObjSugar.js\\", line 28, characters 8-10:
+File \\"/napkinscript/tests/parsing/errors/typexpr/bsObjSugar.js\\", line 28, characters 10-19:
 
 
 26 │  
 27 │  type state = {
-[31m28[0m │    \\"age\\":[31m ,[0m
+[31m28[0m │    \\"age\\": ,
 29 │    \\"name\\": string
 30 │  }
 
 I'm missing a type here
 
 
-File \\"/napkinscript/tests/parsing/errors/typexpr/bsObjSugar.js\\", line 34, characters 16-18:
+File \\"/napkinscript/tests/parsing/errors/typexpr/bsObjSugar.js\\", line 28, characters 10-19:
 
 
-32 │  
-33 │  type state = {
-[31m34[0m │    @bs.set \\"age\\":[31m ,[0m
-35 │    \\"name\\": string
-36 │  }
+26 │  
+27 │  type state = {
+[31m28[0m │    \\"age\\": ,          
+                [31m^[0m
+29 │    \\"name\\": string
+30 │  }
+
+Did you forget a \`,\` here? 
+
+
+File \\"/napkinscript/tests/parsing/errors/typexpr/bsObjSugar.js\\", line 33, characters 18-27:
+
+
+31 │  
+32 │  type state = {
+[31m33[0m │    @bs.set \\"age\\": ,
+34 │    \\"name\\": string
+35 │  }
 
 I'm missing a type here
 
 
-File \\"/napkinscript/tests/parsing/errors/typexpr/bsObjSugar.js\\", line 38, characters 23-25:
+File \\"/napkinscript/tests/parsing/errors/typexpr/bsObjSugar.js\\", line 33, characters 18-27:
 
 
-36 │  }
-37 │  
-[31m38[0m │  type state = {.. \\"age\\":[31m }[0m
-39 │  type state = {
-40 │    ..
+31 │  
+32 │  type state = {
+[31m33[0m │    @bs.set \\"age\\": ,          
+                        [31m^[0m
+34 │    \\"name\\": string
+35 │  }
+
+Did you forget a \`,\` here? 
+
+
+File \\"/napkinscript/tests/parsing/errors/typexpr/bsObjSugar.js\\", line 37, characters 23-25:
+
+
+35 │  }
+36 │  
+[31m37[0m │  type state = {.. \\"age\\":[31m }[0m
+38 │  type state = {
+39 │    ..
 
 I'm missing a type here
 
 
-File \\"/napkinscript/tests/parsing/errors/typexpr/bsObjSugar.js\\", line 41, characters 7-17:
+File \\"/napkinscript/tests/parsing/errors/typexpr/bsObjSugar.js\\", line 40, characters 7-17:
 
 
-39 │  type state = {
-40 │    ..
-[31m41[0m │    \\"age\\"           
+38 │  type state = {
+39 │    ..
+[31m40[0m │    \\"age\\"           
              [31m^[0m
-42 │    \\"name\\": string
-43 │  }
+41 │    \\"name\\": string
+42 │  }
 
 Did you forget a \`:\` here? It signals the start of a type
 
 
-File \\"/napkinscript/tests/parsing/errors/typexpr/bsObjSugar.js\\", line 41, characters 7-17:
+File \\"/napkinscript/tests/parsing/errors/typexpr/bsObjSugar.js\\", line 40, characters 7-17:
 
 
-39 │  type state = {
-40 │    ..
-[31m41[0m │    \\"age\\"[31m[0m 
-42 │    \\"name\\": string
-43 │  }
-
-I'm missing a type here
-
-
-File \\"/napkinscript/tests/parsing/errors/typexpr/bsObjSugar.js\\", line 41, characters 7-17:
-
-
-39 │  type state = {
-40 │    ..
-[31m41[0m │    \\"age\\"           
-             [31m^[0m
-42 │    \\"name\\": string
-43 │  }
-
-Did you forget a \`,\` here? 
-
-
-File \\"/napkinscript/tests/parsing/errors/typexpr/bsObjSugar.js\\", line 46, characters 7-19:
-
-
-44 │  
-45 │  type websocket = {
-[31m46[0m │    \\"id\\":
-47 │    \\"channel\\": channelTyp
-48 │  }
+38 │  type state = {
+39 │    ..
+[31m40[0m │    \\"age\\"[31m[0m 
+41 │    \\"name\\": string
+42 │  }
 
 I'm missing a type here
 
 
-File \\"/napkinscript/tests/parsing/errors/typexpr/bsObjSugar.js\\", line 46, characters 7-19:
+File \\"/napkinscript/tests/parsing/errors/typexpr/bsObjSugar.js\\", line 40, characters 7-17:
 
 
-44 │  
-45 │  type websocket = {
-[31m46[0m │    \\"id\\":          
+38 │  type state = {
+39 │    ..
+[31m40[0m │    \\"age\\"           
              [31m^[0m
-47 │    \\"channel\\": channelTyp
-48 │  }
+41 │    \\"name\\": string
+42 │  }
 
 Did you forget a \`,\` here? 
 
 
-File \\"/napkinscript/tests/parsing/errors/typexpr/bsObjSugar.js\\", line 51, characters 6-7:
+File \\"/napkinscript/tests/parsing/errors/typexpr/bsObjSugar.js\\", line 45, characters 7-19:
 
 
-49 │  
-50 │  type websocket = {
-[31m51[0m │    \\"id\\"          
+43 │  
+44 │  type websocket = {
+[31m45[0m │    \\"id\\":
+46 │    \\"channel\\": channelTyp
+47 │  }
+
+I'm missing a type here
+
+
+File \\"/napkinscript/tests/parsing/errors/typexpr/bsObjSugar.js\\", line 45, characters 7-19:
+
+
+43 │  
+44 │  type websocket = {
+[31m45[0m │    \\"id\\":          
+             [31m^[0m
+46 │    \\"channel\\": channelTyp
+47 │  }
+
+Did you forget a \`,\` here? 
+
+
+File \\"/napkinscript/tests/parsing/errors/typexpr/bsObjSugar.js\\", line 50, characters 6-7:
+
+
+48 │  
+49 │  type websocket = {
+[31m50[0m │    \\"id\\"          
             [31m^[0m
 
 Did you forget a \`:\` here? It signals the start of a type
 
 
-File \\"/napkinscript/tests/parsing/errors/typexpr/bsObjSugar.js\\", line 51, characters 6-7:
+File \\"/napkinscript/tests/parsing/errors/typexpr/bsObjSugar.js\\", line 50, characters 6-7:
 
 
-49 │  
-50 │  type websocket = {
-[31m51[0m │    \\"id\\"
+48 │  
+49 │  type websocket = {
+[31m50[0m │    \\"id\\"
 
 I'm missing a type here
 
 
-File \\"/napkinscript/tests/parsing/errors/typexpr/bsObjSugar.js\\", line 51, characters 6-7:
+File \\"/napkinscript/tests/parsing/errors/typexpr/bsObjSugar.js\\", line 50, characters 6-7:
 
 
-49 │  
-50 │  type websocket = {
-[31m51[0m │    \\"id\\"          
+48 │  
+49 │  type websocket = {
+[31m50[0m │    \\"id\\"          
             [31m^[0m
 
 Did you forget a \`}\` here? 

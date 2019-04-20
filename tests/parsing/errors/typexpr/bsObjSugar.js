@@ -29,7 +29,6 @@ type state = {
   "name": string
 }
 
-
 type state = {
   @bs.set "age": ,
   "name": string

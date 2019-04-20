@@ -553,6 +553,36 @@ module Grammar = struct
     | PercentPercent -> true
     | _ -> false
 
+  let isAtomicPatternStart = function
+    | Token.Int _ | String _
+    | Lparen | Lbracket | Lbrace | Forwardslash
+    | Underscore
+    | Lident _ | Uident _ | List
+    | Exception | Lazy
+    | Percent -> true
+    | _ -> false
+
+  let isAtomicExprStart = function
+    | Token.True | False
+    | Int _ | String _ | Float _
+    | Backtick
+    | Uident _ | Lident _
+    | Lparen
+    | List
+    | Lbracket
+    | Lbrace
+    | Forwardslash
+    | LessThan
+    | Percent -> true
+    | _ -> false
+
+  let isAtomicTypExprStart = function
+    | Token.SingleQuote | Underscore
+    | Forwardslash | Lparen | Lbrace
+    | Uident _ | Lident _ | List
+    | Percent -> true
+    | _ -> false
+
   let isExprStart = function
     | Token.True | False
     | Int _ | String _ | Float _ | Backtick
@@ -577,6 +607,7 @@ module Grammar = struct
     | At -> true
     | t when isExprStart t -> true
     | _ -> false
+
 
   let isPatternStart = function
     | Token.Int _ | String _
@@ -704,7 +735,8 @@ module Grammar = struct
     | _ -> false
 
   let isListTerminator grammar token =
-    match grammar with
+    token = Token.Eof ||
+    (match grammar with
     | ExprList  ->
         token = Token.Rparen || token = Forwardslash || token = Rbracket
     | TypExprList ->
@@ -726,8 +758,9 @@ module Grammar = struct
     | ConstructorDeclaration -> token <> Bar
     | Primitive -> token = Semicolon
     | _ -> false
+    )
 
-  let isPartOf grammar token =
+  let isPartOfList grammar token =
     isListElement grammar token || isListTerminator grammar token
 end
 
@@ -1737,11 +1770,11 @@ module Parser = struct
     mutable diagnostics: Diagnostics.t list;
   }
 
-  let err ?startPos p error =
+  let err ?startPos ?endPos p error =
     let d = Diagnostics.make
       ~filename:p.scanner.filename
       ~startPos:(match startPos with | Some pos -> pos | None -> p.startPos)
-      ~endPos:p.endPos
+      ~endPos:(match endPos with | Some pos -> pos | None -> p.endPos)
       error
     in
     p.diagnostics <- d::p.diagnostics
@@ -1843,6 +1876,10 @@ module NapkinScript = struct
 
 
   module Recover = struct
+    type action =
+      | Retry
+      | Abort
+
     let defaultStructureItem () =
       let id = Location.mknoloc "napkinscript.strItemHole" in
       Ast_helper.Str.extension (id, PStr [])
@@ -1867,19 +1904,6 @@ module NapkinScript = struct
     let defaultModuleExpr () = Ast_helper.Mod.structure []
     let defaultModuleType () = Ast_helper.Mty.signature []
 
-    (*
-     * Handle cases like:
-     *   let open = 1
-     * `open` is a keyword, the parser expects a pattern though.
-     * Current heuristic is to check whether the token is on the same line
-     * of the previous token. If that's the case there's probably a high chance
-     * the user intended the keyword as pattern. *)
-    let tryAdvancePattern p =
-      match p.Parser.token with
-      | t when Token.isKeyword t && p.prevEndPos.pos_lnum == p.startPos.pos_lnum ->
-        Parser.next p
-      | _ -> ()
-
     (* let recoverUident p = *)
       (* match p.Parser.token with *)
       (* | Lident lident -> *)
@@ -1900,18 +1924,60 @@ module NapkinScript = struct
         match breadcrumbs with
         | [] -> false
         | (grammar, _)::rest ->
-          if Grammar.isPartOf grammar p.Parser.token then
+          if Grammar.isPartOfList grammar p.Parser.token then
             true
           else
             check rest
       in
       check p.breadcrumbs
 
-  (* TODO: think and implement this a sound a possible *)
-    let recoverAtomicExpr p token =
-      if not (shouldAbortListParse p) then Parser.next p;
-      defaultExpr ()
+    let recoverAtomicExpr p =
+      if Token.isKeyword p.Parser.token
+         && p.Parser.prevEndPos.pos_lnum == p.startPos.pos_lnum
+      then (
+        Parser.next p;
+        Abort
+      ) else (
+        while not (shouldAbortListParse p) do
+          Parser.next p
+        done;
+        if Grammar.isAtomicExprStart p.Parser.token then
+          Retry
+        else
+          Abort
+      )
 
+    let recoverAtomicPattern p =
+      if Token.isKeyword p.Parser.token
+         && p.Parser.prevEndPos.pos_lnum == p.startPos.pos_lnum
+      then (
+        Parser.next p;
+        Abort
+      ) else begin
+        while not (shouldAbortListParse p) do
+          Parser.next p
+        done;
+        if Grammar.isAtomicPatternStart p.Parser.token then
+          Retry
+        else
+          Abort
+      end
+
+    let recoverAtomicTypExpr p =
+      if Token.isKeyword p.Parser.token
+         && p.Parser.prevEndPos.pos_lnum == p.startPos.pos_lnum
+      then (
+        Parser.next p;
+        Abort
+      ) else (
+        while not (shouldAbortListParse p) do
+          Parser.next p
+        done;
+        if Grammar.isAtomicTypExprStart p.Parser.token then
+          Retry
+        else
+          Abort
+      )
   end
 
   module ErrorMessages = struct
@@ -2561,8 +2627,12 @@ Solution: you need to pull out each field you want explicitly."
       Ast_helper.Pat.extension ~loc ~attrs extension
     | token ->
       Parser.err p (Diagnostics.unexpected token p.breadcrumbs);
-      Recover.tryAdvancePattern p;
-      Recover.defaultPattern()
+      begin match Recover.recoverAtomicPattern p with
+      | Abort ->
+        Recover.defaultPattern()
+      | Retry ->
+        parsePattern p
+      end
     in
     let pat = if alias then parseAliasPattern ~attrs pat p else pat in
     if or_ then parseOrPattern pat p else pat
@@ -3057,8 +3127,13 @@ Solution: you need to pull out each field you want explicitly."
         let (loc, extension) = parseExtension p in
         Ast_helper.Exp.extension ~loc extension
       | token ->
-        Parser.err ~startPos:p.prevEndPos p (Diagnostics.unexpected token p.breadcrumbs);
-        Recover.recoverAtomicExpr p token
+        let errPos = p.prevEndPos in
+        begin match Recover.recoverAtomicExpr p with
+        | Abort ->
+          Parser.err ~startPos:errPos p (Diagnostics.unexpected token p.breadcrumbs);
+          Recover.defaultExpr ()
+        | Retry -> parseAtomicExpr p
+        end
     in
     Parser.eatBreadcrumb p;
     expr
@@ -4358,8 +4433,13 @@ Solution: you need to pull out each field you want explicitly."
     | Lbrace ->
       parseBsObjectType p
     | token ->
-      Parser.err ~startPos:p.prevEndPos p (Diagnostics.unexpected token p.breadcrumbs);
-      Recover.defaultType()
+      begin match Recover.recoverAtomicTypExpr p with
+      | Retry ->
+        parseAtomicTypExpr ~attrs p
+      | Abort ->
+        Parser.err ~startPos:p.prevEndPos p (Diagnostics.unexpected token p.breadcrumbs);
+        Recover.defaultType()
+      end
     in
     Parser.eatBreadcrumb p;
     typ
