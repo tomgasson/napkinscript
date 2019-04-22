@@ -704,6 +704,13 @@ exports[`switch.js 1`] = `
 ;;match (a, b) with | (Some a, Some b) -> (a + b) + c | _ -> 3"
 `;
 
+exports[`try.js 1`] = `
+";;try let x = 1 in let y = 2 in dangerousCall (x + y)
+  with | Foo -> Js.log \\"catched Foo\\" | Exit -> Js.log \\"catched exit\\"
+;;try myDangerousFn () with | Foo -> Js.log \\"catched Foo\\"[@@attr ]
+let x = let y = 1 in try apply y with | _ -> 2"
+`;
+
 exports[`tuple.js 1`] = `
 "let x = (1, 2, 3)
 let x = (1, 2, 3)
