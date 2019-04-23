@@ -4229,7 +4229,7 @@ Solution: you need to pull out each field you want explicitly."
         | Dot ->
           Parser.next p;
           aux p (ident::acc)
-        | Lparen ->
+        | Lparen when p.prevEndPos.pos_lnum == p.startPos.pos_lnum ->
           let lparen = p.startPos in
           let args = parseConstructorArgs p in
           let rparen = p.prevEndPos in

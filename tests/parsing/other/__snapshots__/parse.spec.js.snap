@@ -11,3 +11,10 @@ exports[`onlyMultilineComment.jsi 1`] = `""`;
 exports[`onlySinglelineComment.js 1`] = `""`;
 
 exports[`onlySinglinelineComment.jsi 1`] = `""`;
+
+exports[`semi.js 1`] = `
+"type nonrec t =
+  | Red 
+;;Red
+;;foo := 1"
+`;
