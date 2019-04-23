@@ -3943,7 +3943,7 @@ Solution: you need to pull out each field you want explicitly."
   and parseTryExpression ~attrs p =
     let startPos = p.Parser.startPos in
     Parser.expect Try p;
-    let expr = parseExpr p in
+    let expr = parseExpr ~context:WhenExpr p in
     Parser.expect Catch p;
     Parser.expect Lbrace p;
     let cases = parsePatternMatching p in

@@ -179,3 +179,24 @@ It seems that this record field mutation misses an expression
 
 ========================================================"
 `;
+
+exports[`try.js 1`] = `
+"=====Parsetree==========================================
+let parsedPayload = try Js.Json.parseExn response with | _ -> Js.Json.null
+=====Errors=============================================
+
+File \\"/napkinscript/tests/parsing/errors/expressions/try.js\\", line 2, characters 36-38:
+
+
+1 │    let parsedPayload =
+[31m2[0m │      try (Js.Json.parseExn(response)) {          
+                                          [31m^^^^^[0m
+3 │      | _ => Js.Json.null
+4 │      }
+
+Did you forget a \`catch\` here? 
+
+
+
+========================================================"
+`;
