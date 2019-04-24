@@ -38,3 +38,5 @@ let s = `
 
   :)
 `
+
+let s = `$dollar without $braces $interpolation`

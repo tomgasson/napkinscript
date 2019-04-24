@@ -148,7 +148,11 @@ let y = false
 let txt = \\"a string\\"
 let txtWithEscapedChar = \\"foo\\\\nbar\\"
 let number = 1
-let template = \\"amazing\\\\n  multine\\\\n  template\\\\n     string\\\\n\\"
+let template = {j|amazing
+  multine
+  template
+     string
+|j}
 let complexNumber = 1.6"
 `;
 
@@ -162,23 +166,42 @@ let u = ()"
 `;
 
 exports[`es6template.js 1`] = `
-"let s = \\"foo\\"
-let s = \\"multi\\\\n  line\\\\n\\\\nstring\\\\n\\"
+"let s = {j|foo|j}
+let s = {j|multi
+  line
+
+string
+|j}
 let s = foo
-let s = \\"before\\" ^ foo
-let s = \\"before \\" ^ foo
-let s = \\"before  \\" ^ foo
-let s = foo ^ \\"after\\"
-let s = foo ^ \\" after\\"
-let s = foo ^ \\"  after\\"
+let s = {j|before|j} ^ foo
+let s = {j|before |j} ^ foo
+let s = {j|before  |j} ^ foo
+let s = foo ^ {j|after|j}
+let s = foo ^ {j| after|j}
+let s = foo ^ {j|  after|j}
 let s = foo ^ bar
 let s = (foo ^ bar) ^ baz
-let s = (foo ^ \\" \\") ^ bar
-let s = (((foo ^ \\" \\") ^ bar) ^ \\" \\") ^ baz
-let s = (((\\" before \\" ^ foo) ^ \\" \\") ^ bar) ^ \\" after \\"
-let s = (((((\\"before \\" ^ foo) ^ \\" middle \\") ^ bar) ^ \\" \\") ^ baz) ^ \\" wow \\"
+let s = (foo ^ {j| |j}) ^ bar
+let s = (((foo ^ {j| |j}) ^ bar) ^ {j| |j}) ^ baz
+let s = ((({j| before |j} ^ foo) ^ {j| |j}) ^ bar) ^ {j| after |j}
 let s =
-  \\"\\\\n  multiline\\\\n\\\\n  es6\\\\n\\\\n  template\\\\n\\\\n  expression\\\\n\\\\n  so convenient\\\\n\\\\n  :)\\\\n\\""
+  ((((({j|before |j} ^ foo) ^ {j| middle |j}) ^ bar) ^ {j| |j}) ^ baz) ^
+    {j| wow |j}
+let s =
+  {j|
+  multiline
+
+  es6
+
+  template
+
+  expression
+
+  so convenient
+
+  :)
+|j}
+let s = {j|$dollar without $braces $interpolation|j}"
 `;
 
 exports[`extension.js 1`] = `
@@ -607,7 +630,7 @@ let _ =
 let _ =
   ((div
       ~children:[(let left = limit |. Int.toString in
-                  (left ^ \\" characters left\\") |. React.string)] ())
+                  (left ^ {j| characters left|j}) |. React.string)] ())
   [@JSX ])
 let _ =
   ((View.createElement ~style:(styles ## backgroundImageWrapper)
@@ -635,7 +658,7 @@ let truth = false
 let constructor = None
 let longidentConstructor = Option.None
 let txt = \\"a string\\"
-let otherTxt = \\"foo bar \\" ^ txt
+let otherTxt = {j|foo bar |j} ^ txt
 let ident = myIdent
 let aList = [1; 2]
 let anArray = [|1;2|]

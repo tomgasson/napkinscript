@@ -3320,7 +3320,7 @@ Solution: you need to pull out each field you want explicitly."
       | TemplateTail txt ->
         Parser.next p;
         if String.length txt > 0 then
-          let str = Ast_helper.Exp.constant (Pconst_string(txt, None)) in
+          let str = Ast_helper.Exp.constant (Pconst_string(txt, Some "j")) in
           Ast_helper.Exp.apply hiddenOperator
             [Nolabel, acc; Nolabel, str]
         else
@@ -3330,7 +3330,7 @@ Solution: you need to pull out each field you want explicitly."
         let expr = parseExprBlock p in
         Scanner.setTemplateMode p.scanner;
         Parser.expect Rbrace p;
-        let str = Ast_helper.Exp.constant (Pconst_string(txt, None)) in
+        let str = Ast_helper.Exp.constant (Pconst_string(txt, Some "j")) in
         let next =
           let a = if String.length txt > 0 then
               Ast_helper.Exp.apply hiddenOperator [Nolabel, acc; Nolabel, str]
@@ -3349,13 +3349,13 @@ Solution: you need to pull out each field you want explicitly."
     match p.Parser.token with
     | TemplateTail txt ->
       Parser.next p;
-      Ast_helper.Exp.constant (Pconst_string(txt, None))
+      Ast_helper.Exp.constant (Pconst_string(txt, Some "j"))
     | TemplatePart txt ->
       Parser.next p;
       let expr = parseExprBlock p in
       Scanner.setTemplateMode p.scanner;
       Parser.expect Rbrace p;
-      let str = Ast_helper.Exp.constant (Pconst_string(txt, None)) in
+      let str = Ast_helper.Exp.constant (Pconst_string(txt, Some "j")) in
       let next =
         if String.length txt > 0 then
           Ast_helper.Exp.apply hiddenOperator [Nolabel, str; Nolabel, expr]
