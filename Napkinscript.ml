@@ -3643,6 +3643,11 @@ Solution: you need to pull out each field you want explicitly."
     let startPos = p.Parser.startPos in
     Parser.expect Lbrace p;
     let expr = match p.Parser.token with
+    | Rbrace ->
+      Parser.err  p (Diagnostics.unexpected Rbrace p.breadcrumbs);
+      let loc = mkLoc p.prevEndPos p.endPos in
+      Ast_helper.Exp.construct
+        ~loc (Location.mkloc (Longident.Lident "()") loc) None
     | DotDotDot ->
       (* beginning of record spread, parse record *)
       Parser.next p;

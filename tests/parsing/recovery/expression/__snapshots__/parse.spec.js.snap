@@ -1,3 +1,8 @@
 // Jest Snapshot v1, https://goo.gl/fbAQLP
 
+exports[`emptyBlock.js 1`] = `
+"let x = ()
+let f a b = ()"
+`;
+
 exports[`if.js 1`] = `";;if foo = bar then Js.log \\"if-branch\\" else Js.log \\"else-branch\\""`;
