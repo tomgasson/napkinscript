@@ -1861,9 +1861,17 @@ module Parser = struct
       err ~startPos:p.prevEndPos p error
 
   let lookahead p callback =
-    let scannerCopy = {p.scanner with filename = p.scanner.filename} in
-    let parserStateCopy = {p with scanner = scannerCopy} in
+    let scannerCopy = {p.scanner with
+      filename = p.scanner.filename;
+      (* Due to the way scanner error reporting is setup, it would report errors
+       * in the original parser state, not the copy.
+       * TODO: investigate and fix? *)
+      err = fun ~startPos:_ ~endPos:_ _ -> ()
+    } in
+    let parserStateCopy = {p with scanner = scannerCopy; errors = p.errors} in
     callback parserStateCopy
+
+
 end
 
 
@@ -2846,38 +2854,7 @@ Solution: you need to pull out each field you want explicitly."
     Ast_helper.Pat.construct ~loc:(mkLoc startPos p.prevEndPos) ~attrs constr args
 
   and parseExpr ?(context=OrdinaryExpr) p =
-    let startPos = p.Parser.startPos in
-    let attrs = parseAttributes p in
-    let expr = match p.token with
-    | Assert ->
-      Parser.next p;
-      let expr = parseUnaryExpr p in
-      let loc = mkLoc startPos p.prevEndPos in
-      Ast_helper.Exp.assert_ ~loc expr
-    | Lazy ->
-      Parser.next p;
-      let expr = parseUnaryExpr p in
-      let loc = mkLoc startPos p.prevEndPos in
-      Ast_helper.Exp.lazy_ ~loc expr
-    | Try ->
-      parseTryExpression ~attrs p
-    | If ->
-      parseIfExpression p
-    | For ->
-      parseForExpression p
-    | While ->
-      parseWhileExpression p
-    | Switch ->
-      parseSwitchExpression p
-    | _ ->
-      if (context != WhenExpr) &&
-         isEs6ArrowExpression ~inTernary:(context=TernaryTrueBranchExpr) p
-      then
-        parseEs6ArrowExpression p
-      else
-        parseUnaryExpr p
-    in
-    let expr = {expr with Parsetree.pexp_attributes = expr.pexp_attributes @ attrs} in
+    let expr = parseOperandExpr ~context p in
     let expr = parseBinaryExpr ~a:expr p 1 in
     parseTernaryExpr expr p
 
@@ -3270,10 +3247,41 @@ Solution: you need to pull out each field you want explicitly."
     | _ ->
       parsePrimaryExpr p
 
-  and parseAttributedUnaryExpr p =
+  (* Represents an "operand" in a binary expression.
+   * If you have `a + b`, `a` and `b` both represent
+   * the operands of the binary expression with opeartor `+` *)
+  and parseOperandExpr ?(context=OrdinaryExpr) p =
     let startPos = p.Parser.startPos in
     let attrs = parseAttributes p in
-    let expr = parseUnaryExpr p in
+    let expr = match p.Parser.token with
+    | Assert ->
+      Parser.next p;
+      let expr = parseUnaryExpr p in
+      let loc = mkLoc startPos p.prevEndPos in
+      Ast_helper.Exp.assert_ ~loc expr
+    | Lazy ->
+      Parser.next p;
+      let expr = parseUnaryExpr p in
+      let loc = mkLoc startPos p.prevEndPos in
+      Ast_helper.Exp.lazy_ ~loc expr
+    | Try ->
+      parseTryExpression p
+    | If ->
+      parseIfExpression p
+    | For ->
+      parseForExpression p
+    | While ->
+      parseWhileExpression p
+    | Switch ->
+      parseSwitchExpression p
+    | _ ->
+      if (context != WhenExpr) &&
+         isEs6ArrowExpression ~inTernary:(context=TernaryTrueBranchExpr) p
+      then
+        parseEs6ArrowExpression p
+      else
+        parseUnaryExpr p
+    in
     let endPos = p.Parser.prevEndPos in
     {expr with
       pexp_attributes = expr.Parsetree.pexp_attributes @ attrs;
@@ -3287,7 +3295,7 @@ Solution: you need to pull out each field you want explicitly."
   and parseBinaryExpr ?a p prec =
     let a = match a with
     | Some e -> e
-    | None -> parseAttributedUnaryExpr p
+    | None -> parseOperandExpr p
     in
     let rec loop a =
       let token = p.Parser.token in
@@ -3945,7 +3953,7 @@ Solution: you need to pull out each field you want explicitly."
       Parser.eatBreadcrumb p;
       blockExpr
 
-  and parseTryExpression ~attrs p =
+  and parseTryExpression p =
     let startPos = p.Parser.startPos in
     Parser.expect Try p;
     let expr = parseExpr ~context:WhenExpr p in
@@ -3954,7 +3962,7 @@ Solution: you need to pull out each field you want explicitly."
     let cases = parsePatternMatching p in
     Parser.expect Rbrace p;
     let loc = mkLoc startPos p.prevEndPos in
-    Ast_helper.Exp.try_ ~attrs ~loc expr cases
+    Ast_helper.Exp.try_ ~loc expr cases
 
   and parseIfExpression p =
     Parser.leaveBreadcrumb p Grammar.ExprIf;
