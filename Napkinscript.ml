@@ -3862,7 +3862,9 @@ Solution: you need to pull out each field you want explicitly."
         | LessThan | Backtick | Percent | Try ->
           parseExprBlock p
         | _ ->
-          Ast_helper.Exp.construct (Location.mknoloc (Longident.Lident "()")) None
+          let loc = mkLoc p.startPos p.endPos in
+          Ast_helper.Exp.construct ~loc
+            (Location.mkloc (Longident.Lident "()") loc) None
         end
       (* High danger, TODO check if we really can omit semi in these case*)
       | Bang | Band
@@ -3872,7 +3874,8 @@ Solution: you need to pull out each field you want explicitly."
       | LessThan | Backtick | Percent | Try ->
         parseExprBlock p
       | _ ->
-        Ast_helper.Exp.construct (Location.mknoloc (Longident.Lident "()")) None
+        let loc = mkLoc p.startPos p.endPos in
+        Ast_helper.Exp.construct ~loc (Location.mkloc (Longident.Lident "()") loc) None
       in
       Ast_helper.Exp.let_ ~loc recFlag letBindings next
     | _ ->
