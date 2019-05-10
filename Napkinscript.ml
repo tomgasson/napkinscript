@@ -2855,7 +2855,7 @@ Solution: you need to pull out each field you want explicitly."
 
   and parseExpr ?(context=OrdinaryExpr) p =
     let expr = parseOperandExpr ~context p in
-    let expr = parseBinaryExpr ~a:expr p 1 in
+    let expr = parseBinaryExpr ~context ~a:expr p 1 in
     parseTernaryExpr expr p
 
   (* expr ? expr : expr *)
@@ -3228,10 +3228,10 @@ Solution: you need to pull out each field you want explicitly."
 
 
   (* a unary expression is an expression with only one operand and
-   * unary operator. Example:
-   * -> -1
-   * -> !condition
-   * -> -. 1.6
+   * unary operator. Examples:
+   *   -1
+   *   !condition
+   *   -. 1.6
    *)
   and parseUnaryExpr p =
     let startPos = p.Parser.startPos in
@@ -3289,13 +3289,13 @@ Solution: you need to pull out each field you want explicitly."
 
   (* a binary expression is an expression that combines two expressions with an
    * operator. Examples:
-   * -> a + b
-   * -> f(x) |> g(y)
+   *    a + b
+   *    f(x) |> g(y)
    *)
-  and parseBinaryExpr ?a p prec =
+  and parseBinaryExpr ?(context=OrdinaryExpr) ?a p prec =
     let a = match a with
     | Some e -> e
-    | None -> parseOperandExpr p
+    | None -> parseOperandExpr ~context p
     in
     let rec loop a =
       let token = p.Parser.token in
@@ -3306,7 +3306,7 @@ Solution: you need to pull out each field you want explicitly."
         let startPos = p.startPos in
         Parser.next p;
         let endPos = p.prevEndPos in
-        let b = parseBinaryExpr p (tokenPrec + 1) in
+        let b = parseBinaryExpr ~context p (tokenPrec + 1) in
         let loc = mkLoc a.Parsetree.pexp_loc.loc_start b.pexp_loc.loc_end in
         let expr = Ast_helper.Exp.apply
           ~loc
@@ -4013,7 +4013,7 @@ Solution: you need to pull out each field you want explicitly."
       Asttypes.Upto
     in
     Parser.next p;
-    let e2 = parseExpr p in
+    let e2 = parseExpr ~context:WhenExpr p in
     if hasOpeningParen then Parser.expect Rparen p;
     Parser.expect Lbrace p;
     let bodyExpr = parseExprBlock p in

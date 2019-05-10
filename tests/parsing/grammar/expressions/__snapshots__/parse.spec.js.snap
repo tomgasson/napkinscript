@@ -84,6 +84,32 @@ let x = (a + (-1)) + (-2)
 let x = (a + (((-1))[@attr ])) + (((-2))[@attr ])"
 `;
 
+exports[`binaryNoEs6Arrow.js 1`] = `
+";;if (color == Black) && ((sibling == None) || (parent == None)) then ()
+;;if
+    ((color == Black) && (color != Red)) &&
+      ((sibling == None) || (parent == None))
+  then ()
+;;match (color == Black) && ((sibling == None) || (parent == None)) with
+  | _ -> ()
+;;match ((color == Black) && (color != Red)) &&
+          ((sibling == None) || (parent == None))
+  with
+  | _ -> ()
+;;try (color == Black) && ((sibling == None) || (parent == None))
+  with | _ -> ()
+;;try
+    ((color == Black) && (color == Red)) &&
+      ((sibling == None) || (parent == None))
+  with | _ -> ()
+;;while (color == Black) && ((sibling == None) || (parent == None)) do ()
+    done
+;;while
+    ((color == Black) && (color == Red)) &&
+      ((sibling == None) || (parent == None))
+    do () done"
+`;
+
 exports[`block.js 1`] = `
 "let b =
   let module Array = Belt.Array in
@@ -244,7 +270,8 @@ exports[`for.js 1`] = `
 ";;for p = 0 to 10 do () done
 ;;for p = 10 downto 0 do () done
 ;;for p = a to b do () done
-;;for p = a to b do let a = 1 in let b = 2 in a + b done"
+;;for p = a to b do let a = 1 in let b = 2 in a + b done
+;;for p = 0 to x + 1 do () done"
 `;
 
 exports[`forV2.js 1`] = `";;let i = ref 0 in while i < 10 do Js.log i; i := ((!i) + 1) done"`;

@@ -15,3 +15,8 @@ for (p in a to b) {
   let b = 2
   a + b
 }
+
+// (x +1) { -> not an arrow expression
+for p in 0 to (x + 1) {
+  ()
+}
