@@ -697,6 +697,14 @@ let x = 4 :: 5 :: y
 let x = 1 :: 2 :: (y : int list)"
 `;
 
+exports[`locallyAbstractTypes.js 1`] = `
+"let f (type t) (xs : t list) = ()
+let f (type t) (xs : t list) (type s) (ys : s list) = ()
+let f (type t) (type u) (type v) (xs : (t * u * v) list) = ()
+let f (type t) (type u) (type v) (xs : (t * u * v) list) (type s) (type w)
+  (type z) (ys : (s * w * z) list) = ()"
+`;
+
 exports[`parenthesized.js 1`] = `
 "let x = 1
 let f = 1.3

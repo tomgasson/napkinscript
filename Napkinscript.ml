@@ -619,7 +619,7 @@ module Grammar = struct
     | _ -> false
 
   let isParameterStart = function
-    | Token.Tilde | Dot -> true
+    | Token.Typ | Tilde | Dot -> true
     | token when isPatternStart token -> true
     | _ -> false
 
@@ -2007,6 +2007,12 @@ Solution: you need to pull out each field you want explicitly."
     | TypeDef of (Asttypes.rec_flag * Parsetree.type_declaration list)
     | TypeExt of Parsetree.type_extension
 
+  type labelledParameter =
+    | TermParameter of
+        (bool * Parsetree.attributes * Asttypes.arg_label * Parsetree.expression option *
+        Parsetree.pattern * Lexing.position)
+    | TypeParameter of (string Location.loc list * Lexing.position)
+
   type recordPatternItem =
     | PatUnderscore
     | PatField of (Ast_helper.lid * Parsetree.pattern)
@@ -2257,6 +2263,26 @@ Solution: you need to pull out each field you want explicitly."
     match Longident.flatten longident |> List.rev with
     | [] -> ""
     | ident::_ -> ident
+
+  let makeNewtypes ~loc newtypes exp =
+    List.fold_right (fun newtype exp ->
+      Ast_helper.Exp.mk ~loc (Pexp_newtype (newtype, exp))
+    ) newtypes exp
+
+  (* locally abstract types syntax sugar
+   * Transforms
+   *  let f: type t u v. = (foo : list</t, u, v/>) => ...
+   * into
+   *  let f = (type t u v. foo : list</t, u, v/>) => ...
+   *)
+  let wrap_type_annotation ~loc newtypes core_type body =
+    let exp = makeNewtypes ~loc newtypes
+      (Ast_helper.Exp.constraint_ ~loc body core_type)
+    in
+    let typ = Ast_helper.Typ.poly ~loc newtypes
+      (Ast_helper.Typ.varify_constructors newtypes core_type)
+    in
+    (exp, typ)
 
   (**
     * process the occurrence of _ in the arguments of a function application
@@ -2902,9 +2928,13 @@ Solution: you need to pull out each field you want explicitly."
     Parser.eatBreadcrumb p;
     let endPos = p.prevEndPos in
     let arrowExpr =
-      List.fold_right (fun (uncurried, attrs, lbl, defaultExpr, pat, startPos) expr ->
-        let attrs = if uncurried then uncurryAttr::attrs else attrs in
-        Ast_helper.Exp.fun_ ~loc:(mkLoc startPos endPos) ~attrs lbl defaultExpr pat expr
+      List.fold_right (fun parameter expr ->
+        match parameter with
+        | TermParameter (uncurried, attrs, lbl, defaultExpr, pat, startPos) ->
+          let attrs = if uncurried then uncurryAttr::attrs else attrs in
+          Ast_helper.Exp.fun_ ~loc:(mkLoc startPos endPos) ~attrs lbl defaultExpr pat expr
+        | TypeParameter (newtypes, startPos) ->
+          makeNewtypes ~loc:(mkLoc startPos endPos) newtypes expr
       ) parameters body
     in
     {arrowExpr with pexp_loc = {arrowExpr.pexp_loc with loc_start = startPos}}
@@ -2930,7 +2960,13 @@ Solution: you need to pull out each field you want explicitly."
    *)
   and parseParameter p =
     let startPos = p.Parser.startPos in
+    if p.Parser.token = Typ then (
+      Parser.next p;
+      let lidents = parseLidentList p in
+      TypeParameter (lidents, startPos)
+    ) else (
     (* TODO: this is a shift reduce conflict, we reduce here :)
+     * UPDATE: not sure if we should do this in the non-labelled arg case
      * let f = ( @attr x ) => x + 1; -> on pattern x or on Pexp_fun? *)
     let uncurried = Parser.optional p Token.Dot in
     let attrs = parseAttributes p in
@@ -2977,7 +3013,7 @@ Solution: you need to pull out each field you want explicitly."
     | _ ->
       (Asttypes.Nolabel, parseConstrainedPattern p)
     in
-    match p.Parser.token with
+    let parameter = match p.Parser.token with
     | Equal ->
       Parser.next p;
 			let lbl = match lbl with
@@ -2995,6 +3031,9 @@ Solution: you need to pull out each field you want explicitly."
       end
     | _ ->
       (uncurried, attrs, lbl, None, pat, startPos)
+    in
+    TermParameter parameter
+    )
 
   and parseParameterList p =
     let parameters =
@@ -3019,7 +3058,7 @@ Solution: you need to pull out each field you want explicitly."
     | Lident ident ->
       Parser.next p;
       let loc = mkLoc startPos p.Parser.prevEndPos in
-      [(
+      [TermParameter(
         false,
         [],
         Asttypes.Nolabel,
@@ -3030,7 +3069,7 @@ Solution: you need to pull out each field you want explicitly."
     | Underscore ->
       Parser.next p;
       let loc = mkLoc startPos p.Parser.prevEndPos in
-      [false, [], Asttypes.Nolabel, None, Ast_helper.Pat.any ~loc (), startPos]
+      [TermParameter (false, [], Asttypes.Nolabel, None, Ast_helper.Pat.any ~loc (), startPos)]
     | Lparen ->
       Parser.next p;
       begin match p.Parser.token with
@@ -3040,7 +3079,7 @@ Solution: you need to pull out each field you want explicitly."
         let unitPattern = Ast_helper.Pat.construct
           ~loc (Location.mkloc (Longident.Lident "()") loc) None
         in
-        [false, [], Asttypes.Nolabel, None, unitPattern, startPos]
+        [TermParameter (false, [], Asttypes.Nolabel, None, unitPattern, startPos)]
       | _ -> parseParameterList p
       end
     | token ->
@@ -3377,18 +3416,37 @@ Solution: you need to pull out each field you want explicitly."
 
   and parseLetBindingBody ~attrs p =
     Parser.leaveBreadcrumb p Grammar.LetBinding;
-    let pat =
+    let startPos = p.Parser.startPos in
+    let pat, exp =
       let pat = parsePattern p in
       match p.Parser.token with
       | Colon ->
         Parser.next p;
-        let polyType = parsePolyTypeExpr p in
-        let loc = {pat.ppat_loc with loc_end = polyType.Parsetree.ptyp_loc.loc_end} in
-        Ast_helper.Pat.constraint_ ~loc pat polyType
-      | _ -> pat
+        begin match p.token with
+        | Typ -> (* locally abstract types *)
+          Parser.next p;
+          let newtypes = parseLidentList p in
+          Parser.expect Dot p;
+          let typ = parseTypExpr p in
+          Parser.expect Equal p;
+          let expr = parseExpr p in
+          let loc = mkLoc startPos p.prevEndPos in
+          let exp, poly = wrap_type_annotation ~loc newtypes typ expr in
+          let pat = Ast_helper.Pat.constraint_ ~loc pat poly in
+          (pat, exp)
+        | _ ->
+          let polyType = parsePolyTypeExpr p in
+          let loc = {pat.ppat_loc with loc_end = polyType.Parsetree.ptyp_loc.loc_end} in
+          let pat = Ast_helper.Pat.constraint_ ~loc pat polyType in
+          Parser.expect Token.Equal p;
+          let exp = parseExpr p in
+          (pat, exp)
+        end
+      | _ ->
+        Parser.expect Token.Equal p;
+        let exp = parseExpr p in
+        (pat, exp)
     in
-    Parser.expect Token.Equal p;
-    let exp = parseExpr p in
     let loc = {pat.ppat_loc with
       loc_end = exp.Parsetree.pexp_loc.loc_end
     } in
@@ -3716,7 +3774,7 @@ Solution: you need to pull out each field you want explicitly."
             let ident = Location.mkloc (Longident.last pathIdent.txt) loc in
             let a = parseEs6ArrowExpression
               ~parameters:[
-                (false, [], Asttypes.Nolabel, None, Ast_helper.Pat.var ident, startPos)
+                TermParameter (false, [], Asttypes.Nolabel, None, Ast_helper.Pat.var ident, startPos)
                 ]
                p
             in
@@ -4401,6 +4459,18 @@ Solution: you need to pull out each field you want explicitly."
         end
       | _ ->
         List.rev vars
+    in
+    loop p []
+
+  and parseLidentList p =
+    let rec loop p ls =
+      match p.Parser.token with
+      | Lident lident ->
+        Parser.next p;
+        let loc = mkLoc p.startPos p.endPos in
+        loop p ((Location.mkloc lident loc )::ls)
+      | _ ->
+        List.rev ls
     in
     loop p []
 
