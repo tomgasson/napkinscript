@@ -49,6 +49,10 @@ exports[`typeParams.js 1`] = `
 "=====Parsetree==========================================
 type nonrec 'a node = {
   _value: 'a Js.Nullable.value }
+type nonrec ('from, '_) derivedNode =
+  {
+  mutable value: 'to_ ;
+  updateF: 'from -> 'to_ }
 =====Errors=============================================
 
 File \\"/napkinscript/tests/parsing/errors/typeDef/typeParams.js\\", line 1, characters 9-10:
@@ -59,6 +63,18 @@ File \\"/napkinscript/tests/parsing/errors/typeDef/typeParams.js\\", line 1, cha
 3 │  }
 
 Type params require diamonds, example: type node<'a>
+
+
+File \\"/napkinscript/tests/parsing/errors/typeDef/typeParams.js\\", line 5, characters 25-27:
+
+
+3 │  }
+4 │  
+[31m5[0m │  type derivedNode<'from, '[31mto[0m> = {
+6 │    mutable value: 'to_,
+7 │    updateF: 'from => 'to_,
+
+\`to\` is a reserved keyword. Try \`to_\` or \`_to\` instead
 
 
 

@@ -1918,9 +1918,6 @@ module NapkinScript = struct
       (* | t when Token.isKeyword t -> *)
       (* | _ -> *)
 
-    (* let recoverLident p = *)
-      (* Location.mknoloc "_" loc *)
-
     let recoverEqualGreater p =
       Parser.expect EqualGreater p;
       match p.Parser.token with
@@ -1938,6 +1935,22 @@ module NapkinScript = struct
             check rest
       in
       check p.breadcrumbs
+
+    let recoverLident p =
+      if Token.isKeyword p.Parser.token
+         && p.Parser.prevEndPos.pos_lnum == p.startPos.pos_lnum
+      then (
+        Parser.err p (Diagnostics.lident p.Parser.token);
+        Parser.next p;
+        Abort
+      ) else (
+        while not (shouldAbortListParse p) do
+          Parser.next p
+        done;
+        match p.Parser.token with
+        | Lident _ -> Retry
+        | _ -> Abort
+      )
 
     let recoverAtomicExpr p =
       if Token.isKeyword p.Parser.token
@@ -2314,6 +2327,21 @@ Solution: you need to pull out each field you want explicitly."
         exp_apply
     in
     (args, wrap)
+
+  let rec parseLident p =
+    let startPos = p.Parser.startPos in
+    match p.Parser.token with
+    | Lident ident ->
+      Parser.next p;
+      let loc = mkLoc startPos p.prevEndPos in
+      (ident, loc)
+    | t ->
+      begin match Recover.recoverLident p with
+      | Retry ->
+        parseLident p
+      | Abort ->
+        ("_", mkLoc startPos p.prevEndPos)
+      end
 
   (* Ldot (Ldot (Lident "Foo", "Bar"), "baz") *)
   let parseValuePath p =
@@ -5059,16 +5087,8 @@ Solution: you need to pull out each field you want explicitly."
     let param = match p.Parser.token with
     | SingleQuote ->
       Parser.next p;
-      begin match p.Parser.token with
-      | Lident ident ->
-        let startPos = p.startPos in
-        Parser.next p;
-        let loc = mkLoc startPos p.prevEndPos in
-        (Ast_helper.Typ.var ~loc ident, variance)
-      | t ->
-        Parser.err p (Diagnostics.lident t);
-        (Ast_helper.Typ.any (), variance)
-      end
+      let (ident, loc) = parseLident p in
+      (Ast_helper.Typ.var ~loc ident, variance)
     | Underscore ->
       let loc = mkLoc p.startPos p.endPos in
       Parser.next p;
