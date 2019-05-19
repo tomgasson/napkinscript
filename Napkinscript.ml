@@ -2704,20 +2704,13 @@ Solution: you need to pull out each field you want explicitly."
     match p.Parser.token with
     | As ->
       Parser.next p;
-      begin match p.token with
-      | Lident ident ->
-        let identStart = p.startPos in
-        Parser.next p;
-        let loc = mkLoc identStart p.prevEndPos in
-        Ast_helper.Pat.alias
-          ~loc:({pattern.ppat_loc with loc_end = p.prevEndPos})
-          ~attrs
-           pattern
-           (Location.mkloc ident loc)
-      | t ->
-        Parser.err p (Diagnostics.lident t);
-        pattern
-      end
+      let (name, loc) = parseLident p in
+      let name = Location.mkloc name loc in
+      Ast_helper.Pat.alias
+        ~loc:({pattern.ppat_loc with loc_end = p.prevEndPos})
+        ~attrs
+         pattern
+         name
     | _ -> pattern
 
   (* or ::= pattern | pattern *)
@@ -2767,22 +2760,14 @@ Solution: you need to pull out each field you want explicitly."
 		match p.token with
 		| As ->
 			Parser.next p;
-			begin match p.token with
-			| Lident ident ->
-				let startPosIdent = p.startPos in
-				Parser.next p;
-				let locIdent = mkLoc startPosIdent p.prevEndPos in
-				let aliasPattern =
-					Ast_helper.Pat.alias
-						~loc:(mkLoc startPos locIdent.loc_end)
-						pattern
-						(Location.mkloc ident locIdent)
-				in
-				(Location.mkloc label.txt (mkLoc startPos aliasPattern.ppat_loc.loc_end), aliasPattern)
-			| t ->
-        Parser.err p (Diagnostics.lident t);
-        (Location.mknoloc label.txt, pattern)
-			end
+      let (name, loc) = parseLident p in
+      let name = Location.mkloc name loc in
+      let aliasPattern = Ast_helper.Pat.alias
+        ~loc:(mkLoc startPos p.prevEndPos)
+        pattern
+        name
+      in
+      (Location.mkloc label.txt (mkLoc startPos aliasPattern.ppat_loc.loc_end), aliasPattern)
 		| _ ->
     (Location.mkloc label.txt (mkLoc startPos pattern.ppat_loc.loc_end), pattern)
 
@@ -3001,14 +2986,7 @@ Solution: you need to pull out each field you want explicitly."
     let (lbl, pat) = match p.Parser.token with
     | Tilde ->
       Parser.next p;
-      let lblName = match p.Parser.token with
-      | Lident ident ->
-        Parser.next p;
-        ident
-      | t ->
-        Parser.err p (Diagnostics.lident t);
-        "_"
-      in
+      let (lblName, _loc) = parseLident p in
       begin match p.Parser.token with
       | Comma | Equal | Rparen ->
         let loc = mkLoc startPos p.prevEndPos in
@@ -3662,12 +3640,7 @@ Solution: you need to pull out each field you want explicitly."
   and parseJsxProp p =
     Parser.leaveBreadcrumb p Grammar.JsxAttribute;
     let optional = Parser.optional p Question in
-    let name = match p.Parser.token with
-    | Lident ident -> Parser.next p; ident
-    | t ->
-      Parser.err p (Diagnostics.lident t);
-      "_"
-    in
+    let (name, _loc) = parseLident p in
     (* optional punning: <foo ?a /> *)
     if optional then
       (Asttypes.Optional name, Ast_helper.Exp.ident (Location.mknoloc
@@ -4471,20 +4444,12 @@ Solution: you need to pull out each field you want explicitly."
   (* 'a 'b 'c *)
   and parseTypeVarList p =
     let rec loop p vars =
-      let startPos = p.Parser.startPos in
       match p.Parser.token with
       | SingleQuote ->
         Parser.next p;
-        begin match p.Parser.token with
-        | Lident ident ->
-          let endPos = p.endPos in
-          Parser.next p;
-          let var = Location.mkloc ident (mkLoc startPos endPos) in
-          loop p (var::vars)
-        | t ->
-          Parser.err p (Diagnostics.lident t);
-          List.rev vars
-        end
+        let (lident, loc) = parseLident p in
+        let var = Location.mkloc lident loc in
+        loop p (var::vars)
       | _ ->
         List.rev vars
     in
@@ -4508,16 +4473,8 @@ Solution: you need to pull out each field you want explicitly."
     let typ = match p.Parser.token with
     | SingleQuote ->
       Parser.next p;
-      begin match p.Parser.token with
-      | Lident ident ->
-        let endPos = p.endPos in
-        Parser.next p;
-        Ast_helper.Typ.var ~loc:(mkLoc startPos endPos) ~attrs ident
-      | t ->
-        Parser.err p (Diagnostics.lident t);
-        let ident = "_" in
-        Ast_helper.Typ.var ~attrs ident
-      end
+      let (ident, loc) = parseLident p in
+      Ast_helper.Typ.var ~loc ~attrs ident
     | Underscore ->
       let endPos = p.endPos in
       Parser.next p;
@@ -4596,15 +4553,9 @@ Solution: you need to pull out each field you want explicitly."
     | As ->
       Parser.next p;
       Parser.expect SingleQuote p;
-      begin match p.token with
-      | Lident ident ->
-        Parser.next p;
-        (* TODO: how do we parse attributes here? *)
-        Ast_helper.Typ.alias ~loc:(mkLoc typ.Parsetree.ptyp_loc.loc_start p.prevEndPos) typ ident
-      | t ->
-        Parser.err p (Diagnostics.lident t);
-        typ
-      end
+      let (ident, _loc) = parseLident p in
+      (* TODO: how do we parse attributes here? *)
+      Ast_helper.Typ.alias ~loc:(mkLoc typ.Parsetree.ptyp_loc.loc_start p.prevEndPos) typ ident
     | _ -> typ
 
 
@@ -4623,12 +4574,7 @@ Solution: you need to pull out each field you want explicitly."
     match p.Parser.token with
     | Tilde ->
       Parser.next p;
-      let name = match p.Parser.token with
-      | Lident ident -> Parser.next p; ident
-      | t ->
-        Parser.err p (Diagnostics.lident t);
-        "_"
-      in
+      let (name, _loc) = parseLident p in
       Parser.expect Colon p;
       let typ = parseTypExpr p in
       begin match p.Parser.token with
@@ -4664,12 +4610,7 @@ Solution: you need to pull out each field you want explicitly."
     match p.Parser.token with
     | Tilde ->
       Parser.next p;
-      let name = match p.Parser.token with
-      | Lident ident -> Parser.next p; ident
-      | t ->
-        Parser.err p (Diagnostics.lident t);
-        "_"
-      in
+      let (name, _loc) = parseLident p in
       Parser.expect Colon p;
       let typ = parseTypExpr ~alias:false ~es6Arrow:false p in
       let arg = match p.Parser.token with
@@ -4818,21 +4759,14 @@ Solution: you need to pull out each field you want explicitly."
     else
       Asttypes.Immutable
     in
-    let name = match p.Parser.token with
-    | Lident ident ->
-      let loc = mkLoc p.startPos p.endPos in
-      Parser.next p;
-      Location.mkloc ident loc
-    | t ->
-      Parser.err p (Diagnostics.lident t);
-      Location.mknoloc "_"
-    in
+    let (lident, loc) = parseLident p in
+    let name = Location.mkloc lident loc in
     let typ = match p.Parser.token with
     | Colon ->
       Parser.next p;
       parsePolyTypeExpr p
     | _ ->
-      Ast_helper.Typ.constr {name with txt = Lident name.txt} []
+      Ast_helper.Typ.constr ~loc:name.loc {name with txt = Lident name.txt} []
     in
     let loc = mkLoc startPos typ.ptyp_loc.loc_end in
     Ast_helper.Type.field ~attrs ~loc ~mut name typ
@@ -5347,15 +5281,8 @@ Solution: you need to pull out each field you want explicitly."
     let startPos = p.Parser.startPos in
     let attrs = match attrs with | Some attrs -> attrs | None -> parseAttributes p in
     Parser.leaveBreadcrumb p Grammar.TypeConstrName;
-    let typeConstrName = match p.Parser.token with
-    | Lident ident ->
-      let loc = mkLoc p.startPos p.endPos in
-      Parser.next p;
-      (Location.mkloc ident loc)
-    | t ->
-      Parser.err p (Diagnostics.lident t);
-      Location.mknoloc "_"
-    in
+    let (name, loc) = parseLident p in
+    let typeConstrName = Location.mkloc name loc in
     Parser.eatBreadcrumb p;
     Parser.leaveBreadcrumb p Grammar.TypeParams;
     let params = parseTypeParams p in
@@ -5466,15 +5393,8 @@ Solution: you need to pull out each field you want explicitly."
     Parser.leaveBreadcrumb p Grammar.External;
     let startPos = p.Parser.startPos in
     Parser.expect Token.External p;
-    let name = match p.Parser.token with
-    | Lident ident ->
-      let loc = mkLoc p.startPos p.endPos in
-      Parser.next p;
-      Location.mkloc ident loc
-    | t ->
-      Parser.err p (Diagnostics.lident t);
-      Location.mknoloc "_"
-    in
+    let (name, loc) = parseLident p in
+    let name = Location.mkloc name loc in
     Parser.expect ~grammar:(Grammar.TypeExpression) Colon p;
     let typExpr = parseTypExpr p in
     Parser.expect Equal p;
@@ -6182,15 +6102,8 @@ Solution: you need to pull out each field you want explicitly."
 
   and parseSignLetDesc ~attrs p =
     Parser.expect Let p;
-    let name = match p.Parser.token with
-    | Lident ident ->
-      let nameStartPos = p.startPos in
-      Parser.next p;
-      Location.mkloc ident (mkLoc nameStartPos p.prevEndPos)
-    | t ->
-      Parser.err p (Diagnostics.lident t);
-      Location.mknoloc "_"
-    in
+    let (name, loc) = parseLident p in
+    let name = Location.mkloc name loc in
     Parser.expect Colon p;
     let typExpr = parsePolyTypeExpr p in
     let valueDesc = Ast_helper.Val.mk ~attrs name typExpr in
