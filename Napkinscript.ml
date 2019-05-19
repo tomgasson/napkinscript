@@ -4977,13 +4977,15 @@ Solution: you need to pull out each field you want explicitly."
 
    and parseTypeConstructorDeclaration p =
      Parser.leaveBreadcrumb p Grammar.ConstructorDeclaration;
+     let startPos = p.Parser.startPos in
      let attrs = parseAttributes p in
      match p.Parser.token with
      | Uident uident ->
        Parser.next p;
        let (args, res) = parseConstrDeclArgs p in
        Parser.eatBreadcrumb p;
-       Ast_helper.Type.constructor ~attrs ?res ~args (Location.mknoloc uident)
+       let loc = mkLoc startPos p.prevEndPos in
+       Ast_helper.Type.constructor ~loc ~attrs ?res ~args (Location.mkloc uident loc)
      | t ->
       Parser.err p (Diagnostics.uident t);
       Ast_helper.Type.constructor (Location.mknoloc "_")

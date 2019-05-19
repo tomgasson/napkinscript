@@ -73,3 +73,16 @@ type t =
 type t = 
   | @attr EmptyColor
   | @onConstr White(grayscale) : @onGadt t
+
+type node <_, 'value> =
+  | Root({
+      mutable value: 'value,
+      mutable updatedTime: float,
+    }): node<root, 'value>
+  | Derived({
+      mutable cachedValue: 'value,
+      parent: node<_, 'value>,
+      root: node<root, 'value>,
+      updateF: 'value => 'value,
+      mutable updatedTime: float,
+    }): node<derived, 'value>

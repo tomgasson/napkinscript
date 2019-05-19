@@ -81,7 +81,18 @@ type nonrec t =
   < gradient: int [@attr ] ;hex: string [@attr ]  ;.. >  Js.t -> t 
 type nonrec t =
   | EmptyColor [@attr ]
-  | White: grayscale -> ((t)[@onGadt ]) [@onConstr ]"
+  | White: grayscale -> ((t)[@onGadt ]) [@onConstr ]
+type nonrec (_, 'value) node =
+  | Root: {
+  mutable value: 'value ;
+  mutable updatedTime: float } -> (root, 'value) node 
+  | Derived:
+  {
+  mutable cachedValue: 'value ;
+  parent: (_, 'value) node ;
+  root: (root, 'value) node ;
+  updateF: 'value -> 'value ;
+  mutable updatedTime: float } -> (derived, 'value) node "
 `;
 
 exports[`privateTypeEquation.js 1`] = `
