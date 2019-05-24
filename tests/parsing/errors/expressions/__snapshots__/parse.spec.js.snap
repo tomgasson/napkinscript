@@ -186,6 +186,54 @@ This let-binding misses an expression
 ========================================================"
 `;
 
+exports[`record.js 1`] = `
+"=====Parsetree==========================================
+let newWrapper = { updateF; value = (f xWrapper.currentValue) }
+let newWrapper = { updateF; updateF2; value = (f xWrapper.currentValue) }
+=====Errors=============================================
+
+File \\"/napkinscript/tests/parsing/errors/expressions/record.js\\", line 2, characters 9-17:
+
+
+1 │  let newWrapper = {
+[31m2[0m │    updateF          
+               [31m^[0m
+3 │    value: f(xWrapper.currentValue),
+4 │  }
+
+Did you forget a \`,\` here? 
+
+
+File \\"/napkinscript/tests/parsing/errors/expressions/record.js\\", line 8, characters 9-18:
+
+
+6 │  
+7 │  let newWrapper = {
+[31m8[0m │    updateF updateF2          
+               [31m^[0m
+9 │    value: f(xWrapper.currentValue),
+10 │  }
+
+Did you forget a \`:\` here? 
+
+
+File \\"/napkinscript/tests/parsing/errors/expressions/record.js\\", line 8, characters 18-26:
+
+
+6 │  
+7 │  let newWrapper = {
+[31m8[0m │    updateF updateF2          
+                        [31m^[0m
+9 │    value: f(xWrapper.currentValue),
+10 │  }
+
+Did you forget a \`,\` here? 
+
+
+
+========================================================"
+`;
+
 exports[`setField.js 1`] = `
 "=====Parsetree==========================================
 ;;if match

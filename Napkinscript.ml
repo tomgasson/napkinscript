@@ -3754,7 +3754,7 @@ Solution: you need to pull out each field you want explicitly."
         begin match p.Parser.token with
         | Comma ->
           Parser.next p;
-          parseRecordExpr [(pathIdent, Ast_helper.Exp.ident pathIdent)] p
+          parseRecordExpr [(pathIdent, valueOrConstructor)] p
         | Colon ->
           Parser.next p;
           let fieldExpr = parseExpr p in
@@ -3765,6 +3765,15 @@ Solution: you need to pull out each field you want explicitly."
             Parser.expect Comma p;
             parseRecordExpr [(pathIdent, fieldExpr)] p
           end
+        (* error case *)
+        | Lident _ ->
+          if p.prevEndPos.pos_lnum < p.startPos.pos_lnum then (
+            Parser.expect Comma p;
+            parseRecordExpr [(pathIdent, valueOrConstructor)] p
+          ) else (
+            Parser.expect Colon p;
+            parseRecordExpr [(pathIdent, valueOrConstructor)] p
+          )
         | Semicolon ->
           Parser.next p;
           parseExprBlock ~first:(Ast_helper.Exp.ident pathIdent) p
