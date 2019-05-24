@@ -6,7 +6,9 @@
   "bin": {
     "napkinscript": "./lib/napkinscript.exe"
   },
-  "dependencies": {},
+  "dependencies": {
+    "bs-platform": "^6.0.1"
+  },
   "devDependencies": {
     "jest": "^24.1.0"
   },
