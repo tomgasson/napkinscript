@@ -1759,6 +1759,17 @@ module Scanner = struct
 end
 
 module Parser = struct
+  type directive = DirDisabled | DirIfTrue | DirIfFalse
+
+  type directiveNode =
+    | DirBool of bool
+    | DirString of string
+    | DirInt of int
+    | DirFloat of float
+    | DirBinary of (Token.t * directiveNode * directiveNode)
+    | DirError
+
+
   type t = {
     mutable scanner: Scanner.t;
     mutable token: Token.t;
@@ -1768,6 +1779,7 @@ module Parser = struct
     mutable breadcrumbs: (Grammar.t * Lexing.position) list;
     mutable errors: Reporting.parseError list;
     mutable diagnostics: Diagnostics.t list;
+    mutable directive: directive;
   }
 
   let err ?startPos ?endPos p error =
@@ -1791,16 +1803,157 @@ module Parser = struct
     | _::ds -> p.diagnostics <- ds
     | [] -> ()
 
-  let rec next p =
+   let isDirectiveOp = function
+   | Token.LessThan
+   | GreaterThan
+   | GreaterEqual
+   | LessEqual
+   | EqualEqual
+   | EqualEqualEqual
+   | BangEqual
+   | BangEqualEqual -> true
+   | _ -> false
+
+  let rec advance p =
     let (startPos, endPos, token) = Scanner.scan p.scanner in
     match token with
-    | Comment _ -> next p
-    | _ -> (
-        p.token <- token;
-        p.prevEndPos <- p.endPos;
-        p.startPos <- startPos;
-        p.endPos <- endPos;
+    | Comment _ -> advance p
+    | _ ->
+      p.token <- token;
+      p.prevEndPos <- p.endPos;
+      p.startPos <- startPos;
+      p.endPos <- endPos
+
+  let rec skipTokens p cont =
+    advance p;
+    if p.token = Eof then
+      err p (Diagnostics.message "Missing #endif")
+    else if p.token = Hash then (
+      advance p;
+      match p.token with
+      | Lident "endif" ->
+        p.directive <- DirDisabled;
+        cont p
+      | Lident "elseif" ->
+        advance p;
+        let v = parseDirectiveExpr p in
+        interpretDirective p v cont
+      | Else ->
+        if p.directive = DirIfTrue then skipTokens p cont else cont p
+      | _ -> skipTokens p cont
+    )
+    else
+      skipTokens p cont
+
+  and parseDirectiveOperand p =
+    match p.token with
+    | Uident uident ->
+        advance p;
+        DirString (
+        match Sys.getenv_opt uident with
+        | Some v -> v
+        | None -> ""
       )
+    | True -> advance p; DirBool true
+    | False -> advance p; DirBool false
+    | Int n -> advance p; DirInt (int_of_string n)
+    | Float n -> advance p; DirFloat (float_of_string n)
+    | String s -> advance p; DirString s
+    | Lparen -> advance p; parseDirectiveExpr p
+    | _ -> DirError
+
+  and parseDirectiveBinaryExpr p prec =
+    let rec loop a =
+      let token = p.token in
+      if isDirectiveOp token then
+        let tokenPrec = Token.precedence token in
+        let () = advance p in
+        if tokenPrec < prec then a
+        else (
+          let b = parseDirectiveBinaryExpr p (tokenPrec + 1) in
+          let expr = DirBinary (token, a, b) in
+          loop expr
+        )
+      else
+        a
+    in
+    let operand = parseDirectiveOperand p in
+    loop operand
+
+ and eval exp =
+   let f_of_op = function
+   | Token.LessThan -> (<)
+   | GreaterThan -> (>)
+   | GreaterEqual -> (>=)
+   | LessEqual -> (<=)
+   | EqualEqual -> (=)
+   | EqualEqualEqual -> (==)
+   | BangEqual -> (<>)
+   | BangEqualEqual -> (!=)
+   | _ -> assert false
+   in
+   match exp with
+    | DirBool b -> b
+    | DirInt n -> n <> 0
+    | DirFloat n -> n <> 0.0
+    | DirBinary (op, DirString a, DirString b) ->
+      (f_of_op op) a b
+    | DirBinary (op, DirInt a, DirInt b) ->
+      (f_of_op op) a b
+    | DirBinary (op, DirFloat a, DirFloat b) ->
+      (f_of_op op) a b
+    | _ -> false
+
+  and parseDirectiveExpr p =
+    parseDirectiveBinaryExpr p 1
+
+  and interpretDirective p v cont =
+    if eval v then (
+      p.directive <- DirIfTrue
+    ) else (
+      p.directive <- DirIfFalse;
+      skipTokens p cont
+    )
+
+  let rec next p =
+    advance p;
+    match p.token with
+    | Comment _ -> next p
+    | Hash ->
+      advance p;
+      begin match (p.token, p.directive) with
+      | If, DirDisabled ->
+        advance p;
+        let v = parseDirectiveExpr p in
+        interpretDirective p v next
+      | (Lident "elseif" | Else), DirIfTrue ->
+        advance p;
+        let rec skip p =
+          let token = p.token in
+          if token = Eof then
+            ()
+          else (
+            advance p;
+            if token = Hash then (
+              match p.token with
+              | Lident "endif" ->
+                p.directive <- DirDisabled;
+                next p
+              | _ -> skip p
+            ) else (
+              skip p
+            )
+          )
+        in
+        skip p
+      | Else, DirIfFalse ->
+        advance p
+      | Lident "endif", (DirIfTrue | DirIfFalse) ->
+        p.directive <- DirDisabled;
+        next p
+      | _ -> ()
+      end
+    | _ -> ()
 
   let make src filename =
     let scanner = Scanner.make (Bytes.of_string src) filename in
@@ -1813,6 +1966,7 @@ module Parser = struct
       breadcrumbs = [];
       errors = [];
       diagnostics = [];
+      directive = DirDisabled;
     } in
     parserState.scanner.err <- (fun ~startPos ~endPos error ->
       let diagnostic = Diagnostics.make
