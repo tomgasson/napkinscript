@@ -21,7 +21,8 @@ Did you forget a \`]\` here?
 
 exports[`arrow.js 1`] = `
 "=====Parsetree==========================================
-;;(Object.keys providers).reduce
+let () =
+  (Object.keys providers).reduce
     (fun elements -> fun providerId -> let x = 1 in let b = 2 in x + b)
 =====Errors=============================================
 

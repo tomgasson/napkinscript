@@ -1,10 +1,10 @@
 // Jest Snapshot v1, https://goo.gl/fbAQLP
 
 exports[`directive.js 1`] = `
-";;Js.log \\"native backend\\"
-;;Js.log \\"native backend\\"
-;;Js.log \\"== native\\"
-;;Js.log \\"byte backend\\"
-;;Js.log \\"byte backend\\"
-;;Js.log \\"it is native backend\\""
+"let () = Js.log \\"native backend\\"
+let () = Js.log \\"native backend\\"
+let () = Js.log \\"== native\\"
+let () = Js.log \\"byte backend\\"
+let () = Js.log \\"byte backend\\"
+let () = Js.log \\"it is native backend\\""
 `;

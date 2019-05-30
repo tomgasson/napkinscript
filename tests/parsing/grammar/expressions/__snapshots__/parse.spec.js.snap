@@ -1,12 +1,12 @@
 // Jest Snapshot v1, https://goo.gl/fbAQLP
 
 exports[`apply.js 1`] = `
-";;foo (fun _ -> bla) blaz
-;;foo (fun _ -> bla) blaz
-;;foo ((fun _ -> bla)[@bs ]) blaz
-;;foo (fun _ -> bla) (fun _ -> blaz)
-;;List.map (fun x -> x + 1) myList
-;;List.reduce (fun acc -> fun curr -> acc + curr) 0 myList"
+"let () = foo (fun _ -> bla) blaz
+let () = foo (fun _ -> bla) blaz
+let () = foo ((fun _ -> bla)[@bs ]) blaz
+let () = foo (fun _ -> bla) (fun _ -> blaz)
+let () = List.map (fun x -> x + 1) myList
+let () = List.reduce (fun acc -> fun curr -> acc + curr) 0 myList"
 `;
 
 exports[`argument.js 1`] = `
@@ -14,7 +14,7 @@ exports[`argument.js 1`] = `
 let a = ((fun () -> 2)[@bs ])
 let bar = foo ~a
 let comparisonResult = ((compare currentNode.value ~targetValue)[@bs ])
-;;((callback firstNode ~y)[@bs ])"
+let () = ((callback firstNode ~y)[@bs ])"
 `;
 
 exports[`array.js 1`] = `
@@ -65,8 +65,10 @@ let f a b = a + b"
 `;
 
 exports[`binary.js 1`] = `
-";;node := (if newBalance == 2 then avl |. (rotateRight node) else node)
-;;node := ((if newBalance == 2 then avl |. (rotateRight node) else node)
+"let () =
+  node := (if newBalance == 2 then avl |. (rotateRight node) else node)
+let () =
+  node := ((if newBalance == 2 then avl |. (rotateRight node) else node)
     [@attr ])
 let x = z |> (match z with | _ -> false)
 let x = z |> ((match z with | _ -> false)[@attr ])
@@ -142,8 +144,9 @@ let res =
   print_string a; (let b = 30 in print_int b)
 let nestedLet = let _ = 1 in ()
 let nestedLet = let _ = 1 in 2
-let init () = foo (1 == 1); [%assert 1 == 2]
-let init () = [%assert 1 == 2]; foo (1 == 1); [%assert 1 == 2]"
+let init () = foo (1 == 1); [%assert let () = 1 == 2]
+let init () =
+  [%assert let () = 1 == 2]; foo (1 == 1); [%assert let () = 1 == 2]"
 `;
 
 exports[`bracedOrRecord.js 1`] = `
@@ -259,11 +262,11 @@ let x = ([%bs.raw \\"1\\"]) + ([%bs.raw \\"2\\"])"
 `;
 
 exports[`float.js 1`] = `
-";;1. /. 2.
-;;3. *. 4.
-;;2. ** 2.
-;;10.2 +. 5.4
-;;28.9 -. 13.8"
+"let () = 1. /. 2.
+let () = 3. *. 4.
+let () = 2. ** 2.
+let () = 10.2 +. 5.4
+let () = 28.9 -. 13.8"
 `;
 
 exports[`for.js 1`] = `
@@ -296,12 +299,12 @@ let ifElseIfThen =
 `;
 
 exports[`infix.js 1`] = `
-";;a |. (f b)
-;;\\"string1\\" ^ \\"string2\\"
-;;a <> b
-;;a != b
-;;a = b
-;;a == b"
+"let () = a |. (f b)
+let () = \\"string1\\" ^ \\"string2\\"
+let () = a <> b
+let () = a != b
+let () = a = b
+let () = a == b"
 `;
 
 exports[`jsx.js 1`] = `
@@ -467,9 +470,9 @@ let _ = ((Foo.createElement ?bar ~children:[] ())[@JSX ])
 let _ = ((Foo.createElement ?bar:Baz.bar ~children:[] ())[@JSX ])
 let x = ((div ~children:[] ())[@JSX ])
 let _ = ((div ~asd:1 ~children:[] ())[@JSX ])
-;;(foo ## bar) #= ((bar ~children:[] ())[@JSX ])
-;;foo #= ((bar ~children:[] ())[@JSX ])
-;;foo #= ((bar ~children:[] ())[@JSX ])
+let () = (foo ## bar) #= ((bar ~children:[] ())[@JSX ])
+let () = foo #= ((bar ~children:[] ())[@JSX ])
+let () = foo #= ((bar ~children:[] ())[@JSX ])
 let x = [|((div ~children:[] ())[@JSX ])|]
 let z = ((div ~children:[] ())[@JSX ])
 let z =
@@ -742,22 +745,23 @@ let x = arr.(0)
 let x = arr.((x : int))
 let x = (arr.(0)).(1)
 let x = (arr.((x : int))).((y : int))
-;;arr.(0) <- (a + b)
-;;f ()
-;;(f ()) ()
-;;f a
-;;(f a) a
-;;f a
-;;f (x : int)
-;;f a b c
-;;f a b c
-;;f ~a ~b:bArg ?c ?d:expr
-;;((f ~a ~b:bArg ?c ?d:expr) ~a ~b:bArg ?c ?d:expr) ~a ~b:bArg ?c ?d:expr
-;;f ~a:(x : int) ?b:(y : int)
-;;connection ## platformId
-;;((connection ## left) ## account) ## accountName
-;;(john ## age) #= 99
-;;((john ## son) ## age) #= ((steve ## age) - 5)"
+let () = arr.(0) <- (a + b)
+let () = f ()
+let () = (f ()) ()
+let () = f a
+let () = (f a) a
+let () = f a
+let () = f (x : int)
+let () = f a b c
+let () = f a b c
+let () = f ~a ~b:bArg ?c ?d:expr
+let () =
+  ((f ~a ~b:bArg ?c ?d:expr) ~a ~b:bArg ?c ?d:expr) ~a ~b:bArg ?c ?d:expr
+let () = f ~a:(x : int) ?b:(y : int)
+let () = connection ## platformId
+let () = ((connection ## left) ## account) ## accountName
+let () = (john ## age) #= 99
+let () = ((john ## son) ## age) #= ((steve ## age) - 5)"
 `;
 
 exports[`record.js 1`] = `
@@ -823,8 +827,8 @@ let f =
       fun ((b)[@attr2 ]) -> ((fun ((c)[@attr3 ]) -> fun ((d)[@attr4 ]) -> ())
         [@bs ]))
   [@bs ])
-;;((add 1 2)[@bs ])
-;;((((((add 2 3 4)[@bs ]) 5 6 7)[@bs ]) 8 9 10)[@bs ])"
+let () = ((add 1 2)[@bs ])
+let () = ((((((add 2 3 4)[@bs ]) 5 6 7)[@bs ]) 8 9 10)[@bs ])"
 `;
 
 exports[`underscoreApply.js 1`] = `

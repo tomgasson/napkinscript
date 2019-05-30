@@ -16,5 +16,5 @@ exports[`semi.js 1`] = `
 "type nonrec t =
   | Red 
 ;;Red
-;;foo := 1"
+let () = foo := 1"
 `;

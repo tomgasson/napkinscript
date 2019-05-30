@@ -5645,7 +5645,18 @@ Solution: you need to pull out each field you want explicitly."
       let (loc, extension) = parseExtension ~moduleLanguage: true p in
       Ast_helper.Str.extension ~attrs ~loc extension
     | _ ->
-      Ast_helper.Str.eval ~attrs (parseExpr p)
+      let exp = parseExpr p in
+      begin match exp.pexp_desc with
+      | Pexp_apply _ ->
+          let fakeUnitPat =
+            let unitLid = Location.mknoloc (Longident.Lident "()") in
+            Ast_helper.Pat.construct unitLid None
+          in
+          let vb = Ast_helper.Vb.mk ~attrs fakeUnitPat exp in
+          Ast_helper.Str.value Asttypes.Nonrecursive [vb]
+       | _ ->
+         Ast_helper.Str.eval ~attrs exp
+      end
     in
     Parser.optional p Semicolon |> ignore;
     let loc = mkLoc startPos p.prevEndPos in
