@@ -626,6 +626,7 @@ module Grammar = struct
     | TypeConstraint
     | Primitive
     | AtomicTypExpr
+    | ListExpr
 
   let toString = function
     | OpenDescription -> "an open description"
@@ -678,6 +679,7 @@ module Grammar = struct
     | TypeConstraint -> "constraints on a type"
     | Primitive -> "an external primitive"
     | AtomicTypExpr -> "a type"
+    | ListExpr -> "an ocaml list expr"
 
   let isSignatureItemStart = function
     | Token.At
@@ -853,6 +855,7 @@ module Grammar = struct
   let isListElement grammar token =
     match grammar with
     | ExprList -> isExprStart token
+    | ListExpr -> token = DotDotDot || isExprStart token
     | PatternList -> isPatternStart token
     | ParameterList -> isParameterStart token
     | StringFieldDeclarations -> isStringFieldDeclStart token
@@ -883,6 +886,8 @@ module Grammar = struct
     (match grammar with
     | ExprList  ->
         token = Token.Rparen || token = Forwardslash || token = Rbracket
+    | ListExpr ->
+        token = Token.Rparen
     | ArgumentList -> token = Token.Rparen
     | TypExprList ->
         token = Rparen || token = Forwardslash || token = GreaterThan
@@ -4647,26 +4652,25 @@ Solution: you need to pull out each field you want explicitly."
     Parser.expect TupleEnding p;
     Ast_helper.Exp.tuple ~loc:(mkLoc startPos p.prevEndPos) exprs
 
+  and parseListExprItem p =
+    match p.Parser.token with
+    | DotDotDot ->
+      Parser.next p;
+      let expr = parseConstrainedExpr p in
+      (true, expr)
+    | _ ->
+      (false, parseConstrainedExpr p)
+
   and parseListExpr p =
     let startPos = p.Parser.startPos in
     Parser.expect List p;
     Parser.expect Lparen p;
-    let rec loop p exprs = match p.Parser.token with
-    | Rparen ->
-      Parser.next p;
-      exprs
-    | Comma -> Parser.next p; loop p exprs
-    | DotDotDot ->
-      Parser.next p;
-      let expr = parseConstrainedExpr p in
-      loop p ((true, expr)::exprs)
-    | _ ->
-      let expr = parseConstrainedExpr p in
-      loop p ((false, expr)::exprs)
+    let listExprs =
+      parseCommaDelimitedReversedList
+      p ~grammar:Grammar.ListExpr ~closing:Rparen ~f:parseListExprItem
     in
-    let listExprs = loop p [] in
-    let endPos = p.prevEndPos in
-    let loc = mkLoc startPos endPos in
+    Parser.expect Rparen p;
+    let loc = mkLoc startPos p.prevEndPos in
     match listExprs with
     | (true, expr)::exprs ->
       let exprs =
