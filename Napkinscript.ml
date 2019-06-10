@@ -2219,10 +2219,8 @@ module NapkinScript = struct
       | _ -> ()
 
     let shouldAbortListParse p =
-      let counter = ref(0) in
-      let rec check breadcrumbs =
-        let () = counter := !counter + 1 in
-        if !counter > 100 then
+      let rec check breadcrumbs i =
+        if i > 100 then
           raise (InfiniteLoop (p.Parser.startPos, p.token))
         else
         match breadcrumbs with
@@ -2231,9 +2229,9 @@ module NapkinScript = struct
           if Grammar.isPartOfList grammar p.Parser.token then
             true
           else
-            check rest
+            check rest (i + 1)
       in
-      check p.breadcrumbs
+      check p.breadcrumbs 0
 
     let recoverLident p =
       let counter = ref(0) in
