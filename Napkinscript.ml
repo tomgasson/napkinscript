@@ -733,6 +733,10 @@ module Grammar = struct
     | If | Switch | While | For | Assert | Lazy | Try -> true
     | _ -> false
 
+  let isJsxAttributeStart = function
+    | Token.Lident _ | Question -> true
+    | _ -> false
+
  let isStructureItemStart = function
     | Token.Open
     | Let
@@ -871,6 +875,7 @@ module Grammar = struct
     | TypeConstraint -> token = Constraint
     | ConstructorDeclaration -> token = Bar
     | Primitive -> begin match token with Token.String _ -> true | _ -> false end
+    | JsxAttribute -> isJsxAttributeStart token
     | _ -> false
 
   let isListTerminator grammar token =
@@ -897,6 +902,7 @@ module Grammar = struct
     | TypeConstraint -> token <> Constraint
     | ConstructorDeclaration -> token <> Bar
     | Primitive -> isStructureItemStart token || token = Semicolon
+    | JsxAttribute -> token = Forwardslash || token = GreaterThan
     | _ -> false
     )
 
@@ -2242,7 +2248,7 @@ module NapkinScript = struct
         Parser.next p;
         Abort
       ) else (
-        while not (shouldAbortListParse p) && !counter < 1000 do
+        while not (shouldAbortListParse p) && !counter < 100 do
           let () = counter := !counter + 1 in
           Parser.next p
         done;
@@ -3942,14 +3948,10 @@ Solution: you need to pull out each field you want explicitly."
     end
 
   and parseJsxProps p =
-    let rec loop p props =
-      match p.Parser.token with
-      | Token.Eof | Forwardslash | GreaterThan -> List.rev props
-      | _ ->
-        let prop = parseJsxProp p in
-        loop p (prop::props)
-    in
-    loop p []
+    parseList
+      ~grammar:Grammar.JsxAttribute
+      ~f:parseJsxProp
+      p
 
   and parseJsxChildren p =
     let rec loop p children =

@@ -11,3 +11,9 @@ exports[`infinite.js 1`] = `
 "let smallest =
   ((heap.compare ([%napkinscript.exprhole ]))[@bs ]) < (a |. (f b))"
 `;
+
+exports[`jsx.js 1`] = `
+"let x = ((div ~children:[] ())[@JSX ])
+[@@@ ]
+;;()[@@ ]"
+`;
