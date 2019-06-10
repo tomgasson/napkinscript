@@ -38,7 +38,9 @@ external attachShader :
   t -> program:webGlProgram -> shader:webGlShader -> unit = \\"attachShader\\"
 [@@bs.send ]
 external svg : unit -> React.element = \\"svg\\"
-external svg : unit -> React.element = \\"svg\\""
+external svg : unit -> React.element = \\"svg\\"
+external createDate : unit -> unit -> date = \\"Date\\"[@@bs.new ]
+let foobar = (createDate ()) ()"
 `;
 
 exports[`includeStatement.js 1`] = `

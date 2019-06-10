@@ -6,3 +6,8 @@ let f a b = ()"
 `;
 
 exports[`if.js 1`] = `";;if foo = bar then Js.log \\"if-branch\\" else Js.log \\"else-branch\\""`;
+
+exports[`infinite.js 1`] = `
+"let smallest =
+  ((heap.compare ([%napkinscript.exprhole ]))[@bs ]) < (a |. (f b))"
+`;

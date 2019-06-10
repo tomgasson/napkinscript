@@ -1,23 +1,160 @@
-module MachTime: sig
+module Time: sig
   type t
 
-  val init: unit -> unit
   val now: unit -> t
 
+  val toUint64: t -> int64
+  (* let of_uint64_ns ns = ns *)
+
+  val nanosecond: t
+  val microsecond: t
+  val millisecond: t
+  val second: t
+  val minute: t
+  val hour: t
+
+  val zero: t
+
   val diff: t -> t -> t
+  val add: t -> t -> t
   val print: t -> float
 end = struct
-  type t = Int64.t
+  (* nanoseconds *)
+  type t = int64
+
+  let zero = 0L
+
+  let toUint64 s = s
+
+  let nanosecond = 1L
+  let microsecond = Int64.mul 1000L nanosecond
+  let millisecond = Int64.mul 1000L microsecond
+  let second = Int64.mul 1000L millisecond
+  let minute = Int64.mul 60L second
+  let hour = Int64.mul 60L minute
 
   (* TODO: we could do this inside caml_absolute_time *)
   external init: unit -> unit = "caml_mach_initialize"
+  let () = init()
   external now: unit -> t = "caml_mach_absolute_time"
 
   let diff t1 t2 = Int64.sub t2 t1
+  let add t1 t2 = Int64.add t1 t2
   let print t =
-    let ms = (Int64.to_float t) *. 1e-6 in
-    ms
+    (Int64.to_float t) *. 1e-6
 end
+
+module Benchmark: sig
+  type t
+
+  val make: name:string -> ?time:Time.t -> f:(t -> unit) -> unit -> t
+  val launch: t -> unit
+  val report: t -> unit
+end = struct
+  type benchmarkResult = {
+    n: int; (* number of iterations *)
+    t: Time.t; (* total time taken *)
+    bytes: float; (* bytes processed in one iteration *)
+    memAllocs: float; (* total number of memory allocations in words*)
+    memBytes: float; (* total number of bytes allocated *)
+  }
+
+  type t = {
+    name: string;
+    time: Time.t; (* how long should this benchmark run? *)
+    mutable start: Time.t;
+    mutable n: int; (* number of iterations *)
+    mutable duration: Time.t;
+    benchFunc: t -> unit;
+    mutable timerOn: bool;
+    (* mutable result: benchmarkResult; *)
+	  (* The initial states *)
+    mutable startAllocs: float;
+    mutable startBytes: float;
+    (* The net total of this test after being run. *)
+    mutable netAllocs: float;
+    mutable netBytes: float;
+  }
+
+  let report b =
+    print_endline (Format.sprintf "Benchmark: %s" b.name);
+    print_endline (Format.sprintf "Nbr of iterations: %d" b.n);
+    print_endline (Format.sprintf "Benchmark ran during: %fms" (Time.print b.duration));
+    print_endline (Format.sprintf "Avg time/op: %fms" ((Time.print b.duration) /. (float_of_int b.n)));
+    print_endline (Format.sprintf "Allocs/op: %d" (int_of_float (b.netAllocs /.  (float_of_int b.n))));
+    print_endline (Format.sprintf "B/op: %d" (int_of_float (b.netBytes /. (float_of_int b.n))));
+    (* return (float64(r.Bytes) * float64(r.N) / 1e6) / r.T.Seconds() *)
+
+
+    print_newline();
+    ()
+
+  let make ~name ?(time=Time.second) ~f () = {
+    name;
+    time;
+    start = Time.zero;
+    n = 0;
+    benchFunc = f;
+    duration = Time.zero;
+    timerOn = false;
+    startAllocs = 0.;
+    startBytes = 0.;
+    netAllocs = 0.;
+    netBytes = 0.;
+  }
+
+  (* total amount of memory allocated by the program since it started in words *)
+  let mallocs () =
+    let stats = Gc.quick_stat() in
+    stats.minor_words +. stats.major_words -. stats.promoted_words
+
+  let startTimer b =
+    if not b.timerOn then (
+      let allocatedWords = mallocs() in
+      b.startAllocs <- allocatedWords;
+      b.startBytes <- allocatedWords *. 8.;
+      b.start <- Time.now();
+      b.timerOn <- true
+    )
+
+  let stopTimer b =
+    if b.timerOn then (
+      let allocatedWords = mallocs() in
+      let diff = (Time.diff b.start (Time.now())) in
+      b.duration <- Time.add b.duration diff;
+      b.netAllocs <- b.netAllocs +. (allocatedWords -. b.startAllocs);
+      b.netBytes <- b.netBytes +. (allocatedWords *. 8. -. b.startBytes);
+      b.timerOn <- false
+    )
+
+  let resetTimer b =
+    if b.timerOn then (
+      let allocatedWords = mallocs() in
+      b.startAllocs <- allocatedWords;
+      b.netAllocs <- allocatedWords *. 8.;
+    b.start <- Time.now();
+    );
+    b.netAllocs <- 0.;
+    b.netBytes <- 0.
+
+  let runIteration b n =
+    Gc.full_major();
+    b.n <- n;
+    resetTimer b;
+    startTimer b;
+    b.benchFunc b;
+    stopTimer b
+
+  let launch b =
+    let d = b.time in
+    let n = ref 0 in
+    while b.duration < d && !n < 1000000000 do
+      n := !n + 1;
+      runIteration b !n
+    done
+end
+
+
 
 module Profile: sig
   val record : name:string -> (unit -> 'a) -> 'a
@@ -26,16 +163,16 @@ end = struct
   let state = Hashtbl.create 2
 
   let record ~name f =
-    let startTime = MachTime.now() in
+    let startTime = Time.now() in
     let result = f() in
-    let endTime = MachTime.now() in
+    let endTime = Time.now() in
 
-    Hashtbl.add state name (MachTime.diff startTime endTime);
+    Hashtbl.add state name (Time.diff startTime endTime);
     result
 
   let print () =
     let report = Hashtbl.fold (fun k v acc ->
-      let line = Printf.sprintf "%s: %fms\n" k (MachTime.print v) in
+      let line = Printf.sprintf "%s: %fms\n" k (Time.print v) in
       acc ^ line
     ) state "\n\n"
     in
@@ -434,6 +571,8 @@ module Token = struct
       else Lident str
 end
 
+exception InfiniteLoop of Lexing.position * Token.t
+
 module Grammar = struct
   type t =
     | OpenDescription (* open Belt *)
@@ -739,6 +878,7 @@ module Grammar = struct
     (match grammar with
     | ExprList  ->
         token = Token.Rparen || token = Forwardslash || token = Rbracket
+    | ArgumentList -> token = Token.Rparen
     | TypExprList ->
         token = Rparen || token = Forwardslash || token = GreaterThan
         || token = Equal
@@ -756,7 +896,7 @@ module Grammar = struct
     | Attribute -> token <> At
     | TypeConstraint -> token <> Constraint
     | ConstructorDeclaration -> token <> Bar
-    | Primitive -> token = Semicolon
+    | Primitive -> isStructureItemStart token || token = Semicolon
     | _ -> false
     )
 
@@ -2079,7 +2219,12 @@ module NapkinScript = struct
       | _ -> ()
 
     let shouldAbortListParse p =
+      let counter = ref(0) in
       let rec check breadcrumbs =
+        let () = counter := !counter + 1 in
+        if !counter > 100 then
+          raise (InfiniteLoop (p.Parser.startPos, p.token))
+        else
         match breadcrumbs with
         | [] -> false
         | (grammar, _)::rest ->
@@ -2091,6 +2236,7 @@ module NapkinScript = struct
       check p.breadcrumbs
 
     let recoverLident p =
+      let counter = ref(0) in
       if Token.isKeyword p.Parser.token
          && p.Parser.prevEndPos.pos_lnum == p.startPos.pos_lnum
       then (
@@ -2098,57 +2244,34 @@ module NapkinScript = struct
         Parser.next p;
         Abort
       ) else (
-        while not (shouldAbortListParse p) do
+        while not (shouldAbortListParse p) && !counter < 1000 do
+          let () = counter := !counter + 1 in
           Parser.next p
         done;
-        match p.Parser.token with
-        | Lident _ -> Retry
-        | _ -> Abort
+        if !counter > 100 then
+          raise (InfiniteLoop (p.startPos, p.token))
+        else (
+          match p.Parser.token with
+          | Lident _ -> Retry
+          | _ -> Abort
+        )
       )
 
-    let recoverAtomicExpr p =
+    let skipTokensAndMaybeRetry p ~isStartOfGrammar =
+      let counter = ref(0) in
       if Token.isKeyword p.Parser.token
          && p.Parser.prevEndPos.pos_lnum == p.startPos.pos_lnum
       then (
         Parser.next p;
         Abort
       ) else (
-        while not (shouldAbortListParse p) do
+        while not (shouldAbortListParse p) && !counter < 1000 do
+          let () = counter := !counter + 1 in
           Parser.next p
         done;
-        if Grammar.isAtomicExprStart p.Parser.token then
-          Retry
-        else
-          Abort
-      )
-
-    let recoverAtomicPattern p =
-      if Token.isKeyword p.Parser.token
-         && p.Parser.prevEndPos.pos_lnum == p.startPos.pos_lnum
-      then (
-        Parser.next p;
-        Abort
-      ) else begin
-        while not (shouldAbortListParse p) do
-          Parser.next p
-        done;
-        if Grammar.isAtomicPatternStart p.Parser.token then
-          Retry
-        else
-          Abort
-      end
-
-    let recoverAtomicTypExpr p =
-      if Token.isKeyword p.Parser.token
-         && p.Parser.prevEndPos.pos_lnum == p.startPos.pos_lnum
-      then (
-        Parser.next p;
-        Abort
-      ) else (
-        while not (shouldAbortListParse p) do
-          Parser.next p
-        done;
-        if Grammar.isAtomicTypExprStart p.Parser.token then
+        if !counter > 100 then
+          raise (InfiniteLoop (p.startPos, p.token))
+        else if isStartOfGrammar p.Parser.token then
           Retry
         else
           Abort
@@ -2843,7 +2966,7 @@ Solution: you need to pull out each field you want explicitly."
       Ast_helper.Pat.extension ~loc ~attrs extension
     | token ->
       Parser.err p (Diagnostics.unexpected token p.breadcrumbs);
-      begin match Recover.recoverAtomicPattern p with
+      begin match Recover.skipTokensAndMaybeRetry p ~isStartOfGrammar:Grammar.isAtomicPatternStart with
       | Abort ->
         Recover.defaultPattern()
       | Retry ->
@@ -3304,7 +3427,7 @@ Solution: you need to pull out each field you want explicitly."
         Ast_helper.Exp.extension ~loc extension
       | token ->
         let errPos = p.prevEndPos in
-        begin match Recover.recoverAtomicExpr p with
+        begin match Recover.skipTokensAndMaybeRetry p ~isStartOfGrammar:Grammar.isAtomicExprStart with
         | Abort ->
           Parser.err ~startPos:errPos p (Diagnostics.unexpected token p.breadcrumbs);
           Recover.defaultExpr ()
@@ -4667,7 +4790,7 @@ Solution: you need to pull out each field you want explicitly."
     | Lbrace ->
       parseBsObjectType p
     | token ->
-      begin match Recover.recoverAtomicTypExpr p with
+      begin match Recover.skipTokensAndMaybeRetry p ~isStartOfGrammar:Grammar.isAtomicTypExprStart with
       | Retry ->
         parseAtomicTypExpr ~attrs p
       | Abort ->
@@ -6530,11 +6653,71 @@ end = struct
       | ProcessInterface ->
         process parseInterface (printInterface ~target filename) recover filename
     with
+    | InfiniteLoop(pos, _token) ->
+      let locationInfo =
+        Printf.sprintf (* ReasonLanguageServer requires the following format *)
+          "File \"%s\", line %d, characters %d-%d:"
+          filename
+          pos.pos_lnum
+          (pos.pos_cnum - pos.pos_bol)
+          (pos.pos_cnum - pos.pos_bol)
+      in
+      let msg =
+        Format.sprintf
+          "%s\n\nPossible infinite loop detected"
+          locationInfo
+      in
+      prerr_string msg
     | _ -> exit 1
 end
 
+(* let () = *)
+  (* let filename = "RedBlackTree.ml" in *)
+  (* let src = IO.readFile filename in *)
+  (* let benchmark = Benchmark.make ~name:"RedBlackTree Napkinscript parser" ~f:(fun _ -> *)
+    (* let p = Parser.make src filename in *)
+    (* let _ast = NapkinScript.parseStructure p in *)
+    (* () *)
+  (* ) () *)
+  (* in *)
+  (* let () = Benchmark.launch benchmark in *)
+  (* Benchmark.report benchmark; *)
+  (* print_newline(); *)
+  (* print_newline() *)
+
+
+(* let () = *)
+  (* let filename = "RedBlackTreePureOcaml.ml" in *)
+  (* let src = IO.readFile filename in *)
+  (* let benchmark = Benchmark.make ~name:"RedBlackTree Ocaml 4.06 parser" ~f:(fun _ -> *)
+    (* let lexbuf = Lexing.from_string src in *)
+    (* Location.init lexbuf filename; *)
+    (* let _ast = Parse.implementation lexbuf in *)
+    (* () *)
+  (* ) () *)
+  (* in *)
+  (* let () = Benchmark.launch benchmark in *)
+  (* Benchmark.report benchmark; *)
+  (* print_newline(); *)
+  (* print_newline() *)
+
+
+(* let () = *)
+  (* let filename = "RedBlackTree.re" in *)
+  (* let src = IO.readFile filename in *)
+  (* let benchmark = Benchmark.make ~name:"RedBlackTree reason parser" ~f:(fun _ -> *)
+    (* let lexbuf = Lexing.from_string src in *)
+    (* Location.init lexbuf filename; *)
+    (* let (_ast, _comments) = Refmt_main3.Reason_toolchain.RE.implementation_with_comments lexbuf in *)
+    (* () *)
+  (* ) () *)
+  (* in *)
+  (* let () = Benchmark.launch benchmark in *)
+  (* Benchmark.report benchmark; *)
+  (* print_newline(); *)
+  (* print_newline() *)
+
 let () =
-  MachTime.init();
   Clflags.parse ();
   List.iter (fun filename ->
     Driver.processFile ~recover:!Clflags.recover ~target:!Clflags.print filename
