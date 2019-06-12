@@ -260,6 +260,11 @@ type nonrec t = {
   y: int }"
 `;
 
+exports[`typeNonrec.js 1`] = `
+"type nonrec t =
+  | Water "
+`;
+
 exports[`typeRepresentation.js 1`] = `
 "type nonrec t = ..
 type nonrec t = private ..

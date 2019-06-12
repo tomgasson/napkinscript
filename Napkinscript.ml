@@ -5653,10 +5653,12 @@ Solution: you need to pull out each field you want explicitly."
   and parseTypeDefinitionOrExtension ~attrs p =
     let startPos = p.Parser.startPos in
     Parser.expect Token.Typ p;
-    let recFlag =
-      if Parser.optional p Token.Rec
-        then Asttypes.Recursive
-        else Asttypes.Nonrecursive
+    let recFlag = match p.token with
+      | Rec -> Parser.next p; Asttypes.Recursive
+      | Lident "nonrec" ->
+        Parser.next p;
+        Asttypes.Nonrecursive
+      | _ -> Asttypes.Nonrecursive
     in
     let name = parseValuePath p in
     let params = parseTypeParams p in
