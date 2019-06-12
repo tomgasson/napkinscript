@@ -425,7 +425,7 @@ module Token = struct
     | HashEqual | ColonEqual -> 1
     | Lor -> 2
     | Land -> 3
-    | EqualEqual | EqualEqualEqual | LessThan | GreaterThan
+    | Equal | EqualEqual | EqualEqualEqual | LessThan | GreaterThan
     | BangEqual | BangEqualEqual | LessEqual | GreaterEqual | BarGreater -> 4
     | Plus | PlusDot | Minus | MinusDot | Lxor | PlusPlus -> 5
     | Asterisk | AsteriskDot | Forwardslash | ForwardslashDot  | Lsl | Lsr | Mod -> 6
@@ -2267,20 +2267,16 @@ module NapkinScript = struct
       )
 
     let skipTokensAndMaybeRetry p ~isStartOfGrammar =
-      let counter = ref(0) in
       if Token.isKeyword p.Parser.token
          && p.Parser.prevEndPos.pos_lnum == p.startPos.pos_lnum
       then (
         Parser.next p;
         Abort
       ) else (
-        while not (shouldAbortListParse p) && !counter < 1000 do
-          let () = counter := !counter + 1 in
+        while not (shouldAbortListParse p) do
           Parser.next p
         done;
-        if !counter > 100 then
-          raise (InfiniteLoop (p.startPos, p.token))
-        else if isStartOfGrammar p.Parser.token then
+        if isStartOfGrammar p.Parser.token then
           Retry
         else
           Abort
@@ -2447,13 +2443,19 @@ Solution: you need to pull out each field you want explicitly."
     | [] -> assert false
     | hd::tl -> List.fold_left (fun p s -> Longident.Ldot (p, s)) (Lident hd) tl
 
-  let makeInfixOperator token startPos endPos =
+  let makeInfixOperator p token startPos endPos =
     let stringifiedToken =
       if token = Token.MinusGreater then "|."
       else if token = Token.PlusPlus then "^"
       else if token = Token.BangEqual then "<>"
       else if token = Token.BangEqualEqual then "!="
-      else if token = Token.EqualEqual then "="
+      else if token = Token.Equal then (
+        (* TODO: could have a totally different meaning like x->fooSet(y)*)
+        Parser.err ~startPos ~endPos p (
+          Diagnostics.message "Did you mean `==` here?"
+        );
+        "="
+      ) else if token = Token.EqualEqual then "="
       else if token = Token.EqualEqualEqual then "=="
       else Token.toString token
     in
@@ -3641,7 +3643,7 @@ Solution: you need to pull out each field you want explicitly."
         let loc = mkLoc a.Parsetree.pexp_loc.loc_start b.pexp_loc.loc_end in
         let expr = Ast_helper.Exp.apply
           ~loc
-          (makeInfixOperator token startPos endPos)
+          (makeInfixOperator p token startPos endPos)
           [Nolabel, a; Nolabel, b]
         in
         loop expr
@@ -6668,10 +6670,11 @@ end = struct
       in
       let msg =
         Format.sprintf
-          "%s\n\nPossible infinite loop detected"
+          "%s\n\nPossible infinite loop detected\n\n"
           locationInfo
       in
-      prerr_string msg
+      prerr_string msg;
+      exit 1
     | _ -> exit 1
 end
 
