@@ -3632,7 +3632,20 @@ Solution: you need to pull out each field you want explicitly."
     in
     let rec loop a =
       let token = p.Parser.token in
-      let tokenPrec = Token.precedence token in
+      let tokenPrec =
+        (* Disambiguate division VS start of a tuple:
+         *  foo() / 1
+         *  VS
+         *  foo()
+         *  /1, 2/
+         * The newline indicates the difference between the two.
+         * Branching here has a performance impact.
+         * TODO: totally different tuple syntax *)
+        if token = Token.Forwardslash && p.startPos.pos_lnum > p.prevEndPos.pos_lnum then
+          -1
+        else
+          Token.precedence token
+      in
       if tokenPrec < prec then a
       else begin
         Parser.leaveBreadcrumb p (Grammar.ExprBinaryAfterOp token);

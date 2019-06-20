@@ -799,6 +799,13 @@ let x = (1, 2, 3)
 let x = ((1 : int), (2 : int), (3 : int))"
 `;
 
+exports[`tupleVsDivision.js 1`] = `
+"let () = (foo ()) / 1
+let () = foo ()
+let () = (1, 2) |. printTuple
+let f () = (foo ()) / 1; foo (); (1, 2) |. printTuple"
+`;
+
 exports[`unary.js 1`] = `
 "let x = not true
 let m = (-1)
