@@ -1,3 +1,119 @@
+module Doc = struct
+  type mode = Break | Flat
+
+  type lineStyle =
+    | Classic (* fits? -> replace with space *)
+    | Soft (* fits? -> replaced with nothing *)
+    | Hard (* always included *)
+    | Literal (* always included, no identation *)
+
+
+  type t =
+    | Nil
+    | Text of string
+    | Concat of t list
+    | Indent of t
+    | IfBreaks of t * t
+    | LineSuffix of t
+    | LineBreak of lineStyle
+    | Group of (bool (* should break *) * t)
+    | Cursor
+
+  let nil = Nil
+  let line = LineBreak Classic
+  let hardLine = LineBreak Hard
+  let softLine = LineBreak Soft
+  let text s = Text s
+  let concat l = Concat l
+  let indent d = Indent d
+  let ifBreaks t f = IfBreaks(t, f)
+  let lineSuffix d = LineSuffix d
+  let group d = Group(false, d)
+  let cursor = Cursor
+
+  let join ~sep docs =
+    let rec loop acc sep docs =
+      match docs with
+      | [] -> List.rev acc
+      | [x] -> List.rev (x::acc)
+      | x::xs -> loop (sep::x::acc) sep xs
+    in
+    Concat(loop [] sep docs)
+
+  let rec fits w = function
+    | _ when w < 0 -> false
+    | [] -> true
+    | (_ind, _mode, Text txt)::rest -> fits (w - String.length txt) rest
+    | (ind, mode, Indent doc)::rest -> fits w ((ind + 2, mode, doc)::rest)
+    | (_ind, Flat, LineBreak break)::rest ->
+        if break = Hard || break = Literal
+        then true
+        else
+          let w = if break = Classic then w + 1 else w in
+          fits w rest
+    | (_ind, _mode, Nil)::rest -> fits w rest
+    | (_ind, Break, LineBreak break)::rest -> true
+    | (ind, mode, Group(shouldBreak, doc))::rest ->
+      let mode = if shouldBreak then Break else mode in
+      fits w ((ind, mode, doc)::rest)
+    | (ind, mode, IfBreaks(breakDoc, flatDoc))::rest ->
+        if mode = Break then
+          fits w ((ind, mode, breakDoc)::rest)
+        else
+          fits w ((ind, mode, flatDoc)::rest)
+    | (ind, mode, Concat docs)::rest ->
+      let ops = List.map (fun doc -> (ind, mode, doc)) docs in
+      fits w (List.append ops rest)
+    | (_ind, _mode, Cursor)::rest -> fits w rest
+    | (_ind, _mode, LineSuffix _)::rest -> fits w rest
+
+  let toString ~width doc =
+    let buffer = Buffer.create 1000 in
+
+    let rec process ~pos stack =
+      match stack with
+      | (ind, mode, doc)::rest ->
+        begin match doc with
+        | Nil ->
+          process ~pos rest
+        | Text txt ->
+          Buffer.add_string buffer txt;
+          process ~pos:(String.length txt + pos) rest
+        | Concat docs ->
+          let ops = List.map (fun doc -> (ind, mode, doc)) docs in
+          process ~pos (List.append ops rest)
+        | Indent doc ->
+          process ~pos ((ind + 2, mode, doc)::rest)
+        | IfBreaks(breakDoc, flatDoc) ->
+          if mode = Break then
+            process ~pos ((ind, mode, breakDoc)::rest)
+          else
+            process ~pos ((ind, mode, flatDoc)::rest)
+        | LineBreak _ ->
+          if mode = Break then (
+            Buffer.add_string buffer "\n";
+            Buffer.add_string buffer (String.make ind ' ');
+            process ~pos rest
+          ) else (
+            Buffer.add_string buffer " ";
+            process ~pos:(pos + 1) rest
+          )
+        | Cursor ->
+          process ~pos rest
+        | Group (shouldBreak, doc) ->
+          if shouldBreak || not (fits (width - pos) ((ind, Flat, doc)::rest)) then
+            process ~pos ((ind, Break, doc)::rest)
+          else
+            process ~pos ((ind, Flat, doc)::rest)
+        | _ -> ()
+        end
+      | [] -> ()
+    in
+
+    process ~pos:0 [0, Break, doc];
+    Buffer.contents buffer
+end
+
 module Time: sig
   type t
 
@@ -181,6 +297,7 @@ end
 
 module IO: sig
   val readFile: string -> string
+  val writeFile: string -> string -> unit
 end = struct
   (* random chunk size: 2^15, TODO: why do we guess randomly? *)
   let chunkSize = 32768
@@ -200,6 +317,11 @@ end = struct
       )
     in
     loop ()
+
+  let writeFile filename txt =
+    let chan = open_out_bin filename in
+    output_string chan txt;
+    close_out chan
 end
 
 module CharacterCodes = struct
@@ -6548,6 +6670,117 @@ Solution: you need to pull out each field you want explicitly."
     (loc, (attrId, payload))
 end
 
+module Printer = struct
+  let longident l = match l with
+    | Longident.Lident lident -> Doc.text lident
+    | Longident.Ldot (lident, txt) as l ->
+      let txts = Longident.flatten l in
+      Doc.join ~sep:(Doc.text ".") (List.map Doc.text txts)
+    | _ -> failwith "unsupported ident"
+
+  let constant c = match c with
+    | Parsetree.Pconst_integer (s, _) -> Doc.text s
+    | Pconst_string (s, _) -> Doc.text ("\"" ^ s ^ "\"")
+    | Pconst_float (s, _) -> Doc.text s
+    | Pconst_char c -> Doc.text ("'" ^ (Char.escaped c) ^ "'")
+
+  let rec structure (s : Parsetree.structure) =
+    Doc.join ~sep:Doc.softLine (List.map structure_item s)
+
+  and structure_item (si: Parsetree.structure_item) =
+    match si.pstr_desc with
+    | Pstr_value(rec_flag, valueBindings) ->
+        Doc.concat [
+          Doc.text "let ";
+          (match rec_flag with
+          | Asttypes.Nonrecursive -> Doc.nil
+          | Asttypes.Recursive -> Doc.text "rec ");
+          valueBinding (List.hd valueBindings);
+        ]
+    | _ -> failwith "unsupported"
+
+  (*
+   *    {
+   *   pvb_pat: pattern;
+   *   pvb_expr: expression;
+   *   pvb_attributes: attributes;
+   *   pvb_loc: Location.t;
+   * }
+   *)
+  and valueBinding vb =
+    Doc.concat [
+      pattern vb.pvb_pat;
+      Doc.text " = ";
+      expression vb.pvb_expr;
+    ]
+
+  and extension (stringLoc, _payload) =
+    Doc.text ("%" ^ stringLoc.Location.txt)
+
+  and pattern (p : Parsetree.pattern) =
+    match p.ppat_desc with
+    | Ppat_any -> Doc.text "_"
+    | Ppat_var stringLoc -> Doc.text (stringLoc.txt)
+    | Ppat_constant c -> constant c
+    | Ppat_tuple patterns ->
+      Doc.group (
+        Doc.concat([
+          Doc.text "/";
+          Doc.indent (
+            Doc.concat([
+              Doc.line;
+              Doc.join ~sep:(Doc.concat [Doc.text ","; Doc.line])
+                (List.map pattern patterns)
+            ])
+          );
+          Doc.line;
+          Doc.text "/";
+        ])
+      )
+    | Ppat_array patterns ->
+      Doc.group (
+        Doc.concat([
+          Doc.text "[";
+          Doc.indent (
+            Doc.concat([
+              Doc.line;
+              Doc.join ~sep:(Doc.concat [Doc.text ","; Doc.line])
+                (List.map pattern patterns)
+            ])
+          );
+          Doc.line;
+          Doc.text "]";
+        ])
+      )
+    | Ppat_construct(constrName, _optionalArgs) ->
+      longident constrName.txt
+    | Ppat_exception p ->
+        Doc.group (
+          Doc.concat [ Doc.text "exception"; Doc.line; pattern p ]
+        )
+    | Ppat_or (p1, p2) ->
+      Doc.group(
+        Doc.concat([pattern p1; Doc.line; Doc.text "| "; pattern p2])
+      )
+    | Ppat_extension ext ->
+      extension ext
+    | Ppat_lazy p ->
+      Doc.concat [Doc.text "lazy "; pattern p]
+    | Ppat_interval _ -> failwith "interval patterns not supported"
+    | _ -> failwith "unsupported pattern"
+
+  and expression (e : Parsetree.expression) =
+    match e.pexp_desc with
+    | Parsetree.Pexp_constant c -> constant c
+    | _ -> failwith "unsupported expression"
+
+  let printStructure (s: Parsetree.structure) =
+    let stringDoc = Doc.toString ~width:80 (structure s) in
+    print_endline stringDoc;
+    print_newline()
+
+end
+
 (* command line flags *)
 module Clflags: sig
   val ancient: bool ref
@@ -6631,7 +6864,10 @@ end = struct
 
   let printImplementation ~target filename ast =
     match target with
-    | "ml" | "ocaml" -> Pprintast.structure Format.std_formatter ast
+    | "ml" | "ocaml" ->
+        Pprintast.structure Format.std_formatter ast
+    | "ns" | "napkinscript" ->
+        Printer.printStructure ast
     | "ast" -> Printast.implementation Format.std_formatter ast
     | _ -> (* default binary *)
       if !Clflags.ancient then (
@@ -6648,6 +6884,7 @@ end = struct
   let printInterface ~target filename ast =
     match target with
     | "ml" | "ocaml" -> Pprintast.signature Format.std_formatter ast
+    (* | "ns" | "napkinscript" -> PPrin *)
     | "ast" -> Printast.interface Format.std_formatter ast
     | _ -> (* default binary *)
       if !Clflags.ancient then (
