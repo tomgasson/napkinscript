@@ -1,0 +1,147 @@
+// Jest Snapshot v1, https://goo.gl/fbAQLP
+
+exports[`alias.ns 1`] = `
+"let x as y = 1
+let (x as y) as z = 1
+let (Foo | Bar) as x = 1
+
+"
+`;
+
+exports[`any.ns 1`] = `
+"let _ = 1
+
+"
+`;
+
+exports[`array.ns 1`] = `
+"let [a, b, c] = 1
+let [
+  aaaaaaaaaaaaaaaaaaaaaaaaaa,
+  bbbbbbbbbbbbbbbbbbbbbbbbbb,
+  cccccccccccccccccccccccccc,
+] = 1
+
+"
+`;
+
+exports[`constant.ns 1`] = `
+"let 1 = 1
+let \\"string\\" = 1
+let 3.14 = 1
+
+"
+`;
+
+exports[`construct.ns 1`] = `
+"let () = 1
+let Constructor = 1
+let Foo() = 1
+let Foo() = 1
+let Rgb(r, g, b) = 1
+let Rgb(
+  rrrrrrrrrrrrrrrrrrrrrrrrr,
+  ggggggggggggggggggggggggg,
+  bbbbbbbbbbbbbbbbbbbbbbbbb,
+) = 1
+let Units((), (), ()) = 1
+
+"
+`;
+
+exports[`exception.ns 1`] = `
+"let exception Exit = 1
+let exception (Exit | Quit) = 1
+let exception Exit as z = 1
+let exception (Exit as z) = 1
+
+"
+`;
+
+exports[`extension.ns 1`] = `
+"let %extensionPoint = 1
+
+"
+`;
+
+exports[`lazy.ns 1`] = `
+"let lazy x = 1
+let lazy (Foo | Bar) = 1
+let lazy (x as y) = 1
+
+"
+`;
+
+exports[`list.ns 1`] = `
+"let list() = 1
+let list(1) = 1
+let list(1, 2) = 1
+let list(1, 2, 3) = 1
+let list(1, 2, ...tail) = 1
+let list(
+  aaaaaaaaaaaaaaaaaaaaaaaaaa,
+  bbbbbbbbbbbbbbbbbbbbbbbbbb,
+  cccccccccccccccccccccccccc,
+) = 1
+let list(
+  aaaaaaaaaaaaaaaaaaaaaaaaaa,
+  bbbbbbbbbbbbbbbbbbbbbbbbbb,
+  cccccccccccccccccccccccccc,
+  ...tail,
+) = 1
+
+"
+`;
+
+exports[`or.ns 1`] = `
+"let Foo | Bar = 1
+let (Red | Blue) | Green = 1
+let Red | (Blue | Green) = 1
+let exception Foo | exception Bar = 1
+
+"
+`;
+
+exports[`record.ns 1`] = `
+"let {x} = 1
+let {x, _} = 1
+let {x, y} = 1
+let {x, y, _} = 1
+let {x: xCoord} = 1
+let {x: xCoord, _} = 1
+let {x: xCoord, y: yCoord} = 1
+let {x: xCoord, y: yCoord, _} = 1
+let {
+  xxxxxxxxxxxxxxxxxxxxxxxxx,
+  yyyyyyyyyyyyyyyyyyyyyyyyy,
+  zzzzzzzzzzzzzzzzzzzzzzzzz,
+} = 1
+let {
+  xxxxxxxxxxxxxxxxxxxxxxxxx,
+  yyyyyyyyyyyyyyyyyyyyyyyyy,
+  zzzzzzzzzzzzzzzzzzzzzzzzz,
+  _,
+} = 1
+
+"
+`;
+
+exports[`tuple.ns 1`] = `
+"let /a/ = 1
+let /a, b/ = 1
+let /
+  aaaaaaaaaaaaaaaaaaaaaaaaaa,
+  bbbbbbbbbbbbbbbbbbbbbbbbbb,
+  cccccccccccccccccccccccccc,
+/ = 1
+
+"
+`;
+
+exports[`var.ns 1`] = `
+"let foo = 1
+let superLongIdentifierLongSoooooooooooooLooooooooooooooooooooooooooooooooooooooong
+ = 1
+
+"
+`;

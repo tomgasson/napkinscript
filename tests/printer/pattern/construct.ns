@@ -1,0 +1,11 @@
+let () = 1 
+
+let Constructor = 1
+
+let Foo() = 1
+let Foo(()) = 1
+
+let Rgb(r, g, b) = 1
+
+let Rgb(rrrrrrrrrrrrrrrrrrrrrrrrr, ggggggggggggggggggggggggg, bbbbbbbbbbbbbbbbbbbbbbbbb) = 1
+let Units((), (), ()) = 1

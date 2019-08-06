@@ -46,8 +46,7 @@ module Doc = struct
     | (_ind, _mode, Text txt)::rest -> fits (w - String.length txt) rest
     | (ind, mode, Indent doc)::rest -> fits w ((ind + 2, mode, doc)::rest)
     | (_ind, Flat, LineBreak break)::rest ->
-        if break = Hard || break = Literal
-        then true
+        if break = Hard || break = Literal then true
         else
           let w = if break = Classic then w + 1 else w in
           fits w rest
@@ -89,19 +88,23 @@ module Doc = struct
             process ~pos ((ind, mode, breakDoc)::rest)
           else
             process ~pos ((ind, mode, flatDoc)::rest)
-        | LineBreak _ ->
+        | LineBreak lineStyle  ->
           if mode = Break then (
             Buffer.add_string buffer "\n";
             Buffer.add_string buffer (String.make ind ' ');
-            process ~pos rest
+            process ~pos:ind rest
           ) else (
-            Buffer.add_string buffer " ";
-            process ~pos:(pos + 1) rest
+            let pos = match lineStyle with
+            | Classic -> Buffer.add_string buffer " "; pos + 1
+            | Hard | Literal -> Buffer.add_string buffer "\n"; 0
+            | Soft -> pos
+            in
+            process ~pos rest
           )
         | Cursor ->
           process ~pos rest
         | Group (shouldBreak, doc) ->
-          if shouldBreak || not (fits (width - pos) ((ind, Flat, doc)::rest)) then
+          if (* shouldBreak || *) not (fits (width - pos) ((ind, Flat, doc)::rest)) then
             process ~pos ((ind, Break, doc)::rest)
           else
             process ~pos ((ind, Flat, doc)::rest)
@@ -110,7 +113,7 @@ module Doc = struct
       | [] -> ()
     in
 
-    process ~pos:0 [0, Break, doc];
+    process ~pos:0 [0, Flat, doc];
     Buffer.contents buffer
 end
 
@@ -3038,7 +3041,7 @@ Solution: you need to pull out each field you want explicitly."
     let startPos = p.Parser.startPos in
     let attrs = parseAttributes p in
     let pat = match p.Parser.token with
-    | Int _ | String _ ->
+    | Int _ | String _ | Float _ ->
       let endPos = p.endPos in
       let c = parseConstant p in
       let loc = mkLoc startPos endPos in
@@ -6671,111 +6674,270 @@ Solution: you need to pull out each field you want explicitly."
 end
 
 module Printer = struct
-  let longident l = match l with
+  (* TODO: should this go inside a ast utility module? *)
+  let rec collectPatternsFromListConstruct acc pattern =
+    let open Parsetree in
+    match pattern.ppat_desc with
+    | Ppat_construct(
+        {txt = Longident.Lident "::"},
+        Some {ppat_desc=Ppat_tuple (pat::rest::[])}
+      ) ->
+      collectPatternsFromListConstruct (pat::acc) rest
+    | _ -> List.rev acc, pattern
+
+
+  let printLongident l = match l with
     | Longident.Lident lident -> Doc.text lident
     | Longident.Ldot (lident, txt) as l ->
       let txts = Longident.flatten l in
       Doc.join ~sep:(Doc.text ".") (List.map Doc.text txts)
     | _ -> failwith "unsupported ident"
 
-  let constant c = match c with
+  let printConstant c = match c with
     | Parsetree.Pconst_integer (s, _) -> Doc.text s
     | Pconst_string (s, _) -> Doc.text ("\"" ^ s ^ "\"")
     | Pconst_float (s, _) -> Doc.text s
     | Pconst_char c -> Doc.text ("'" ^ (Char.escaped c) ^ "'")
 
-  let rec structure (s : Parsetree.structure) =
-    Doc.join ~sep:Doc.softLine (List.map structure_item s)
+  let rec printStructure (s : Parsetree.structure) =
+    Doc.join ~sep:Doc.hardLine (List.map printStructureItem s)
 
-  and structure_item (si: Parsetree.structure_item) =
+  and printStructureItem (si: Parsetree.structure_item) =
     match si.pstr_desc with
     | Pstr_value(rec_flag, valueBindings) ->
-        Doc.concat [
-          Doc.text "let ";
-          (match rec_flag with
-          | Asttypes.Nonrecursive -> Doc.nil
-          | Asttypes.Recursive -> Doc.text "rec ");
-          valueBinding (List.hd valueBindings);
-        ]
+        Doc.group (
+          Doc.concat [
+            Doc.text "let ";
+            (match rec_flag with
+            | Asttypes.Nonrecursive -> Doc.nil
+            | Asttypes.Recursive -> Doc.text "rec ");
+            printValueBinding (List.hd valueBindings);
+          ]
+        )
     | _ -> failwith "unsupported"
 
   (*
-   *    {
+   * {
    *   pvb_pat: pattern;
    *   pvb_expr: expression;
    *   pvb_attributes: attributes;
    *   pvb_loc: Location.t;
    * }
    *)
-  and valueBinding vb =
+  and printValueBinding vb =
     Doc.concat [
-      pattern vb.pvb_pat;
+      printPattern vb.pvb_pat;
       Doc.text " = ";
-      expression vb.pvb_expr;
+      printExpression vb.pvb_expr;
     ]
 
-  and extension (stringLoc, _payload) =
+  and printExtension (stringLoc, _payload) =
     Doc.text ("%" ^ stringLoc.Location.txt)
 
-  and pattern (p : Parsetree.pattern) =
+  and printPattern (p : Parsetree.pattern) =
     match p.ppat_desc with
     | Ppat_any -> Doc.text "_"
-    | Ppat_var stringLoc -> Doc.text (stringLoc.txt)
-    | Ppat_constant c -> constant c
+    | Ppat_var stringLoc ->
+        Doc.group (
+          Doc.concat([
+            Doc.text (stringLoc.txt);
+            Doc.softLine;
+          ])
+        )
+    | Ppat_constant c -> printConstant c
     | Ppat_tuple patterns ->
-      Doc.group (
+      Doc.group(
         Doc.concat([
           Doc.text "/";
           Doc.indent (
             Doc.concat([
-              Doc.line;
+              Doc.softLine;
               Doc.join ~sep:(Doc.concat [Doc.text ","; Doc.line])
-                (List.map pattern patterns)
+                (List.map printPattern patterns)
             ])
           );
-          Doc.line;
+          Doc.ifBreaks (Doc.text ",") Doc.nil;
+          Doc.softLine;
           Doc.text "/";
         ])
       )
     | Ppat_array patterns ->
-      Doc.group (
+      Doc.group(
         Doc.concat([
           Doc.text "[";
           Doc.indent (
             Doc.concat([
-              Doc.line;
+              Doc.softLine;
               Doc.join ~sep:(Doc.concat [Doc.text ","; Doc.line])
-                (List.map pattern patterns)
+                (List.map printPattern patterns)
             ])
           );
-          Doc.line;
+          Doc.ifBreaks (Doc.text ",") Doc.nil;
+          Doc.softLine;
           Doc.text "]";
         ])
       )
-    | Ppat_construct(constrName, _optionalArgs) ->
-      longident constrName.txt
+    | Ppat_construct({txt = Longident.Lident "[]"}, _) ->
+        Doc.text "list()"
+    | Ppat_construct({txt = Longident.Lident "::"}, _) ->
+      let (patterns, tail) = collectPatternsFromListConstruct [] p in
+      Doc.group(
+        Doc.concat([
+          Doc.text "list(";
+          Doc.indent (
+            Doc.concat([
+              Doc.softLine;
+              Doc.join ~sep:(Doc.concat [Doc.text ","; Doc.line])
+                (List.map printPattern patterns);
+              begin match tail.Parsetree.ppat_desc with
+              | Ppat_construct({txt = Longident.Lident "[]"}, _) -> Doc.nil
+              | _ -> Doc.concat([Doc.text ","; Doc.line; Doc.text "..."; printPattern tail])
+              end;
+            ])
+          );
+          Doc.ifBreaks (Doc.text ",") Doc.nil;
+          Doc.softLine;
+          Doc.text ")";
+        ])
+      )
+    | Ppat_construct(constrName, constructorArgs) ->
+      let constrName = printLongident constrName.txt in
+      begin match constructorArgs with
+      | None -> constrName
+      | Some(args) ->
+        let args = match args.ppat_desc with
+        | Ppat_construct({txt = Longident.Lident "()"}, None) -> [Doc.nil]
+        | Ppat_tuple(patterns) -> List.map printPattern patterns
+        | _ -> [printPattern args]
+        in
+        Doc.group(
+          Doc.concat([
+            constrName;
+            Doc.text "(";
+            Doc.indent (
+              Doc.concat [
+                Doc.softLine;
+                Doc.join ~sep:(Doc.concat [Doc.text ","; Doc.line])
+                  args
+              ]
+            );
+            Doc.ifBreaks (Doc.text ",") Doc.nil;
+            Doc.softLine;
+            Doc.text ")";
+          ])
+        )
+      end
+    | Ppat_record(rows, openFlag) ->
+        Doc.group(
+          Doc.concat([
+            Doc.text "{";
+            Doc.indent (
+              Doc.concat [
+                Doc.softLine;
+                Doc.join ~sep:(Doc.concat [Doc.text ","; Doc.line])
+                  (List.map printPatternRecordRow rows);
+                begin match openFlag with
+                | Open -> Doc.concat [Doc.text ","; Doc.line; Doc.text "_"]
+                | Closed -> Doc.nil
+                end;
+              ]
+            );
+            Doc.ifBreaks (Doc.text ",") Doc.nil;
+            Doc.softLine;
+            Doc.text "}";
+          ])
+        )
+
     | Ppat_exception p ->
+        let needsParens = match p.ppat_desc with
+        | Ppat_or (_, _) | Ppat_alias (_, _) -> true
+        | _ -> false
+        in
+        let pat =
+          let p = printPattern p in
+          if needsParens then
+            Doc.concat [Doc.text "("; p; Doc.text ")"]
+          else
+            p
+        in
         Doc.group (
-          Doc.concat [ Doc.text "exception"; Doc.line; pattern p ]
+          Doc.concat [ Doc.text "exception"; Doc.line; pat ]
         )
     | Ppat_or (p1, p2) ->
+      let p1 =
+        let p = printPattern p1 in
+        match p1.ppat_desc with
+        | Ppat_or (_, _) -> Doc.concat [Doc.text "("; p; Doc.text ")"]
+        | _ -> p
+      in
+      let p2 =
+        let p = printPattern p2 in
+        match p2.ppat_desc with
+        | Ppat_or (_, _) -> Doc.concat [Doc.text "("; p; Doc.text ")"]
+        | _ -> p
+      in
       Doc.group(
-        Doc.concat([pattern p1; Doc.line; Doc.text "| "; pattern p2])
+        Doc.concat([p1; Doc.line; Doc.text "| "; p2])
       )
     | Ppat_extension ext ->
-      extension ext
+      printExtension ext
     | Ppat_lazy p ->
-      Doc.concat [Doc.text "lazy "; pattern p]
-    | Ppat_interval _ -> failwith "interval patterns not supported"
+      let needsParens = match p.ppat_desc with
+      | Ppat_or (_, _) | Ppat_alias (_, _) -> true
+      | _ -> false
+      in
+      let pat =
+        let p = printPattern p in
+        if needsParens then
+          Doc.concat [Doc.text "("; p; Doc.text ")"]
+        else
+          p
+      in
+      Doc.concat [Doc.text "lazy "; pat]
+    | Ppat_alias (p, aliasLoc) ->
+      let needsParens = match p.ppat_desc with
+      | Ppat_or (_, _) | Ppat_alias (_, _) -> true
+      | _ -> false
+      in
+      let renderedPattern =
+        let p = printPattern p in
+        if needsParens then
+          Doc.concat [Doc.text "("; p; Doc.text ")"]
+        else
+          p
+      in
+      Doc.concat([
+        renderedPattern;
+        Doc.text " as ";
+        Doc.text aliasLoc.txt
+      ])
     | _ -> failwith "unsupported pattern"
 
-  and expression (e : Parsetree.expression) =
+  and printPatternRecordRow row =
+    match row with
+    (* punned {x}*)
+    | ({Location.txt=Longident.Lident ident},
+       {Parsetree.ppat_desc=Ppat_var {txt;_}}) when ident = txt ->
+        Doc.text ident
+    | (longident, pattern) ->
+        Doc.concat([
+          printLongident longident.txt;
+          Doc.text ": ";
+          Doc.indent(
+            Doc.concat [
+              Doc.softLine;
+              printPattern pattern;
+            ]
+          )
+        ])
+
+  and printExpression (e : Parsetree.expression) =
     match e.pexp_desc with
-    | Parsetree.Pexp_constant c -> constant c
+    | Parsetree.Pexp_constant c -> printConstant c
     | _ -> failwith "unsupported expression"
 
   let printStructure (s: Parsetree.structure) =
-    let stringDoc = Doc.toString ~width:80 (structure s) in
+    let stringDoc = Doc.toString ~width:80 (printStructure s) in
     print_endline stringDoc;
     print_newline()
 

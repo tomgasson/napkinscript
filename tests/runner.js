@@ -8,8 +8,15 @@ function parseFile(filename, recover, env) {
   let args = ["-print", "ml"];
   if (recover) args.push("-recover");
   args.push(filename);
-  return env ? cp.spawnSync(parser, args, {env}) : cp.spawnSync(parser, args);
+  return env ? cp.spawnSync(parser, args, { env }) : cp.spawnSync(parser, args);
 }
+
+function printFile(filename) {
+  let args = ["-print", "ns", filename];
+
+  return cp.spawnSync(parser, args);
+}
+
 // File "/home/travis/build/IwanKaramazow/napkinscript/tests/parsing/errors/scanner/oldDerefOp.js", line: 1, characters 4-5:
 // test output contains the full path of the file
 // this differs between multiple machines
@@ -31,6 +38,21 @@ let makeReproducibleFilename = txt => {
     lines[i] = prefix + suffix;
   }
   return lines.join("\n");
+};
+
+global.runPrinter = dirname => {
+  fs.readdirSync(dirname).forEach(base => {
+    let filename = path.join(dirname, base);
+    if (!fs.lstatSync(filename).isFile() || base === "render.spec.js") {
+      return;
+    }
+
+    test(base, () => {
+      let res = printFile(filename);
+      let renderedAst = res.stdout.toString();
+      expect(renderedAst).toMatchSnapshot();
+    });
+  });
 };
 
 global.runParser = (dirname, recover = false, showError = false, env) => {
