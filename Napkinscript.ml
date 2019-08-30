@@ -474,6 +474,68 @@ module CharacterCodes = struct
 
 end
 
+
+module Comment: sig
+  type t
+
+  val toString: t -> string
+  val toAttribute: t -> Parsetree.attribute
+
+  val loc: t -> Location.t
+
+  val makeSingleLineComment: loc:Location.t -> string -> t
+  val makeMultiLineComment: loc:Location.t -> string -> t
+end = struct
+  type style =
+    | SingleLine
+    | MultiLine
+
+  let styleToString s = match s with
+    | SingleLine -> "SingleLine"
+    | MultiLine -> "MultiLine"
+
+  type t = {
+    txt: string;
+    style: style;
+    loc: Location.t;
+  }
+
+  let loc t = t.loc
+
+  let toString t =
+    Format.sprintf
+      "(txt: %s\nstyle: %s\nlines: %d-%d)"
+      t.txt
+      (styleToString t.style)
+      t.loc.loc_start.pos_lnum
+      t.loc.loc_end.pos_lnum
+
+  let toAttribute t =
+    let expr =
+      Ast_helper.Exp.constant (Parsetree.Pconst_string (t.txt, None))
+    in
+    let id = Location.mkloc
+      (match t.style with
+       | SingleLine -> "napkinscript.singleLineComment"
+       | MultiLine -> "napkinscript.multiLineComment")
+      t.loc
+    in
+    (id, Parsetree.PStr [Ast_helper.Str.eval expr])
+
+  let makeSingleLineComment ~loc txt = {
+    txt;
+    loc;
+    style = SingleLine
+  }
+
+  let makeMultiLineComment ~loc txt = {
+    txt;
+    loc;
+    style = MultiLine
+  }
+
+end
+
 module Token = struct
   type t =
     | Open
@@ -538,7 +600,7 @@ module Token = struct
     | ColonEqual
     | At | AtAt
     | Percent | PercentPercent
-    | Comment of string
+    | Comment of Comment.t
     | List
     | TemplateTail of string
     | TemplatePart of string
@@ -627,7 +689,7 @@ module Token = struct
     | ColonEqual -> ":="
     | At -> "@" | AtAt -> "@@"
     | Percent -> "%" | PercentPercent -> "%%"
-    | Comment text -> "Comment(" ^ text ^ ")"
+    | Comment c -> "Comment(" ^ (Comment.toString c) ^ ")"
     | List -> "list"
     | TemplatePart text -> text ^ "${"
     | TemplateTail text -> "TemplateTail(" ^ text ^ ")"
@@ -1605,8 +1667,23 @@ module Scanner = struct
 
   (* black magic, use sparingly! *)
   let lookahead scanner callback =
-    let scannerCopy = {scanner with filename = scanner.filename} in
-    callback scannerCopy
+    let err = scanner.err in
+    let ch = scanner.ch in
+    let offset = scanner.offset in
+    let rdOffset = scanner.rdOffset in
+    let lineOffset = scanner.lineOffset in
+    let lnum = scanner.lnum in
+    let mode = scanner.mode in
+    let res = callback scanner in
+    scanner.err <- err;
+    scanner.ch <- ch;
+    scanner.offset <- offset;
+    scanner.rdOffset <- rdOffset;
+    scanner.lineOffset <- lineOffset;
+    scanner.lnum <- lnum;
+    scanner.mode <- mode;
+    res
+
 
   let skipWhitespace scanner =
     let rec scan () =
@@ -1694,18 +1771,22 @@ module Scanner = struct
 
   let scanSingleLineComment scanner =
     let startOff = scanner.offset in
+    let startPos = position scanner in
     while not (CharacterCodes.isLineBreak scanner.ch) &&
       scanner.rdOffset < (Bytes.length scanner.src)
     do
       next scanner
     done;
+    let endPos = position scanner in
     if CharacterCodes.isLineBreak scanner.ch then (
       scanner.lineOffset <- scanner.offset + 1;
       scanner.lnum <- scanner.lnum + 1;
     );
     next scanner;
     Token.Comment (
-      Bytes.sub_string scanner.src startOff (scanner.offset - 1 - startOff)
+      Comment.makeSingleLineComment
+        ~loc:(Location.{loc_start = startPos; loc_end = endPos; loc_ghost = false})
+        (Bytes.sub_string scanner.src startOff (scanner.offset - 1 - startOff))
     )
 
   let scanMultiLineComment scanner =
@@ -1730,7 +1811,9 @@ module Scanner = struct
     in
     scan();
     Token.Comment (
-      Bytes.sub_string scanner.src startOff (scanner.offset - 1 - startOff)
+      Comment.makeMultiLineComment
+        ~loc:(Location.{loc_start = startPos; loc_end = (position scanner); loc_ghost = false})
+        (Bytes.sub_string scanner.src startOff (scanner.offset - 2 - startOff))
     )
 
   let scanTemplate scanner =
@@ -2056,6 +2139,7 @@ module Parser = struct
     mutable errors: Reporting.parseError list;
     mutable diagnostics: Diagnostics.t list;
     mutable directive: directive;
+    mutable comments: Comment.t list;
   }
 
   let err ?startPos ?endPos p error =
@@ -2093,7 +2177,9 @@ module Parser = struct
   let rec advance p =
     let (startPos, endPos, token) = Scanner.scan p.scanner in
     match token with
-    | Comment _ -> advance p
+    | Comment c ->
+        p.comments <- c::p.comments;
+        advance p
     | _ ->
       p.token <- token;
       p.prevEndPos <- p.endPos;
@@ -2194,7 +2280,6 @@ module Parser = struct
   let rec next p =
     advance p;
     match p.token with
-    | Comment _ -> next p
     | Hash ->
       advance p;
       begin match (p.token, p.directive) with
@@ -2243,6 +2328,7 @@ module Parser = struct
       errors = [];
       diagnostics = [];
       directive = DirDisabled;
+      comments = [];
     } in
     parserState.scanner.err <- (fun ~startPos ~endPos error ->
       let diagnostic = Diagnostics.make
@@ -2255,15 +2341,6 @@ module Parser = struct
     );
     next parserState;
     parserState
-
-  let restore p1 p2 =
-    p1.scanner <- p2.scanner;
-    p1.token <- p2.token;
-    p1.startPos <- p2.startPos;
-    p1.prevEndPos <- p2.prevEndPos;
-    p1.endPos <- p2.endPos;
-    p1.breadcrumbs <- p2.breadcrumbs;
-    p1.errors <- p1.errors
 
   let leaveBreadcrumb p circumstance =
     let crumb = (circumstance, p.startPos) in
@@ -2290,18 +2367,46 @@ module Parser = struct
       let error = Diagnostics.expected ?grammar p.prevEndPos token in
       err ~startPos:p.prevEndPos p error
 
+  (* Don't use immutable copies here, it trashes certain heuristics
+   * in the ocaml compiler, resulting in massive slowdowns of the parser *)
   let lookahead p callback =
-    let scannerCopy = {p.scanner with
-      filename = p.scanner.filename;
-      (* Due to the way scanner error reporting is setup, it would report errors
-       * in the original parser state, not the copy.
-       * TODO: investigate and fix? *)
-      err = fun ~startPos:_ ~endPos:_ _ -> ()
-    } in
-    let parserStateCopy = {p with scanner = scannerCopy; errors = p.errors} in
-    callback parserStateCopy
+    let err = p.scanner.err in
+    let ch = p.scanner.ch in
+    let offset = p.scanner.offset in
+    let rdOffset = p.scanner.rdOffset in
+    let lineOffset = p.scanner.lineOffset in
+    let lnum = p.scanner.lnum in
+    let mode = p.scanner.mode in
+    let token = p.token in
+    let startPos = p.startPos in
+    let endPos = p.endPos in
+    let prevEndPos = p.prevEndPos in
+    let breadcrumbs = p.breadcrumbs in
+    let errors = p.errors in
+    let diagnostics = p.diagnostics in
+    let directive = p.directive in
+    let comments = p.comments in
 
+    let res = callback p in
 
+    p.scanner.err <- err;
+    p.scanner.ch <- ch;
+    p.scanner.offset <- offset;
+    p.scanner.rdOffset <- rdOffset;
+    p.scanner.lineOffset <- lineOffset;
+    p.scanner.lnum <- lnum;
+    p.scanner.mode <- mode;
+    p.token <- token;
+    p.startPos <- startPos;
+    p.endPos <- endPos;
+    p.prevEndPos <- prevEndPos;
+    p.breadcrumbs <- breadcrumbs;
+    p.errors <- errors;
+    p.diagnostics <- diagnostics;
+    p.directive <- directive;
+    p.comments <- comments;
+
+    res
 end
 
 
@@ -3846,7 +3951,7 @@ Solution: you need to pull out each field you want explicitly."
      Parser.err p (Diagnostics.unexpected token p.breadcrumbs);
      Ast_helper.Exp.constant (Pconst_string("", None))
 
-  and parseLetBindingBody ~attrs p =
+  and parseLetBindingBody ~startPos ~attrs p =
     Parser.leaveBreadcrumb p Grammar.LetBinding;
     let startPos = p.Parser.startPos in
     let pat, exp =
@@ -3901,37 +4006,70 @@ Solution: you need to pull out each field you want explicitly."
    * Here @attr should attach to something "new": `let b = 1`
    * The parser state is forked, which is quite expensive…
    *)
-  and parseAttributesAndBinding p =
-    Parser.lookahead p (fun state ->
-      match state.Parser.token with
-      | At ->
-        let attrs = parseAttributes state in
-        begin match state.Parser.token with
-        | And ->
-          Parser.restore p state;
-          attrs
-        | _ -> []
-        end
-      | _ -> []
-    )
+  and parseAttributesAndBinding (p : Parser.t) =
+    let err = p.scanner.err in
+    let ch = p.scanner.ch in
+    let offset = p.scanner.offset in
+    let rdOffset = p.scanner.rdOffset in
+    let lineOffset = p.scanner.lineOffset in
+    let lnum = p.scanner.lnum in
+    let mode = p.scanner.mode in
+    let token = p.token in
+    let startPos = p.startPos in
+    let endPos = p.endPos in
+    let prevEndPos = p.prevEndPos in
+    let breadcrumbs = p.breadcrumbs in
+    let errors = p.errors in
+    let diagnostics = p.diagnostics in
+    let directive = p.directive in
+    let comments = p.comments in
+
+    match p.Parser.token with
+    | At ->
+      let attrs = parseAttributes p in
+      begin match p.Parser.token with
+      | And ->
+        attrs
+      | _ ->
+        p.scanner.err <- err;
+        p.scanner.ch <- ch;
+        p.scanner.offset <- offset;
+        p.scanner.rdOffset <- rdOffset;
+        p.scanner.lineOffset <- lineOffset;
+        p.scanner.lnum <- lnum;
+        p.scanner.mode <- mode;
+        p.token <- token;
+        p.startPos <- startPos;
+        p.endPos <- endPos;
+        p.prevEndPos <- prevEndPos;
+        p.breadcrumbs <- breadcrumbs;
+        p.errors <- errors;
+        p.diagnostics <- diagnostics;
+        p.directive <- directive;
+        p.comments <- comments;
+        []
+      end
+    | _ -> []
 
   (* definition	::=	let [rec] let-binding  { and let-binding }   *)
   and parseLetBindings ~attrs p =
+    let startPos = p.Parser.startPos in
     Parser.expect Let p;
     let recFlag = if Parser.optional p Token.Rec then
       Asttypes.Recursive
     else
       Asttypes.Nonrecursive
     in
-    let first = parseLetBindingBody ~attrs p in
+    let first = parseLetBindingBody ~startPos ~attrs p in
 
     let rec loop p bindings =
       let attrs = parseAttributesAndBinding p in
+      let startPos = p.Parser.startPos in
       match p.Parser.token with
       | And ->
         Parser.next p;
         ignore(Parser.optional p Let); (* overparse for fault tolerance *)
-        let letBinding = parseLetBindingBody ~attrs p in
+        let letBinding = parseLetBindingBody ~startPos ~attrs p in
         loop p (letBinding::bindings)
       | _ ->
         List.rev bindings
@@ -5706,7 +5844,7 @@ Solution: you need to pull out each field you want explicitly."
    * typedef	::=	typeconstr-name [type-params] type-information
    * type-information	::=	[type-equation]  [type-representation]  { type-constraint }
    * type-equation	::=	= typexpr *)
-  and parseTypeDef ?attrs p =
+  and parseTypeDef ?attrs ~startPos p =
     Parser.leaveBreadcrumb p Grammar.TypeDef;
     let startPos = p.Parser.startPos in
     let attrs = match attrs with | Some attrs -> attrs | None -> parseAttributes p in
@@ -5776,8 +5914,9 @@ Solution: you need to pull out each field you want explicitly."
         let attrs = parseAttributesAndBinding p in
         match p.Parser.token with
         | And ->
+          let startPos = p.Parser.startPos in
           Parser.next p;
-          let typeDef = parseTypeDef ~attrs p in
+          let typeDef = parseTypeDef ~attrs ~startPos p in
           loop p (typeDef::defs)
         | _ ->
           List.rev defs
