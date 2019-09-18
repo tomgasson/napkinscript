@@ -4,7 +4,7 @@ module Doc = struct
   type lineStyle =
     | Classic (* fits? -> replace with space *)
     | Soft (* fits? -> replaced with nothing *)
-    | Hard (* always included *)
+    | Hard (* always included, forces breaks in parents *)
     | Literal (* always included, no identation *)
 
 
@@ -17,7 +17,7 @@ module Doc = struct
     | LineSuffix of t
     | LineBreak of lineStyle
     | Group of (bool (* should break *) * t)
-    | Cursor
+    (* | Cursor *)
 
   let nil = Nil
   let line = LineBreak Classic
@@ -29,7 +29,36 @@ module Doc = struct
   let ifBreaks t f = IfBreaks(t, f)
   let lineSuffix d = LineSuffix d
   let group d = Group(false, d)
-  let cursor = Cursor
+  let breakableGroup ~forceBreak d = Group(forceBreak, d)
+  (* let cursor = Cursor *)
+
+  let propagateForcedBreaks doc =
+    let rec walk doc = match doc with
+    | Text _ | Nil | LineSuffix _ ->
+      (false, doc)
+    | LineBreak (Hard | Literal) ->
+      (true, doc)
+    | LineBreak (Classic | Soft) ->
+      (false, doc)
+    | Indent children ->
+      let (childForcesBreak, newChildren) = walk children in
+      (childForcesBreak, Indent newChildren)
+    | IfBreaks (trueDoc, falseDoc) ->
+      (false, doc)
+    | Group(forceBreak, children) ->
+      let (childForcesBreak, newChildren) = walk children in
+      let shouldBreak = forceBreak || childForcesBreak in
+      (shouldBreak, Group (shouldBreak, newChildren))
+    | Concat children ->
+      let (forceBreak, newChildren) = List.fold_left (fun (forceBreak, newChildren) child ->
+        let (childForcesBreak, newChild) = walk child in
+        (forceBreak || childForcesBreak, newChild::newChildren)
+      ) (false, []) children
+      in
+      (forceBreak, Concat (List.rev newChildren))
+    in
+    let (_, processedDoc) = walk doc in
+    processedDoc
 
   let join ~sep docs =
     let rec loop acc sep docs =
@@ -48,7 +77,7 @@ module Doc = struct
     | (_ind, Flat, LineBreak break)::rest ->
         if break = Hard || break = Literal then true
         else
-          let w = if break = Classic then w + 1 else w in
+          let w = if break = Classic then w - 1 else w in
           fits w rest
     | (_ind, _mode, Nil)::rest -> fits w rest
     | (_ind, Break, LineBreak break)::rest -> true
@@ -63,58 +92,152 @@ module Doc = struct
     | (ind, mode, Concat docs)::rest ->
       let ops = List.map (fun doc -> (ind, mode, doc)) docs in
       fits w (List.append ops rest)
-    | (_ind, _mode, Cursor)::rest -> fits w rest
+    (* | (_ind, _mode, Cursor)::rest -> fits w rest *)
     | (_ind, _mode, LineSuffix _)::rest -> fits w rest
 
   let toString ~width doc =
+    (* let doc = propagateForcedBreaks doc in *)
     let buffer = Buffer.create 1000 in
 
-    let rec process ~pos stack =
+    let rec process ~pos lineSuffices stack =
       match stack with
-      | (ind, mode, doc)::rest ->
+      | ((ind, mode, doc) as cmd)::rest ->
         begin match doc with
         | Nil ->
-          process ~pos rest
+          process ~pos lineSuffices rest
         | Text txt ->
           Buffer.add_string buffer txt;
-          process ~pos:(String.length txt + pos) rest
+          process ~pos:(String.length txt + pos) lineSuffices rest
+        | LineSuffix doc ->
+          process ~pos ((ind, mode, doc)::lineSuffices) rest
         | Concat docs ->
           let ops = List.map (fun doc -> (ind, mode, doc)) docs in
-          process ~pos (List.append ops rest)
+          process ~pos lineSuffices (List.append ops rest)
         | Indent doc ->
-          process ~pos ((ind + 2, mode, doc)::rest)
+          process ~pos lineSuffices ((ind + 2, mode, doc)::rest)
         | IfBreaks(breakDoc, flatDoc) ->
           if mode = Break then
-            process ~pos ((ind, mode, breakDoc)::rest)
+            process ~pos lineSuffices ((ind, mode, breakDoc)::rest)
           else
-            process ~pos ((ind, mode, flatDoc)::rest)
+            process ~pos lineSuffices ((ind, mode, flatDoc)::rest)
         | LineBreak lineStyle  ->
           if mode = Break then (
-            Buffer.add_string buffer "\n";
-            Buffer.add_string buffer (String.make ind ' ');
-            process ~pos:ind rest
+            begin match lineSuffices with
+            | [] ->
+              Buffer.add_string buffer "\n";
+              Buffer.add_string buffer (String.make ind ' ');
+              process ~pos:ind [] rest
+            | docs ->
+              process ~pos:ind [] (List.concat [lineSuffices; cmd::rest])
+            end
           ) else (
-            let pos = match lineStyle with
-            | Classic -> Buffer.add_string buffer " "; pos + 1
-            | Hard | Literal -> Buffer.add_string buffer "\n"; 0
-            | Soft -> pos
-            in
-            process ~pos rest
+
+            begin match lineSuffices with
+            | [] ->
+              let pos = match lineStyle with
+              | Classic -> Buffer.add_string buffer " "; pos + 1
+              | Hard | Literal -> Buffer.add_string buffer "\n"; 0
+              | Soft -> pos
+              in
+              process ~pos [] rest
+            | docs ->
+              process ~pos:ind [] (List.concat [lineSuffices; cmd::rest])
+            end
+
           )
-        | Cursor ->
-          process ~pos rest
+        (* | Cursor -> *)
+          (* process ~pos rest *)
         | Group (shouldBreak, doc) ->
-          if (* shouldBreak || *) not (fits (width - pos) ((ind, Flat, doc)::rest)) then
-            process ~pos ((ind, Break, doc)::rest)
+          if shouldBreak || not (fits (width - pos) ((ind, Flat, doc)::rest)) then
+            process ~pos lineSuffices ((ind, Break, doc)::rest)
           else
-            process ~pos ((ind, Flat, doc)::rest)
-        | _ -> ()
+            process ~pos lineSuffices ((ind, Flat, doc)::rest)
         end
       | [] -> ()
     in
-
-    process ~pos:0 [0, Flat, doc];
+    process ~pos:0 [] [0, Flat, doc];
     Buffer.contents buffer
+
+
+  let debug t =
+    let rec toDoc = function
+      | Nil -> text "nil"
+      | Text txt -> text ("text(" ^ txt ^ ")")
+      | LineSuffix doc -> group(
+          concat [
+            text "linesuffix(";
+            indent (
+              concat [line; toDoc doc]
+            );
+            line;
+            text ")"
+          ]
+        )
+      | Concat docs -> group(
+          concat [
+            text "concat(";
+            indent (
+              concat [
+                line;
+                join ~sep:(concat [text ","; line])
+                  (List.map toDoc docs) ;
+              ]
+            );
+            line;
+            text ")"
+          ]
+        )
+      | Indent doc ->
+          concat [
+            text "indent(";
+            softLine;
+            toDoc doc;
+            softLine;
+            text ")";
+          ]
+      | IfBreaks (trueDoc, falseDoc) ->
+        group(
+          concat [
+            text "ifBreaks(";
+            indent (
+              concat [
+                line;
+                toDoc trueDoc;
+                concat [text ",";  line];
+                toDoc falseDoc;
+              ]
+            );
+            line;
+            text ")"
+          ]
+        )
+      | LineBreak break ->
+        let breakTxt = match break with
+          | Classic -> "Classic"
+          | Soft -> "Soft"
+          | Hard -> "Hard"
+          | Literal -> "Literal"
+        in
+        text ("LineBreak(" ^ breakTxt ^ ")")
+      | Group (shouldBreak, doc) ->
+        group(
+          concat [
+            text "Group(";
+            indent (
+              concat [
+                line;
+                text ("shouldbreak: " ^ (string_of_bool shouldBreak));
+                concat [text ",";  line];
+                toDoc doc;
+              ]
+            );
+            line;
+            text ")"
+          ]
+        )
+    in
+    let doc = toDoc t in
+    toString ~width:10 doc |> print_endline
 end
 
 module Time: sig
@@ -273,8 +396,6 @@ end = struct
     done
 end
 
-
-
 module Profile: sig
   val record : name:string -> (unit -> 'a) -> 'a
   val print: unit -> unit
@@ -325,6 +446,13 @@ end = struct
     let chan = open_out_bin filename in
     output_string chan txt;
     close_out chan
+end
+
+module LocationState = struct
+  (* stores diamonds location based on the location of the first list item *)
+  let diamondTbl = Hashtbl.create 10
+
+  let bracesTbl = Hashtbl.create 10
 end
 
 module CharacterCodes = struct
@@ -533,8 +661,643 @@ end = struct
     loc;
     style = MultiLine
   }
-
 end
+
+module AstUtils = struct
+  type attachment =
+    | Before
+    | Inside
+    | SomewhereElse
+
+  let classify loc1 loc2 =
+    let open Location in
+    if loc1.loc_end.pos_lnum < loc2.loc_start.pos_lnum then Before
+    else if
+      (loc1.loc_start.pos_lnum == loc2.loc_start.pos_lnum && loc1.loc_start.pos_cnum <= loc2.loc_end.pos_cnum) ||
+        (loc1.loc_start.pos_cnum >= loc2.loc_start.pos_cnum && loc1.loc_end.pos_cnum <= loc2.loc_end.pos_cnum) ||
+        (loc1.loc_start.pos_lnum == loc2.loc_end.pos_lnum)
+    then
+      Inside
+    else
+      SomewhereElse
+
+  (* the name of this type is dubious *)
+  type tieBreakResult = First | Second
+
+  (* helps determine whether a comment attaches to a `loc1` or a `loc2`
+   * `loc2` is the location of first item of a list
+   * Example:
+   * | Foo /* after constructor name */(/* before first constructor arg */string, int, float)
+   * The (string, int, float) doesn't have a location in the ast, the only way to check
+   * where the comment "probably" attaches is to compare the location with the first
+   * item of the list… *)
+  let breakTieWithFirstListItem commentLoc loc1 loc2 =
+    let open Location in
+    if commentLoc.loc_start.pos_cnum >= loc2.loc_end.pos_cnum then
+      Second
+    else if loc1.loc_end.pos_lnum == loc2.loc_start.pos_lnum then (
+      let distanceToEndLoc1 =
+        commentLoc.loc_start.pos_cnum - loc1.loc_end.pos_cnum in
+      let distanceToStartLoc2 =
+        loc2.loc_start.pos_cnum - commentLoc.loc_end.pos_cnum in
+      if distanceToEndLoc1 < distanceToStartLoc2 then First
+      else Second
+    ) else
+      Second
+
+  (* Tries to answer the following question:
+   *  ~ Does the comment attach more to loc1 or more to loc2 ? *)
+  let breakTieBetween commentLoc loc1 loc2 =
+    let open Location in
+    let distanceToEndLoc1 = commentLoc.loc_start.pos_cnum - (loc1.loc_end.pos_cnum - 1) in
+    let distanceToStartLoc2 = loc2.loc_start.pos_cnum -
+      (commentLoc.loc_end.pos_cnum - 1) in
+    if distanceToEndLoc1 < distanceToStartLoc2 ||
+      distanceToEndLoc1 == distanceToStartLoc2
+    then
+      First
+    else
+      Second
+
+  (*
+   * Linear scan of attributes, inserts comment into the correct spot
+   * Sort order: ascending location
+   *)
+  let insertIntoAttributes comment attrs =
+    let commentLoc = Comment.loc comment in
+    let commentAttr = Comment.toAttribute comment in
+    let rec find acc attrs = match (attrs: Parsetree.attributes) with
+    | [] -> List.rev (commentAttr::acc)
+    | ((id, _) as attr)::attrs ->
+        if commentLoc.loc_end.pos_cnum <= id.loc.loc_start.pos_cnum then (
+          (List.rev acc) @ (commentAttr::attr::attrs)
+        ) else (
+          find (attr::acc) attrs
+        )
+    in
+    find [] attrs
+
+  let rec scanStructure comment (s : Parsetree.structure) =
+    let rec scan comment acc nodes =
+      match nodes with
+      | [] ->
+        let commentNode =
+          Ast_helper.Str.attribute ~loc:(Comment.loc comment) (Comment.toAttribute comment)
+        in
+        List.rev (commentNode::acc)
+      | node::nodes ->
+        let commentLoc = Comment.loc comment in
+        match classify commentLoc  node.Parsetree.pstr_loc with
+        | Before ->
+          let commentNode =
+            Ast_helper.Str.attribute ~loc:commentLoc (Comment.toAttribute comment)
+          in
+          List.rev (node::commentNode::acc) @ nodes
+        | Inside ->
+          let node = scanStructureItem comment node in
+          List.rev (node::acc) @ nodes
+        | SomewhereElse ->
+          scan comment (node::acc) nodes
+    in
+    scan comment [] s
+
+  and scanStructureItem comment (si : Parsetree.structure_item) =
+      match si.pstr_desc with
+      | Pstr_value (recFlag, valueBindings) ->
+        {si with pstr_desc = Pstr_value (recFlag, scanValueBindings comment valueBindings)}
+      | Pstr_type (recFlag, typeDeclarations) ->
+        {si with pstr_desc =
+        Pstr_type (recFlag, scanTypeDeclarations comment typeDeclarations)}
+      | Pstr_primitive valueDescription ->
+        {si with pstr_desc = Pstr_primitive (
+          scanValueDescription comment valueDescription)}
+      | _ -> si
+
+  and scanValueDescription comment (vd : Parsetree.value_description) =
+    let commentLoc = Comment.loc comment in
+    if commentLoc.loc_end.pos_cnum <= vd.pval_name.loc.loc_start.pos_cnum ||
+      commentLoc.loc_start.pos_cnum >= vd.pval_loc.loc_end.pos_cnum
+    then
+      { vd with pval_attributes = insertIntoAttributes  comment vd.pval_attributes }
+    else
+      begin match breakTieBetween commentLoc vd.pval_name.loc vd.pval_type.ptyp_loc with
+      | First ->
+        { vd with pval_attributes = insertIntoAttributes  comment vd.pval_attributes }
+      | Second -> { vd with pval_type = { vd.pval_type with
+          ptyp_attributes = insertIntoAttributes
+            comment
+            vd.pval_type.ptyp_attributes
+          }
+        }
+      end
+
+  and scanTypeDeclarations comment (tds : Parsetree.type_declaration list) =
+    let rec scan comment acc nodes =
+      match nodes with
+      | [] -> List.rev acc
+      | node::nodes ->
+        let commentLoc = Comment.loc comment in
+        match classify commentLoc node.Parsetree.ptype_loc with
+        | SomewhereElse ->
+          scan comment (node::acc) nodes
+        | Before ->
+          let attr = Comment.toAttribute comment in
+          let node = { node with
+            Parsetree.ptype_attributes = attr::node.ptype_attributes
+          } in
+          List.rev (node::acc) @ nodes
+        | Inside ->
+          let node = scanTypeDeclaration comment node in
+          List.rev (node::acc) @ nodes
+    in
+    scan comment [] tds
+
+  and scanTypeDeclaration comment (td : Parsetree.type_declaration) =
+    let open Location in
+    let commentLoc = Comment.loc comment in
+    match (td.ptype_kind, td.ptype_params, td.ptype_manifest) with
+      (* type t = .. *)
+    | (Ptype_open, [], _) ->
+      {td with ptype_attributes = insertIntoAttributes comment td.ptype_attributes }
+    | (Ptype_open, hdParam::tailParams, _) ->
+      let (hdTyp, _) = hdParam in
+      let paramsLoc = Hashtbl.find LocationState.diamondTbl hdTyp.Parsetree.ptyp_loc in
+      if commentLoc.loc_end.pos_cnum <= paramsLoc.loc_start.pos_cnum ||
+         commentLoc.loc_start.pos_cnum >= paramsLoc.loc_end.pos_cnum then
+        (* type /* a */ t /* b */<'a, 'b> = ..*)
+        (* type t <'a, 'b> /* here */  = .. // another one *)
+        {td with ptype_attributes = insertIntoAttributes comment td.ptype_attributes }
+      else
+        { td with ptype_params = scanTypeParams comment td.ptype_params }
+
+      (* type /* a */ t /* b */<'a, 'b>  *)
+    | (Ptype_abstract, hdParam::tailParams, None) ->
+      let (hdTyp, _) = hdParam in
+      let paramsLoc = Hashtbl.find LocationState.diamondTbl hdTyp.Parsetree.ptyp_loc in
+      if commentLoc.loc_end.pos_cnum <= paramsLoc.loc_start.pos_cnum ||
+         commentLoc.loc_start.pos_cnum >= paramsLoc.loc_end.pos_cnum then
+        (* type /* a */ t /* b */<'a, 'b> *)
+        {td with ptype_attributes = insertIntoAttributes comment td.ptype_attributes }
+      else
+        (* type t<'a /* inside */, 'b> *)
+        { td with ptype_params = scanTypeParams comment td.ptype_params }
+    | (Ptype_abstract, hdParam::tailParams, Some manifest) ->
+      let (hdTyp, _) = hdParam in
+      let paramsLoc = Hashtbl.find LocationState.diamondTbl hdTyp.Parsetree.ptyp_loc in
+      if commentLoc.loc_end.pos_cnum <= paramsLoc.loc_start.pos_cnum then
+        (* type /* a */ t /* b */<'a> = myType *)
+        {td with ptype_attributes = insertIntoAttributes comment td.ptype_attributes }
+      else
+        begin match breakTieBetween commentLoc paramsLoc manifest.ptyp_loc with
+        | First ->
+          (* type t<'a> /* here */ = myType *)
+          {td with ptype_attributes = insertIntoAttributes comment td.ptype_attributes }
+        | Second ->
+          (* type t<'a> = /* here */ myType *)
+          {td with ptype_manifest = Some ({ manifest with
+            ptyp_attributes = insertIntoAttributes comment manifest.ptyp_attributes
+          })}
+        end
+      (* type /* c1*/ t /* c2 */ *)
+    | (Ptype_abstract, [], None) ->
+      {td with ptype_attributes = insertIntoAttributes comment td.ptype_attributes }
+      (* type /* c1 */ t /* c2 */ = /* c3 */ string /* c4 */  *)
+    | (Ptype_abstract, [], Some typ) ->
+      (* type /* c1 */ t = string *)
+      if commentLoc.loc_end.pos_cnum < td.ptype_name.loc.loc_start.pos_cnum then
+        {td with ptype_attributes = insertIntoAttributes comment td.ptype_attributes }
+      (* type t = string /* c4 */ *)
+      else if commentLoc.loc_start.pos_cnum > typ.ptyp_loc.loc_end.pos_cnum then
+        {td with ptype_manifest = Some {typ with
+          ptyp_attributes = insertIntoAttributes comment typ.ptyp_attributes }}
+      else
+        (* two cases left:
+         *  - trailing comment on the type name: type t /* comment */ = string
+         *  - leading comment on the type manifest: type t = /* comment */ string
+         *)
+        let distanceToEndOfTypeName =
+          commentLoc.loc_start.pos_cnum  - td.ptype_name.loc.loc_end.pos_cnum
+        in
+        let distanceToStartOfManifest =
+          typ.ptyp_loc.loc_start.pos_cnum - commentLoc.loc_end.pos_cnum
+        in
+        (* if the distance from the end of the comment to the start of the type manifest
+         * is smaller, than the start of the comment to the end of the type name,
+         * we're dealing with a comment attached to the manifest *)
+        if distanceToStartOfManifest < distanceToEndOfTypeName then
+          (* type t = /* comment */ string *)
+          {td with ptype_manifest = Some {typ with
+            ptyp_attributes = insertIntoAttributes comment typ.ptyp_attributes }}
+        else
+          (* type t /* comment */ = string *)
+          {td with ptype_attributes = insertIntoAttributes comment td.ptype_attributes }
+
+    (* type user = {name: string, age: int} *)
+    | (Ptype_record labelDeclarations, [], None) ->
+      (* type /* comment */ user = {name: string, age: int} *)
+      if commentLoc.loc_end.pos_cnum < td.ptype_name.loc.loc_start.pos_cnum then
+        {td with ptype_attributes = insertIntoAttributes comment td.ptype_attributes }
+      else if commentLoc.loc_start.pos_cnum > td.ptype_loc.loc_end.pos_cnum then
+        (*
+         * type user = {
+         *  name: string,
+         *  age: int
+         * } /* comment */
+         *)
+        {td with ptype_attributes = insertIntoAttributes comment td.ptype_attributes }
+      else
+        (* problematic: ast doesn't contain location info for the leading { in  { }
+         * it's impossible to deduce the difference between:
+         *   - type t = /* before brace */ {name: string}
+         *   - type t =  { /* after brace */ name: string}
+         *
+         *  we could drop brace location info into attributes as a solution… *)
+        begin match labelDeclarations with
+        (* type t = { }  --> won't typecheck *)
+        | [] ->
+          { td with ptype_attributes = insertIntoAttributes comment td.ptype_attributes }
+        | ld::_ as lds ->
+          (* two cases:
+           * - it's a trailing comment on the type name: type t /* comment */ = {name: string}
+           * - it's part of the record declaration: type t = {/* comment */ name: string}
+           *   or line below:
+           *     type t = {
+           *       /* comment */
+           *       name: string
+           *     }
+           *)
+          if (
+            let distanceToEndOfTypeName =
+              commentLoc.loc_start.pos_cnum  - td.ptype_name.loc.loc_end.pos_cnum
+            in
+            let distanceToLDName =
+              ld.pld_name.loc.loc_start.pos_cnum - commentLoc.loc_end.pos_cnum in
+            distanceToEndOfTypeName < distanceToLDName
+          ) then
+            { td with ptype_attributes = insertIntoAttributes comment td.ptype_attributes }
+          else
+            {td with ptype_kind = Ptype_record(scanLabelDeclarations comment lds)}
+        end
+    (* type user = User.t = {name: string, age: int} *)
+    | (Ptype_record labelDeclarations, [], Some manifest) ->
+      (* type /* comment */ user = User.t = {name: string, age: int} *)
+      if commentLoc.loc_end.pos_cnum < td.ptype_name.loc.loc_start.pos_cnum then
+        {td with ptype_attributes = insertIntoAttributes comment td.ptype_attributes }
+      else if commentLoc.loc_start.pos_cnum > td.ptype_loc.loc_end.pos_cnum then
+        (*
+         * type user = User.t = {
+         *  name: string,
+         *  age: int
+         * } /* comment */
+         *)
+        {td with ptype_attributes = insertIntoAttributes comment td.ptype_attributes }
+      (* type user /* loc1 */ = /* loc2*/ User.t = {name:string, age: int } *)
+      else if commentLoc.loc_start.pos_cnum >= td.ptype_name.loc.loc_end.pos_cnum &&
+        commentLoc.loc_end.pos_cnum <= manifest.ptyp_loc.loc_start.pos_cnum
+      then (
+        (* two cases:
+         *  - type t /* after type name */ = User.t = {name: string, age: int}
+         *  - type t = /* before manifest */ User.t = {name: string, age: int}
+         *)
+        let distanceToStartOfName =
+          commentLoc.loc_start.pos_cnum - td.ptype_name.loc.loc_end.pos_cnum in
+        let distanceToStartOfManifest =
+          manifest.ptyp_loc.loc_start.pos_cnum - commentLoc.loc_end.pos_cnum in
+        if distanceToStartOfName < distanceToStartOfManifest then
+          {td with ptype_attributes = insertIntoAttributes comment td.ptype_attributes }
+        else
+          {td with ptype_manifest = Some {manifest with
+            ptyp_attributes = insertIntoAttributes comment manifest.ptyp_attributes}}
+      )
+      else
+        begin match labelDeclarations with
+        (* type t = { }  --> won't typecheck *)
+        | [] ->
+          { td with ptype_attributes = insertIntoAttributes comment td.ptype_attributes }
+        | ld::_ as lds ->
+          (* type t = User.t /* after manifest */ = {name: string}
+           * type t = User.t = {/* leading on label name */ name: string} *)
+          if (
+            let distanceToEndOfManifest =
+              commentLoc.loc_start.pos_cnum  - manifest.ptyp_loc.loc_end.pos_cnum
+            in
+            let distanceToLDName =
+              ld.pld_name.loc.loc_start.pos_cnum - commentLoc.loc_end.pos_cnum in
+            distanceToEndOfManifest < distanceToLDName
+          ) then
+            { td with ptype_manifest = Some {manifest with
+            ptyp_attributes = insertIntoAttributes comment manifest.ptyp_attributes}}
+          else
+            {td with ptype_kind = Ptype_record(scanLabelDeclarations comment lds)}
+        end
+    (* type color = Red | Blue | Green
+     * type color =
+     *   | Red
+     *   | Blue
+     *   | Green
+     *)
+    | (Ptype_variant constructorDeclarations, [], None) ->
+        begin match constructorDeclarations with
+        | [] ->
+          { td with ptype_attributes = insertIntoAttributes comment td.ptype_attributes }
+
+        | cds ->
+          {td with ptype_kind = Ptype_variant(scanConstructorDeclarations comment cds)}
+        end
+    | _ -> td
+
+  and scanTypExpr comment (typ : Parsetree.core_type) =
+    {typ with
+      ptyp_attributes = insertIntoAttributes comment typ.ptyp_attributes}
+
+  and scanTypeParams comment (params : (Parsetree.core_type * Asttypes.variance) list) =
+    scanList
+      comment
+      (fun (typ, _) -> typ.Parsetree.ptyp_loc)
+      (fun comment (typ, variance) -> (
+        Parsetree.{typ with
+         ptyp_attributes = insertIntoAttributes comment typ.ptyp_attributes},
+         variance))
+      (fun comment (typ, variance) -> (
+        Parsetree.{typ with
+         ptyp_attributes = insertIntoAttributes comment typ.ptyp_attributes},
+         variance))
+      params
+
+  and scanTypeExpressions comment (typExprs: Parsetree.core_type list) =
+    scanList
+      comment
+      (fun n -> n.Parsetree.ptyp_loc)
+      scanTypExpr
+      scanTypExpr
+      typExprs
+
+
+  and scanLabelDeclarations comment (lds: Parsetree.label_declaration list) =
+    scanList
+      comment
+      (fun n -> n.Parsetree.pld_loc)
+      scanLabelDeclaration
+      (fun comment n -> Parsetree.{n with
+        pld_attributes = insertIntoAttributes comment n.pld_attributes
+      })
+      lds
+
+  and scanConstructorDeclarations comment (cds : Parsetree.constructor_declaration list) =
+    scanList
+      comment
+      (fun n -> n.Parsetree.pcd_loc)
+      scanConstructorDeclaration
+      (fun comment n -> Parsetree.{n with
+        pcd_attributes = insertIntoAttributes comment n.pcd_attributes
+      })
+      cds
+
+  and scanList: 'a. Comment.t -> ('a -> Location.t)
+    -> (Comment.t -> 'a -> 'a) -> (Comment.t -> 'a -> 'a) -> 'a list -> 'a list
+    = fun comment getNodeLoc scanNode attachToNode lst ->
+    (* let rec scan comment acc lst = *)
+      (* match lst with *)
+      (* | [] -> [] *)
+      (* | [node] -> *)
+        (* let node = scanNode comment node in *)
+        (* List.rev (node::acc) *)
+      (* | node::nodes -> *)
+        (* let commentLoc = Comment.loc comment in *)
+        (* match classify commentLoc (getNodeLoc node) with *)
+        (* | SomewhereElse -> *)
+          (* scan comment (node::acc) nodes *)
+        (* | Before | Inside -> *)
+          (* let node = scanNode comment node in *)
+          (* List.concat [List.rev (node::acc); nodes] *)
+    (* in *)
+    (* scan comment [] lst *)
+
+    let open Location in
+    let commentLoc = Comment.loc comment in
+    let rec scan comment acc prev lst =
+      match lst with
+      | [] -> []
+      | [node] ->
+        let nodeLoc = getNodeLoc node in
+        if (commentLoc.loc_start.pos_cnum >= nodeLoc.loc_start.pos_cnum &&
+            commentLoc.loc_end.pos_cnum <= nodeLoc.loc_end.pos_cnum) ||
+            commentLoc.loc_start.pos_cnum >= nodeLoc.loc_end.pos_cnum then
+          let node = scanNode comment node in
+          List.rev (node::prev::acc)
+        else begin match breakTieBetween commentLoc (getNodeLoc prev) nodeLoc with
+        | First ->
+          let prevNode = scanNode comment prev in
+          List.rev (node::prevNode::acc)
+        | Second ->
+          let node = scanNode comment node in
+          List.rev (node::prev::acc)
+        end
+      | node::nodes ->
+        let nodeLoc = getNodeLoc node in
+        if commentLoc.loc_end.pos_lnum < nodeLoc.loc_start.pos_lnum ||
+            (commentLoc.loc_start.pos_cnum >= nodeLoc.loc_start.pos_cnum &&
+            commentLoc.loc_end.pos_cnum <= nodeLoc.loc_end.pos_cnum)
+        then
+            List.rev (node::prev::acc)
+        else
+          let prevLoc = getNodeLoc prev in
+          if prevLoc.loc_start.pos_lnum == nodeLoc.loc_end.pos_lnum then
+          begin match breakTieBetween commentLoc (getNodeLoc prev) nodeLoc with
+          | First ->
+            let prevNode = scanNode comment prev in
+            List.rev (node::prevNode::acc)
+          | Second ->
+            scan comment (prev::acc) node nodes
+          end
+          else
+            scan comment (prev::acc) node nodes
+
+    in
+    match lst with
+    | [] -> []
+    | [node] ->
+      let node = scanNode comment node in
+      [node]
+    | node::nodes ->
+      let nodeLoc = getNodeLoc node in
+      if commentLoc.loc_end.pos_lnum < nodeLoc.loc_start.pos_lnum ||
+          (commentLoc.loc_start.pos_cnum >= nodeLoc.loc_start.pos_cnum &&
+          commentLoc.loc_end.pos_cnum <= nodeLoc.loc_end.pos_cnum)
+      then
+        let node = scanNode comment node in
+        node::nodes
+      else
+        scan comment [] node nodes
+
+
+  and scanConstructorDeclaration comment (cd : Parsetree.constructor_declaration) =
+    let commentLoc = Comment.loc comment in
+    if commentLoc.loc_end.pos_cnum <= cd.pcd_name.loc.loc_start.pos_cnum then
+      (* leading: | /* comment */ Foo *)
+      {cd with pcd_attributes = insertIntoAttributes comment cd.pcd_attributes}
+    else if commentLoc.loc_start.pos_cnum >= cd.pcd_loc.loc_end.pos_cnum then
+      (* trailing: | Foo(a, b, c): typ /* comment */*)
+      {cd with pcd_attributes = insertIntoAttributes comment cd.pcd_attributes}
+    else begin
+      match (cd.pcd_name.loc, cd.pcd_args, cd.pcd_res) with
+      | (nameLoc, Pcstr_tuple([]), None) ->
+        (* | /* before */ Blue*)
+        {cd with pcd_attributes = insertIntoAttributes comment cd.pcd_attributes}
+      | (nameLoc, Pcstr_tuple([]), Some gadt) ->
+        if commentLoc.loc_end.pos_cnum <= gadt.ptyp_loc.loc_start.pos_cnum then
+          (* | /* here */ Blue /* or here */: color *)
+          {cd with pcd_attributes = insertIntoAttributes comment cd.pcd_attributes}
+        else
+          (* | Blue: /* here */ color *)
+          {cd with pcd_res = Some {gadt with
+            ptyp_attributes =
+              insertIntoAttributes comment gadt.ptyp_attributes
+          }}
+      | (nameLoc, Pcstr_tuple(firstType::rest as constructors), None) ->
+        begin match (breakTieWithFirstListItem commentLoc nameLoc firstType.ptyp_loc) with
+        | First ->
+          (* | Blue /* after pcd_name */(string, int)*)
+          {cd with pcd_attributes = insertIntoAttributes comment cd.pcd_attributes}
+        | Second ->
+          (* | Blue(/* in list */ string /* another */, /* comment */int)*)
+          {cd with pcd_args = Pcstr_tuple(
+            scanTypeExpressions comment constructors
+          )}
+        end
+      | (nameLoc, Pcstr_record(ld::_ as lds), None) ->
+        begin match (breakTieWithFirstListItem commentLoc nameLoc ld.pld_loc) with
+        | First ->
+          (* | Color /* after pcd_name */({r: float, g: float, b: float})*)
+          {cd with pcd_attributes = insertIntoAttributes comment cd.pcd_attributes}
+        | Second ->
+          (* | Color({/* comment */ r: /* somewhere inside */ float, /* here */ g: float, b: float})*)
+          {cd with pcd_args = Pcstr_record(scanLabelDeclarations comment lds)}
+        end
+      | _ -> cd
+    end
+
+  and scanLabelDeclaration comment (ld : Parsetree.label_declaration) =
+    let commentLoc = Comment.loc comment in
+    if commentLoc.loc_end.pos_cnum <= ld.pld_name.loc.loc_start.pos_cnum then
+      (* /* comment */ name: string
+       * or
+       * /* comment */
+       * name: string *)
+      {ld with pld_attributes = insertIntoAttributes comment ld.pld_attributes}
+    else if commentLoc.loc_start.pos_cnum >= ld.pld_loc.loc_end.pos_cnum then
+      (* three cases, the parsetree has no notion of commas
+       *  name: string, /* comment */
+       *  name: string /* comment */,
+       *  name: string, // comment
+       *
+       *)
+      {ld with pld_type = { ld.pld_type with ptyp_attributes =
+        insertIntoAttributes comment ld.pld_type.ptyp_attributes}}
+    else
+      (* two cases:
+       * - trailing on the pld_name:  `name /* comment */: string`
+       * - leading on the pld_type: `name: /* string */ *)
+      let distanceToEndOfName =
+        commentLoc.loc_start.pos_cnum - ld.pld_name.loc.loc_end.pos_cnum in
+      let distanceToStartOfType =
+        ld.pld_type.ptyp_loc.loc_start.pos_cnum - commentLoc.loc_end.pos_cnum in
+      if distanceToEndOfName < distanceToStartOfType then
+        (* name /* comment */: string  *)
+        {ld with pld_attributes = insertIntoAttributes comment ld.pld_attributes}
+      else
+        (* name: string /* comment */ *)
+        let ()  = print_endline "we are fucked" in
+        {ld with pld_type =
+          {ld.pld_type with ptyp_attributes =
+            insertIntoAttributes comment ld.pld_type.ptyp_attributes
+          }
+        }
+
+  and scanValueBindings comment (vbs : Parsetree.value_binding list) =
+    let rec scan comment acc nodes =
+      match nodes with
+      | [] -> List.rev acc
+      | node::nodes ->
+        let commentLoc = Comment.loc comment in
+        match classify commentLoc node.Parsetree.pvb_loc with
+        | SomewhereElse ->
+          scan comment (node::acc) nodes
+        | Before ->
+          let attr = Comment.toAttribute comment in
+          let node = { node with
+            Parsetree.pvb_attributes = attr::node.pvb_attributes;
+          } in
+          List.rev (node::acc) @ nodes
+        | Inside ->
+          let node = scanValueBinding comment node in
+          List.rev (node::acc) @ nodes
+    in
+    scan comment [] vbs
+
+  and scanValueBinding comment (vb : Parsetree.value_binding) =
+    let open Parsetree in
+    let commentLoc = Comment.loc comment in
+    (* @attr let x = 1 -> before "let" *)
+    if commentLoc.loc_end.pos_cnum < vb.pvb_loc.loc_start.pos_cnum then
+      {vb with pvb_attributes = insertIntoAttributes comment vb.pvb_attributes}
+    (* let /* comment */ x = 1 -> before pattern "x" *)
+    else if commentLoc.loc_end.pos_cnum < vb.pvb_pat.ppat_loc.loc_start.pos_cnum then
+      {vb with pvb_pat =
+        {vb.pvb_pat with ppat_attributes =
+            insertIntoAttributes comment vb.pvb_pat.ppat_attributes
+        }
+      }
+    (* let x = foo /* comment */ -> after expr "foo" *)
+    else if commentLoc.loc_start.pos_cnum > vb.pvb_expr.pexp_loc.loc_end.pos_cnum then
+      {vb with pvb_expr =
+        {vb.pvb_expr with pexp_attributes =
+          insertIntoAttributes comment vb.pvb_expr.pexp_attributes
+        }
+      }
+    (* two cases left:
+     *  - trailing comment on the pattern: let x /* comment */ = foo
+     *  - leading comment on the expr: let x = /* comment */ foo
+     *)
+    else
+      let distanceToEndOfPattern =
+        commentLoc.loc_start.pos_cnum - vb.pvb_pat.ppat_loc.loc_end.pos_cnum
+      in
+      let distanceToStartOfExpression =
+        vb.pvb_expr.pexp_loc.loc_start.pos_cnum - commentLoc.loc_start.pos_cnum
+      in
+      (* if the start of the comment is closer to the end of the pattern, then
+       * it's a comment on the pattern *)
+      if distanceToEndOfPattern < distanceToStartOfExpression then
+        {vb with pvb_pat =
+          {vb.pvb_pat with ppat_attributes =
+              insertIntoAttributes comment vb.pvb_pat.ppat_attributes}}
+      else (* we're dealing with a leading comment on the expression *)
+        {vb with pvb_expr =
+          {vb.pvb_expr with pexp_attributes =
+            insertIntoAttributes comment vb.pvb_expr.pexp_attributes}}
+
+  let mergeCommentsIntoStructure (comments : Comment.t list) (structure : Parsetree.structure) =
+    List.fold_left (fun ast comment ->
+      scanStructure comment ast
+    ) structure comments
+
+  let labelDeclarationsShouldForceBreak (lds : Parsetree.label_declaration list) =
+    let open Location in
+    let rec loop prevLoc (lds : Parsetree.label_declaration list) = match lds with
+      | [] -> false
+      | ld::lds ->
+        if ld.pld_loc.loc_end.pos_lnum > prevLoc.loc_start.pos_lnum then
+          false
+        else
+          loop ld.pld_loc lds
+    in
+    match lds with
+    | [] -> false
+    | ld::lds ->
+      loop ld.pld_loc lds
+end
+
 
 module Token = struct
   type t =
@@ -1769,9 +2532,7 @@ module Scanner = struct
     scan ();
     Token.String (Buffer.contents buffer)
 
-  let scanSingleLineComment scanner =
-    let startOff = scanner.offset in
-    let startPos = position scanner in
+  let scanSingleLineComment ~startPos scanner =
     while not (CharacterCodes.isLineBreak scanner.ch) &&
       scanner.rdOffset < (Bytes.length scanner.src)
     do
@@ -1786,12 +2547,11 @@ module Scanner = struct
     Token.Comment (
       Comment.makeSingleLineComment
         ~loc:(Location.{loc_start = startPos; loc_end = endPos; loc_ghost = false})
-        (Bytes.sub_string scanner.src startOff (scanner.offset - 1 - startOff))
+        (let startOff = startPos.pos_cnum + 2 in
+          Bytes.sub_string scanner.src startOff (scanner.offset - 1 - startOff))
     )
 
-  let scanMultiLineComment scanner =
-    let startOff = scanner.offset in
-    let startPos = position scanner in
+  let scanMultiLineComment ~startPos scanner =
     let rec scan () =
       if scanner.ch == CharacterCodes.asterisk &&
          peek scanner == CharacterCodes.forwardslash then (
@@ -1813,7 +2573,8 @@ module Scanner = struct
     Token.Comment (
       Comment.makeMultiLineComment
         ~loc:(Location.{loc_start = startPos; loc_end = (position scanner); loc_ghost = false})
-        (Bytes.sub_string scanner.src startOff (scanner.offset - 2 - startOff))
+        (let startOff = startPos.pos_cnum + 2 in
+          Bytes.sub_string scanner.src startOff (scanner.offset - 2 - startOff))
     )
 
   let scanTemplate scanner =
@@ -1965,10 +2726,10 @@ module Scanner = struct
       else if ch == CharacterCodes.forwardslash then
         if scanner.ch == CharacterCodes.forwardslash then (
           next scanner;
-          scanSingleLineComment scanner
+          scanSingleLineComment ~startPos scanner
         ) else if (scanner.ch == CharacterCodes.asterisk) then (
           next scanner;
-          scanMultiLineComment scanner
+          scanMultiLineComment ~startPos scanner
         ) else if scanner.ch == CharacterCodes.dot then (
           next scanner;
           Token.ForwardslashDot
@@ -4004,7 +4765,7 @@ Solution: you need to pull out each field you want explicitly."
    * let b = 1
    *
    * Here @attr should attach to something "new": `let b = 1`
-   * The parser state is forked, which is quite expensive…
+   * The parser state is copied, which is quite expensive…
    *)
   and parseAttributesAndBinding (p : Parser.t) =
     let err = p.scanner.err in
@@ -5346,6 +6107,7 @@ Solution: you need to pull out each field you want explicitly."
    *)
   and parseRecordDeclaration p =
     Parser.leaveBreadcrumb p Grammar.RecordDecl;
+    let startPos = p.Parser.startPos in
     Parser.expect Lbrace p;
     let rows =
       parseCommaDelimitedList
@@ -5355,6 +6117,12 @@ Solution: you need to pull out each field you want explicitly."
         p
     in
     Parser.expect Rbrace p;
+    let () = match rows with
+    | ld::_ ->
+      let bracesLocation = mkLoc startPos p.prevEndPos in
+      Hashtbl.add LocationState.bracesTbl ld.pld_loc bracesLocation
+    | _ -> ()
+    in
     Parser.eatBreadcrumb p;
     rows
 
@@ -5490,8 +6258,10 @@ Solution: you need to pull out each field you want explicitly."
     in
     let res = match p.Parser.token with
     | Colon ->
+      let startPos = p.startPos in
       Parser.next p;
-      Some (parseTypExpr p)
+      let typ = parseTypExpr p in
+      Some ({typ with ptyp_loc = mkLoc startPos p.prevEndPos})
     | _ -> None
     in
     (constrArgs, res)
@@ -5503,19 +6273,20 @@ Solution: you need to pull out each field you want explicitly."
    *  | attrs constr-name const-args *)
    and parseTypeConstructorDeclarationWithBar p =
     Parser.expect Bar p;
-    parseTypeConstructorDeclaration p
+    let startPos = p.Parser.prevEndPos in
+    parseTypeConstructorDeclaration ~startPos p
 
-   and parseTypeConstructorDeclaration p =
+   and parseTypeConstructorDeclaration ~startPos p =
      Parser.leaveBreadcrumb p Grammar.ConstructorDeclaration;
-     let startPos = p.Parser.startPos in
      let attrs = parseAttributes p in
      match p.Parser.token with
      | Uident uident ->
+       let uidentLoc = mkLoc p.startPos p.endPos in
        Parser.next p;
        let (args, res) = parseConstrDeclArgs p in
        Parser.eatBreadcrumb p;
        let loc = mkLoc startPos p.prevEndPos in
-       Ast_helper.Type.constructor ~loc ~attrs ?res ~args (Location.mkloc uident loc)
+       Ast_helper.Type.constructor ~loc ~attrs ?res ~args (Location.mkloc uident uidentLoc)
      | t ->
       Parser.err p (Diagnostics.uident t);
       Ast_helper.Type.constructor (Location.mknoloc "_")
@@ -5524,8 +6295,9 @@ Solution: you need to pull out each field you want explicitly."
    and parseTypeConstructorDeclarations ?first p =
     let firstConstrDecl = match first with
     | None ->
+      let startPos = p.Parser.startPos in
       ignore (Parser.optional p Token.Bar);
-      parseTypeConstructorDeclaration p
+      parseTypeConstructorDeclaration ~startPos p
     | Some firstConstrDecl ->
       firstConstrDecl
     in
@@ -5612,6 +6384,7 @@ Solution: you need to pull out each field you want explicitly."
    *  with the actual code corrected. *)
   and parseTypeParams p =
     let opening = p.Parser.token in
+    let startPos = p.Parser.startPos in
     match opening with
     | LessThan | Lparen when p.startPos.pos_lnum == p.prevEndPos.pos_lnum ->
       Parser.leaveBreadcrumb p Grammar.TypeParams;
@@ -5632,6 +6405,13 @@ Solution: you need to pull out each field you want explicitly."
         Parser.next p
       | _ ->
         Parser.expect GreaterThan p
+      in
+      let () =
+        match params with
+        | (typ, _)::_ ->
+          let diamondLoc = mkLoc startPos p.prevEndPos in
+          Hashtbl.add LocationState.diamondTbl typ.ptyp_loc diamondLoc
+        | _ -> ()
       in
       Parser.eatBreadcrumb p;
       params
@@ -5675,8 +6455,9 @@ Solution: you need to pull out each field you want explicitly."
         let typeConstr =
           parseValuePathTail p uidentStartPos (Longident.Lident uident)
         in
+        let loc = mkLoc uidentStartPos p.prevEndPos in
         let typ = parseTypeAlias p (
-          Ast_helper.Typ.constr typeConstr (parseTypeConstructorArgs p)
+          Ast_helper.Typ.constr ~loc typeConstr (parseTypeConstructorArgs p)
         ) in
         begin match p.token with
         | Equal ->
@@ -5790,6 +6571,12 @@ Solution: you need to pull out each field you want explicitly."
           )
         in
         Parser.expect Rbrace p;
+        let () = match fields with
+        | ld::_ ->
+          let bracesLoc = mkLoc startPos p.prevEndPos in
+          Hashtbl.add LocationState.bracesTbl ld.pld_loc bracesLoc
+        | _ -> ()
+        in
         Parser.eatBreadcrumb p;
         (None, Asttypes.Public, Parsetree.Ptype_record fields)
       end
@@ -5798,7 +6585,7 @@ Solution: you need to pull out each field you want explicitly."
     Parser.expect Private p;
     match p.Parser.token with
     | Lbrace ->
-      let (manifest, _ ,kind) = parseRecordOrBsObjectDecl p in
+      let (manifest, _, kind) = parseRecordOrBsObjectDecl p in
       (manifest, Asttypes.Private, kind)
     | Uident _ ->
       let (manifest, _, kind) = parseTypeEquationOrConstrDecl p in
@@ -5846,7 +6633,6 @@ Solution: you need to pull out each field you want explicitly."
    * type-equation	::=	= typexpr *)
   and parseTypeDef ?attrs ~startPos p =
     Parser.leaveBreadcrumb p Grammar.TypeDef;
-    let startPos = p.Parser.startPos in
     let attrs = match attrs with | Some attrs -> attrs | None -> parseAttributes p in
     Parser.leaveBreadcrumb p Grammar.TypeConstrName;
     let (name, loc) = parseLident p in
@@ -6825,6 +7611,242 @@ module Printer = struct
     | _ -> List.rev acc, pattern
 
 
+  type attributeTemplate = {
+    commentsAbove: Parsetree.attributes;
+    attributesAbove: Parsetree.attributes;
+    leadingAttributes: Parsetree.attributes;
+    commentsInside: Parsetree.attributes;
+    trailingComments: Parsetree.attributes;
+    commentsBelow: Parsetree.attributes;
+  }
+
+  (* TODO: attributes inside *)
+  let classifyAttributes (attrs: Parsetree.attributes) nodeLoc =
+    let open Location in
+
+    let rec parseCommentsAbove acc (attrs : Parsetree.attributes) =
+      match (attrs: Parsetree.attributes) with
+      | [] -> (List.rev acc, [])
+      | ({txt = "napkinscript.multiLineComment" | "napkinscript.singleLineComment"; loc}, _)::_ when
+        loc.loc_start.pos_cnum >= nodeLoc.loc_end.pos_cnum ->
+        (List.rev acc, attrs)
+      | [(({txt = "napkinscript.multiLineComment" | "napkinscript.singleLineComment"; loc}, _) as attr)] ->
+        (List.rev (attr::acc), [])
+      | (({txt = "napkinscript.multiLineComment" |
+          "napkinscript.singleLineComment";loc}, _) as attr)::(({txt = txt2;loc =loc2}, _) as attr2)::rest ->
+        if loc.loc_end.pos_lnum < loc2.loc_start.pos_lnum then
+          parseCommentsAbove (attr::acc) (attr2::rest)
+        else
+          (List.rev acc, rest)
+      | rest ->
+        (List.rev acc, rest)
+    in
+
+    let rec loop template (attrs : Parsetree.attributes) =
+      match (attrs : Parsetree.attributes) with
+      | (({txt; loc}, _) as attr)::rest ->
+        if (txt = "napkinscript.multiLineComment" || txt = "napkinscript.singleLineComment") &&
+          loc.loc_end.pos_lnum < nodeLoc.loc_start.pos_lnum
+        then
+          loop { template with commentsAbove = attr::template.commentsAbove }
+            rest
+        else if (txt = "napkinscript.multiLineComment" || txt = "napkinscript.singleLineComment") &&
+          loc.loc_start.pos_cnum > nodeLoc.loc_start.pos_cnum &&
+          loc.loc_end.pos_cnum < nodeLoc.loc_end.pos_cnum
+        then
+          loop { template with commentsInside = attr::template.commentsInside }
+            rest
+        else if loc.loc_end.pos_lnum < nodeLoc.loc_start.pos_lnum then
+          loop { template with attributesAbove = attr::template.attributesAbove }
+            rest
+        else if loc.loc_end.pos_cnum <= nodeLoc.loc_start.pos_cnum then
+          loop { template with leadingAttributes = attr::template.leadingAttributes }
+            rest
+        else if loc.loc_start.pos_lnum == nodeLoc.loc_end.pos_lnum then
+          loop { template with trailingComments = attr::template.trailingComments }
+            rest
+        else
+          loop { template with commentsBelow = attr::template.commentsBelow }
+            rest
+      | [] -> template
+    in
+    let (commentsAbove, attrs) = parseCommentsAbove [] attrs in
+    let template = loop {
+      commentsAbove = commentsAbove;
+      attributesAbove = [];
+      leadingAttributes = [];
+      commentsInside = [];
+      trailingComments = [];
+      commentsBelow = [];
+    } attrs in
+    (* if we have both above & leading attributes, put them all above *)
+    let {attributesAbove; leadingAttributes} = template in
+    let hasAttributeAbove =
+      let attrs = List.filter (fun (attr : Parsetree.attribute) ->
+        let {txt} = fst attr in
+        txt <> "napkinscript.multiLineComment" && txt <> "napkinscript.multiLineComment"
+      ) attributesAbove in
+      match attrs with
+      | _::_ -> true
+      | [] -> false
+    in
+    if hasAttributeAbove then
+      (* Move all leading attributes up until the first leading comment to the
+       * attributes above the node *)
+      let rec split acc attrs =
+        match (attrs : Parsetree.attributes) with
+        | (({txt="napkinscript.multiLineComment" | "napkinscript.singleLineComment"; loc}, _) as attr)::rest ->
+          split (attr::acc) rest
+        | _ -> (acc, attrs)
+      in
+      let (leadingComments, newAttrsAbove) = split [] leadingAttributes in
+      {
+        commentsAbove = List.rev template.commentsAbove;
+        attributesAbove = List.concat [List.rev template.attributesAbove; List.rev newAttrsAbove];
+        commentsInside = List.rev template.commentsInside;
+        leadingAttributes = leadingComments;
+        trailingComments = List.rev template.trailingComments;
+        commentsBelow = List.rev template.commentsBelow;
+      }
+    else {
+      commentsAbove = List.rev template.commentsAbove;
+      attributesAbove = List.rev template.attributesAbove;
+      leadingAttributes = List.rev template.leadingAttributes;
+      commentsInside = List.rev template.commentsInside;
+      trailingComments = List.rev template.trailingComments;
+      commentsBelow = List.rev template.commentsBelow;
+    }
+
+  type attributePartition = {
+    commentsBefore: Parsetree.attribute list;
+    commentsAfter: Parsetree.attribute list;
+    attrs: Parsetree.attribute list;
+  }
+
+  (* TODO: perf of this function *)
+  let partitionAttributes (attrs : Parsetree.attributes) nodeLoc =
+    let rec partition attrs part =
+      let open Location in
+      match (attrs : Parsetree.attributes) with
+      | (({txt="napkinscript.multiLineComment" | "napkinscript.singleLineComment"; loc}, _) as attr)::rest ->
+        let part = if loc.loc_end.pos_lnum < nodeLoc.loc_start.pos_lnum then
+          { part with commentsBefore = attr::part.commentsBefore }
+          else if loc.loc_start.pos_cnum >= nodeLoc.loc_end.pos_cnum then
+          { part with commentsAfter = attr::part.commentsAfter }
+        else
+          { part with attrs = attr::part.attrs }
+        in
+        partition rest part
+      | attr::rest ->
+          partition  rest {part with attrs = attr::part.attrs }
+      | [] ->
+        {
+          commentsBefore = List.rev part.commentsBefore;
+          commentsAfter = List.rev part.commentsAfter;
+          attrs = List.rev part.attrs;
+        }
+    in
+    partition attrs {commentsBefore = []; commentsAfter = []; attrs = []}
+
+  (* `// comment
+   *  @bs.val /* c1 */ @bs.unsafe /* c2 */
+   *  @attr /* c3 */ and /* c4 */ cs /* c5 */ = /* c6 */ 2 // c7
+   *
+   * commentsAbove: // comment
+   * attrs: @bs.val /* c1 */ @bs.unsafe /* c2 */ @attr /* c3 */
+   * commentsInside: /* c4 */ /* c5 */ /* c6 */ // c7
+   *)
+  type bindingAttributeTemplate = {
+    commentsAbove: Parsetree.attribute list;
+    attrs: Parsetree.attribute list;
+    commentsInside: Parsetree.attribute list;
+  }
+
+  let partitionBindingAttributes (attrs : Parsetree.attributes) nodeLoc =
+    let open Location in
+    let rec parseCommentsAbove acc (attrs : Parsetree.attributes) =
+      match attrs with
+      | (({txt="napkinscript.multiLineComment" | "napkinscript.singleLineComment"; loc}, _) as attr)::attrs         when loc.loc_end.pos_lnum < nodeLoc.loc_start.pos_lnum ->
+          parseCommentsAbove (attr::acc) attrs
+      | attrs ->
+        (List.rev acc, attrs)
+    in
+    let rec parseAttributes acc (attrs : Parsetree.attributes) =
+      match attrs with
+      | (({loc}, _) as attr)::attrs when loc.loc_end.pos_cnum < nodeLoc.loc_start.pos_cnum ->
+        parseAttributes (attr::acc) attrs
+      | _ ->
+        (List.rev acc, attrs)
+    in
+    let (commentsAbove, rest) = parseCommentsAbove [] attrs in
+    let (attrs, rest) = parseAttributes [] rest in
+    {
+      commentsAbove;
+      attrs;
+      commentsInside = rest
+    }
+
+  (* Example: type t = /* c1 */ @attr /* c2 */ foo /*c3 */
+   * attrsBefore: [/* c1 */, @attr, /* c2 */]
+   * attrsAfter: /* c3 */ *)
+  type beforeAfterAttributeTemplate = {
+    attrsBefore: Parsetree.attributes;
+    attrsAfter: Parsetree.attributes;
+  }
+
+  let splitBeforeAfterLocation (attrs : Parsetree.attributes) nodeLoc =
+    let rec parse acc (attrs : Parsetree.attributes) =
+      let open Location in
+      match (attrs : Parsetree.attributes) with
+      | [] -> (List.rev acc, [])
+      | attr::attrs ->
+          let id = fst attr in
+          if id.loc.loc_end.pos_cnum <= nodeLoc.loc_start.pos_cnum then
+            parse (attr::acc) attrs
+          else
+            (List.rev acc, attr::attrs)
+   in
+   let (before, after) = parse [] attrs in
+   {
+     attrsBefore = before;
+     attrsAfter = after;
+   }
+
+
+  let interleaveWhitespace ~getLoc ~render ~sep nodes =
+    let open Location in
+    let rec loop i prevLoc docs nodes =
+      match nodes with
+      | [] -> List.rev docs
+      | [node] ->
+        let currLoc = getLoc node in
+        let renderedNode = render node i in
+        let docs =
+          if currLoc.loc_start.pos_lnum - prevLoc.loc_end.pos_lnum > 1 then
+            renderedNode::Doc.hardLine::docs
+          else
+            renderedNode::docs
+        in
+        List.rev docs
+      | node::nodes ->
+        let currLoc = getLoc node in
+        let renderedNode = render node i in
+        let docs =
+          if currLoc.loc_start.pos_lnum - prevLoc.loc_end.pos_lnum > 1 then
+            sep::renderedNode::Doc.hardLine::docs
+          else
+            sep::renderedNode::docs
+        in
+        loop (i + 1) currLoc docs nodes
+    in
+    match nodes with
+    | [] -> Doc.nil
+    | [node] -> Doc.concat([render node 0])
+    | node::nodes ->
+      let docs = [sep; render node 0] in
+      Doc.group(Doc.concat(loop 1 (getLoc node) docs nodes))
+
+
   let printLongident l = match l with
     | Longident.Lident lident -> Doc.text lident
     | Longident.Ldot (lident, txt) as l ->
@@ -6838,22 +7860,792 @@ module Printer = struct
     | Pconst_float (s, _) -> Doc.text s
     | Pconst_char c -> Doc.text ("'" ^ (Char.escaped c) ^ "'")
 
-  let rec printStructure (s : Parsetree.structure) =
-    Doc.join ~sep:Doc.hardLine (List.map printStructureItem s)
+  (* TODO: simplify this thing *)
+  let rec renderSequenceWhitespace: 'a.
+    getNodeLoc:('a -> Location.t) -> getSpan:('a -> Location.t)
+    -> getAttrs:('a -> Parsetree.attributes)
+    -> render:('a -> Parsetree.attributes -> int -> Doc.t)
+    -> sep: Doc.t
+    -> forceBreak: bool
+    -> 'a list
+    -> Doc.t
+    = fun ~getNodeLoc ~getSpan ~getAttrs ~render ~sep ~forceBreak nodes ->
+    let open Location in
 
-  and printStructureItem (si: Parsetree.structure_item) =
+    let rec loop i prevSpan docs nodes =
+      match nodes with
+      | [] -> Doc.nil
+      | [node] ->
+        let nodeLoc = getNodeLoc node in
+        let currSpan = getSpan node in
+        let attributeTemplate = classifyAttributes (getAttrs node) nodeLoc in
+        let renderedNode =
+          let doc = render node attributeTemplate.commentsInside i in
+          Doc.concat [doc; Doc.ifBreaks sep Doc.nil]
+        in
+        let renderedNodeWithAttrs = attachAttributeTemplate renderedNode attributeTemplate in
+        let whitespace =
+          if currSpan.loc_start.pos_lnum - prevSpan.loc_end.pos_lnum > 1 then
+            Doc.hardLine
+          else Doc.nil
+        in
+        Doc.concat (List.rev (renderedNodeWithAttrs::whitespace::Doc.line::docs))
+      | node::nodes ->
+        let nodeLoc = getNodeLoc node in
+        let currSpan = getSpan node in
+        let attributeTemplate = classifyAttributes (getAttrs node) nodeLoc in
+        let renderedNode =
+          let doc = render node attributeTemplate.commentsInside i in
+          Doc.concat [doc; sep]
+        in
+        let renderedNodeWithAttrs = attachAttributeTemplate renderedNode attributeTemplate in
+        let whitespace =
+          if currSpan.loc_start.pos_lnum - prevSpan.loc_end.pos_lnum > 1 then
+            Doc.hardLine
+          else Doc.nil
+        in
+        let docs = renderedNodeWithAttrs::whitespace::Doc.line::docs in
+        loop (i + 1) currSpan docs nodes
+    in
+    match nodes with
+    | [] -> Doc.nil
+    | [node] ->
+        let nodeLoc = getNodeLoc node in
+        let attributeTemplate = classifyAttributes (getAttrs node) nodeLoc in
+        let renderedNode = render node attributeTemplate.commentsInside 0 in
+        attachAttributeTemplate renderedNode attributeTemplate
+    | node::nodes ->
+        let nodeLoc = getNodeLoc node in
+        let currSpan = getSpan node in
+        let attributeTemplate = classifyAttributes (getAttrs node) nodeLoc in
+        let renderedNode = render node attributeTemplate.commentsInside 0 in
+        let firstDoc = attachAttributeTemplate renderedNode attributeTemplate in
+        Doc.breakableGroup ~forceBreak (loop 1 currSpan [firstDoc] nodes)
+
+  and printStructure (structure : Parsetree.structure) =
+    renderSequenceWhitespace
+      ~getNodeLoc:(fun si -> si.Parsetree.pstr_loc)
+      ~getSpan:(fun si -> si.Parsetree.pstr_loc)
+      ~getAttrs:(fun (_: Parsetree.structure_item) -> [])
+      ~render:printStructureItem
+      ~forceBreak:true
+      ~sep:Doc.nil
+      structure
+
+  and printStructureItem (si: Parsetree.structure_item) _comments _i =
     match si.pstr_desc with
     | Pstr_value(rec_flag, valueBindings) ->
-        Doc.group (
-          Doc.concat [
-            Doc.text "let ";
-            (match rec_flag with
-            | Asttypes.Nonrecursive -> Doc.nil
-            | Asttypes.Recursive -> Doc.text "rec ");
-            printValueBinding (List.hd valueBindings);
-          ]
-        )
+      let recFlag = match rec_flag with
+      | Asttypes.Nonrecursive -> Doc.nil
+      | Asttypes.Recursive -> Doc.text "rec "
+      in
+      renderSequenceWhitespace
+        ~getNodeLoc:(fun vb -> vb.Parsetree.pvb_loc)
+        ~getSpan:(fun vb -> {vb.Parsetree.pvb_loc with
+            loc_start = match vb.pvb_attributes with
+            | (id, _):: _ -> id.loc.loc_start
+            | _ -> vb.pvb_loc.loc_start
+         })
+        ~getAttrs:(fun vb -> vb.Parsetree.pvb_attributes)
+        (* allocating a closure here…*)
+        ~render:(printValueBinding ~recFlag)
+        ~sep:Doc.nil
+        ~forceBreak:(si.pstr_loc.loc_end.pos_lnum > si.pstr_loc.loc_start.pos_lnum)
+        valueBindings
+
+    | Pstr_type(recFlag, typeDeclarations) ->
+      let renderedRecFlag = match recFlag with
+      | Asttypes.Nonrecursive -> Doc.nil
+      | Asttypes.Recursive -> Doc.text "rec "
+      in
+      renderSequenceWhitespace
+        ~getNodeLoc:(fun td -> td.Parsetree.ptype_loc)
+        ~getSpan:(fun td -> {td.Parsetree.ptype_loc with
+           loc_start = match td.ptype_attributes with
+           | (id, _)::_ -> id.loc.loc_start
+           | _ -> td.ptype_loc.loc_start
+        })
+        ~getAttrs:(fun (td : Parsetree.type_declaration) -> td.ptype_attributes)
+        (* allocating a closure here…*)
+        ~render:(printTypeDeclaration ~recFlag:renderedRecFlag)
+        ~sep:Doc.nil
+        ~forceBreak:(si.pstr_loc.loc_end.pos_lnum > si.pstr_loc.loc_start.pos_lnum)
+        typeDeclarations
+
+    | Pstr_primitive valueDescription ->
+      printValueDescription valueDescription
+
+    | Pstr_attribute (
+        ({txt = "napkinscript.singleLineComment"} | {txt =
+          "napkinscript.multiLineComment"}) as id,
+        PStr [{pstr_desc =
+          Parsetree.Pstr_eval ({pexp_desc = Pexp_constant (Pconst_string
+          (commentTxt, _))}, _)}]
+      ) ->
+        let c = if id.txt = "napkinscript.singleLineComment" then
+            "//" ^ commentTxt
+          else
+            "/*" ^ commentTxt ^ "*/"
+        in
+        Doc.text c
     | _ -> failwith "unsupported"
+
+  (*
+   * type value_description = {
+   *   pval_name : string Asttypes.loc;
+   *   pval_type : Parsetree.core_type;
+   *   pval_prim : string list;
+   *   pval_attributes : Parsetree.attributes;
+   *   pval_loc : Location.t;
+   * }
+   *)
+  and printValueDescription valueDescription =
+    let template = classifyAttributes
+      valueDescription.pval_attributes
+      valueDescription.pval_loc
+    in
+    let valName =
+      let name = Doc.text valueDescription.pval_name.txt in
+      attachCommentsBeforeAfter
+        name
+        template.commentsInside
+        valueDescription.pval_name.loc
+    in
+    let renderedExternal = Doc.group ( Doc.concat [
+      Doc.text "external ";
+      valName;
+      Doc.text ": ";
+      printTypExpr valueDescription.pval_type;
+      Doc.text " =";
+      Doc.indent(Doc.concat [
+        Doc.line;
+          Doc.join
+            ~sep:(Doc.text " ")
+            (List.map (fun s -> Doc.concat [
+              Doc.text "\"";
+              Doc.text s;
+              Doc.text "\"";
+            ])
+            valueDescription.pval_prim);
+      ])
+    ]) in
+    attachAttributeTemplate renderedExternal template
+
+
+  and printCommentAttribute (attr : Parsetree.attribute) = match attr with
+    | ({txt = "napkinscript.singleLineComment"} | {txt = "napkinscript.multiLineComment"}) as id,
+        PStr [{pstr_desc =
+          Parsetree.Pstr_eval ({pexp_desc = Pexp_constant (Pconst_string
+          (commentTxt, _))}, _)}]
+        ->
+        if id.txt = "napkinscript.singleLineComment" then
+          Doc.text ("//" ^ commentTxt)
+          (* Doc.concat [Doc.text ("//" ^ commentTxt); Doc.hardLine] *)
+        else
+          Doc.text ("/*" ^ commentTxt ^ "*/")
+    | _ -> Doc.nil
+
+  and attachCommentsBeforeNode (comments: Parsetree.attribute list) nodeLoc =
+    let open Location in
+    let rec loop (prev : Parsetree.attribute) docs nodes =
+      match nodes with
+      | [] ->
+        let prevLoc = (fst prev).loc in
+        let docs =
+          let lineDiff = nodeLoc.loc_start.pos_lnum - prevLoc.loc_end.pos_lnum in
+          match prev with
+          | ({txt="napkinscript.singleLineComment"}, _) ->
+              if lineDiff > 1 then
+                Doc.hardLine::docs
+              else
+                docs
+          | ({txt="napkinscript.multiLineComment"}, _) ->
+              if lineDiff == 0 then
+                docs
+              else if lineDiff == 1 then
+                Doc.hardLine::docs
+              else (* lineDiff > 1 *)
+                Doc.hardLine::Doc.hardLine::docs
+          | _ ->
+            docs
+        in
+        List.rev docs
+      | (((id, payload) as attr) : Parsetree.attribute)::nodes ->
+        let prevLoc = (fst prev).loc in
+        let currLoc = id.loc in
+        let renderedNode = printCommentAttribute attr in
+        let docs =
+          let lineDiff = currLoc.loc_start.pos_lnum - prevLoc.loc_end.pos_lnum in
+          if lineDiff == 0 then
+            renderedNode::docs
+          else (
+            match prev with
+            | ({txt="napkinscript.singleLineComment"}, _) ->
+                if lineDiff > 1 then
+                  renderedNode::Doc.hardLine::docs
+                else
+                  renderedNode::docs
+            | ({txt="napkinscript.multiLineComment"}, _) ->
+                if lineDiff == 0 then
+                  renderedNode::docs
+                else if lineDiff == 1 then
+                  renderedNode::Doc.hardLine::docs
+                else (* if lineDiff > 1 then *)
+                  renderedNode::Doc.hardLine::Doc.hardLine::docs
+            | _ ->
+              renderedNode::docs
+          )
+        in
+        loop attr docs nodes
+    in
+    match comments with
+    | [] -> Doc.nil
+    | node::nodes ->
+        let docs = [printCommentAttribute node] in
+        Doc.concat (loop node docs nodes)
+
+  (*
+   * type_declaration = {
+   *    ptype_name: string loc;
+   *    ptype_params: (core_type * variance) list;
+   *          (* ('a1,...'an) t; None represents  _*)
+   *    ptype_cstrs: (core_type * core_type * Location.t) list;
+   *          (* ... constraint T1=T1'  ... constraint Tn=Tn' *)
+   *    ptype_kind: type_kind;
+   *    ptype_private: private_flag;   (* = private ... *)
+   *    ptype_manifest: core_type option;  (* = T *)
+   *    ptype_attributes: attributes;   (* ... [@@id1] [@@id2] *)
+   *    ptype_loc: Location.t;
+   * }
+   *
+   *
+   *  type t                     (abstract, no manifest)
+   *  type t = T0                (abstract, manifest=T0)
+   *  type t = C of T | ...      (variant,  no manifest)
+   *  type t = T0 = C of T | ... (variant,  manifest=T0)
+   *  type t = {l: T; ...}       (record,   no manifest)
+   *  type t = T0 = {l : T; ...} (record,   manifest=T0)
+   *  type t = ..                (open,     no manifest)
+   *
+   *
+   * and type_kind =
+   *  | Ptype_abstract
+   *  | Ptype_variant of constructor_declaration list
+   *        (* Invariant: non-empty list *)
+   *  | Ptype_record of label_declaration list
+   *        (* Invariant: non-empty list *)
+   *  | Ptype_open
+   *)
+  and printTypeDeclaration ~recFlag (td : Parsetree.type_declaration) comments i =
+    let prefix = if i > 0 then
+      Doc.text "and "
+    else
+      Doc.concat [Doc.text "type "; recFlag]
+    in
+    let (commentsBeforeParams, commentsAfterParams) = match td.ptype_params with
+    | [] -> (comments, [])
+    | (typ, _)::_ ->
+      let paramsLoc = Hashtbl.find LocationState.diamondTbl typ.ptyp_loc in
+      let {attrsBefore; attrsAfter} = splitBeforeAfterLocation comments paramsLoc in
+      (attrsBefore, attrsAfter)
+    in
+    let typeName =
+      let name = Doc.text td.ptype_name.txt in
+      let nameWithComments = attachCommentsBeforeAfter name commentsBeforeParams td.ptype_name.loc in
+      let nameWithParams = Doc.concat [
+        nameWithComments;
+        match td.ptype_params with
+        | [] -> Doc.nil
+        | params -> printTypeDeclParams params
+      ] in
+      attachCommentsAfter nameWithParams commentsAfterParams
+    in
+    let doc = match (td.ptype_kind, td.ptype_manifest) with
+    (* type t *)
+    | (Ptype_abstract, None) ->
+        Doc.concat [prefix; typeName]
+
+      (* type t = myType *)
+    | (Ptype_abstract, Some typ) ->
+        Doc.concat [
+          prefix;
+          typeName;
+          Doc.text " = ";
+          printTypExpr typ
+        ]
+      (* type t = .. *)
+    | (Ptype_open, _) ->
+      Doc.concat [prefix; typeName; Doc.text " = .."]
+    | (Ptype_variant constrDeclarations, manifest) ->
+      let overMultipleLines = td.ptype_loc.loc_end.pos_lnum > td.ptype_loc.loc_start.pos_lnum in
+      let renderedManifest = match manifest with
+      | Some typ ->
+        Doc.concat [
+          Doc.line;
+          Doc.indent (
+            Doc.concat [Doc.text "= "; printTypExpr typ]
+          )
+        ]
+      | None -> Doc.nil
+      in
+      Doc.concat [
+        prefix;
+        typeName;
+        renderedManifest;
+        Doc.breakableGroup ~forceBreak:overMultipleLines (
+          Doc.concat [
+            Doc.text " = ";
+            Doc.indent (
+              Doc.concat [
+                Doc.softLine;
+                renderSequenceWhitespace
+                  ~getNodeLoc:(fun cd -> cd.Parsetree.pcd_loc)
+                  ~getSpan:(fun cd -> {cd.Parsetree.pcd_loc with
+                     loc_start = match cd.pcd_attributes with
+                     | (id, _)::_ -> id.loc.loc_start
+                     | _ -> cd.pcd_loc.loc_start
+                  })
+                  ~getAttrs:(fun cd -> cd.Parsetree.pcd_attributes)
+                  ~render:printConstructorDeclaration
+                  ~sep:Doc.nil
+                  ~forceBreak:overMultipleLines
+                  constrDeclarations;
+              ]
+            )
+          ])
+      ]
+
+   (* type t = {l: T; ...}       (record,   no manifest)
+    * type t = T0 = {l : T; ...} (record,   manifest=T0) *)
+    | (Ptype_record labelDeclarations, manifest) ->
+      (* hmm, is this the right heuristic… *)
+      let forceBreak = td.ptype_loc.loc_start.pos_lnum < td.ptype_loc.loc_end.pos_lnum  in
+      let renderedManifest = match manifest with
+      | Some typExpr -> Doc.concat [
+          Doc.text " = ";
+          printTypExpr typExpr;
+        ]
+      | None -> Doc.nil
+      in
+      Doc.breakableGroup ~forceBreak (
+        Doc.concat [
+          prefix;
+          typeName;
+          renderedManifest;
+          Doc.text " = ";
+          Doc.text "{";
+          Doc.indent (
+            Doc.concat [
+              Doc.softLine;
+              renderSequence
+                ~getNodeLoc:(fun n -> n.Parsetree.pld_loc)
+                ~render:printLabelDeclaration
+                ~sep:(Doc.text ",")
+                ~getAttrs:(fun n -> n.Parsetree.pld_attributes)
+                labelDeclarations
+            ]
+          );
+          Doc.softLine;
+          Doc.text "}";
+        ]
+      )
+    in
+    Doc.group doc
+
+  (* (core_type * variance) list *)
+  and printTypeDeclParams (typeParams : (Parsetree.core_type * Asttypes.variance) list) =
+    Doc.group (
+    Doc.concat [
+      Doc.text "<";
+      Doc.indent (
+        Doc.concat [
+          Doc.softLine;
+          renderSequence
+            ~getNodeLoc:(fun (typ, _) -> typ.Parsetree.ptyp_loc)
+            ~render:(fun (typ, variance) _ _ ->
+              let renderedVariance = match variance with
+              | Asttypes.Covariant -> Doc.text "+"
+              | Contravariant -> Doc.text "-"
+              | _ -> Doc.nil
+              in
+              Doc.concat [renderedVariance; printTypExpr typ]
+            )
+            ~sep:(Doc.text ",")
+            ~getAttrs:(fun (typ, _)-> typ.Parsetree.ptyp_attributes)
+            typeParams
+        ]
+      );
+      Doc.softLine;
+      Doc.text ">";
+    ])
+
+  and renderSequence: 'a. getNodeLoc:('a -> Location.t)
+    -> render:('a -> Parsetree.attributes -> int ->Doc.t)
+    -> sep:Doc.t
+    -> getAttrs:('a -> Parsetree.attributes)
+    -> 'a list
+    -> Doc.t
+  = fun ~getNodeLoc ~render ~sep ~getAttrs nodes ->
+    let open Location in
+
+    let rec loop i docs nodes =
+      match nodes with
+      | [] -> Doc.nil
+      | [node] ->
+        let nodeLoc = getNodeLoc node in
+        let attributeTemplate = classifyAttributes (getAttrs node) nodeLoc in
+        let renderedNode =
+          let doc = render node attributeTemplate.commentsInside i in
+          Doc.concat [doc; Doc.ifBreaks sep Doc.nil]
+        in
+        let renderedNodeWithAttrs = attachAttributeTemplate renderedNode attributeTemplate in
+        Doc.concat (List.rev (renderedNodeWithAttrs::docs))
+      | node::nodes ->
+        let nodeLoc = getNodeLoc node in
+        let attributeTemplate = classifyAttributes (getAttrs node) nodeLoc in
+        let renderedNode =
+          let doc = render node attributeTemplate.commentsInside i in
+          Doc.concat [doc; sep]
+        in
+        let renderedNodeWithAttrs = attachAttributeTemplate renderedNode attributeTemplate in
+        let doc = Doc.concat [renderedNodeWithAttrs; Doc.line] in
+        loop (i + 1) (doc::docs) nodes
+    in
+    loop 0 [] nodes
+
+    (*
+     * {
+     *  pcd_name: string loc;
+     *  pcd_args: constructor_arguments;
+     *  pcd_res: core_type option;
+     *  pcd_loc: Location.t;
+     *  pcd_attributes: attributes; (* C of ... [@id1] [@id2] *)
+     * }
+     *)
+  and printConstructorDeclaration (cd : Parsetree.constructor_declaration) comments i =
+    let constrName =
+      let name = Doc.text cd.pcd_name.txt in
+      attachCommentsBeforeAfter name comments cd.pcd_name.loc
+    in
+    let bar = if i > 0 then Doc.text "| " else
+      Doc.ifBreaks (Doc.text "| ") Doc.nil
+    in
+    let renderedConstrDecl = match cd.pcd_args with
+    | Pcstr_tuple [] -> constrName
+    | constructorArgs -> Doc.group(
+        Doc.indent(
+          Doc.concat([
+            constrName;
+            printConstructorArguments constructorArgs;
+          ])
+        )
+      )
+    in
+    let gadt = match cd.pcd_res with
+    | Some(typExpr) ->
+      Doc.concat [
+        Doc.text ": ";
+        printTypExpr typExpr
+      ]
+    | None -> Doc.nil
+    in
+    Doc.concat [bar; renderedConstrDecl; gadt]
+
+  (*
+   * constructor_arguments =
+   *   | Pcstr_tuple of core_type list
+   *   | Pcstr_record of label_declaration list
+   *)
+  and printConstructorArguments (constrArgs : Parsetree.constructor_arguments) =
+    match constrArgs with
+    | Pcstr_tuple types ->
+      Doc.breakableGroup ~forceBreak:true (
+        Doc.concat([
+          Doc.text "(";
+          Doc.softLine;
+          renderSequence
+            ~getNodeLoc:(fun n -> n.Parsetree.ptyp_loc)
+            ~render:(fun t _comments _i -> printTypExpr t)
+            ~sep:(Doc.text ",")
+            ~getAttrs:(fun n -> n.Parsetree.ptyp_attributes)
+            types;
+          Doc.softLine;
+          Doc.text ")";
+        ])
+      );
+    | Pcstr_record labelDeclarations ->
+      Doc.breakableGroup ~forceBreak:true (
+      Doc.concat [
+        Doc.text "({";
+        Doc.indent (
+          Doc.concat [
+            Doc.softLine;
+            renderSequence
+              ~getNodeLoc:(fun n -> n.Parsetree.pld_loc)
+              ~render:printLabelDeclaration
+              ~sep:(Doc.text ",")
+              ~getAttrs:(fun n -> n.Parsetree.pld_attributes)
+              labelDeclarations
+          ]
+        );
+        Doc.softLine;
+        Doc.text "})";
+      ])
+
+    and printCommentLayer (attrs : Parsetree.attributes) =
+      let open Location in
+      let rec process acc prev (attrs : Parsetree.attributes) =
+        match attrs with
+        | [] -> List.rev acc
+        | attr::attrs ->
+          let currentLoc = (fst attr).loc in
+          let renderedNode = printCommentAttribute attr in
+          match prev with
+          | ({txt = "napkinscript.singleLineComment"; loc = prevLoc}, _) ->
+              let lineDiff = currentLoc.loc_start.pos_lnum - prevLoc.loc_end.pos_lnum in
+              if lineDiff > 1 then
+                process (renderedNode::Doc.hardLine::Doc.hardLine::acc) attr attrs
+              else if lineDiff == 1 then
+                process (renderedNode::Doc.hardLine::acc) attr attrs
+              else
+                process (renderedNode::(Doc.text " ")::acc) attr attrs
+          | ({txt = "napkinscript.multiLineComment"; loc = prevLoc}, _) ->
+              let lineDiff = currentLoc.loc_start.pos_lnum - prevLoc.loc_end.pos_lnum in
+              let acc = if lineDiff > 1 then
+                  Doc.hardLine::Doc.hardLine::acc
+                else if lineDiff == 1 then
+                  Doc.hardLine::acc
+                else
+                  (Doc.text " ")::acc
+              in
+              process (renderedNode::acc) attr attrs
+          | _ -> assert false
+      in
+      match attrs with
+      | [] -> Doc.nil
+      | attr::attrs -> Doc.concat (
+          process [printCommentAttribute attr] attr attrs
+        )
+
+    (*
+     * {
+     *  pld_name: string loc;
+     *  pld_mutable: mutable_flag;
+     *  pld_type: core_type;
+     *  pld_loc: Location.t;
+     *  pld_attributes: attributes; (* l : T [@id1] [@id2] *)
+     * }
+     *)
+  and printLabelDeclaration (lblDecl : Parsetree.label_declaration) comments i =
+    let mutableFlag = match lblDecl.pld_mutable with
+    | Mutable -> Doc.text "mutable "
+    | Immutable -> Doc.nil
+    in
+    let lblName =
+      let name = Doc.text lblDecl.pld_name.txt in
+      attachCommentsBeforeAfter name comments lblDecl.pld_name.loc
+    in
+    Doc.group (Doc.concat [
+      mutableFlag;
+      lblName;
+      Doc.text ":";
+      Doc.indent (
+        Doc.concat [
+          Doc.line;
+          printTypExpr lblDecl.pld_type
+        ]
+      )
+    ])
+    (* in *)
+    (* attachAttributeTemplate renderedNode template *)
+
+  and attachCommentsBeforeAfter doc comments loc =
+    let {attrsBefore; attrsAfter} = splitBeforeAfterLocation comments loc in
+    let doc = match attrsBefore with
+    | [] -> doc
+    | attrs -> Doc.concat [
+        Doc.join ~sep:(Doc.text " ") (List.map printAttribute attrsBefore);
+        Doc.text " ";
+        doc;
+      ]
+    in
+    match attrsAfter with
+    | [] -> doc
+    | attrs -> Doc.concat [
+        doc;
+        Doc.text " ";
+        Doc.join ~sep:(Doc.text " ") (List.map printAttribute attrsAfter);
+        ]
+
+  and attachCommentsAfter doc comments =
+    match comments with
+    | [] -> doc
+    | attrs -> Doc.concat [
+        doc;
+        Doc.text " ";
+        Doc.join ~sep:(Doc.text " ") (List.map printAttribute comments);
+      ]
+
+  and attachAttributeTemplate doc template =
+    let doc = match template.leadingAttributes with
+    | [] -> doc
+    | attrs -> doc
+      (* Doc.concat [ *)
+        (* Doc.join ~sep:Doc.line (List.map printAttribute attrs); *)
+        (* Doc.line; *)
+        (* doc; *)
+      (* ] *)
+    in
+    let doc = match template.trailingComments with
+    | [] -> doc
+    | attrs ->
+        Doc.concat [
+        doc;
+        Doc.text " ";
+        Doc.lineSuffix(
+          Doc.join ~sep:(Doc.text " ") (List.map printCommentAttribute attrs)
+        )
+      ]
+    in
+    let doc = match template.attributesAbove with
+    | [] -> doc
+    | attrs -> doc
+      (* Doc.concat [ *)
+        (* Doc.group(Doc.join ~sep:Doc.line (List.map printAttribute attrs)); *)
+        (* Doc.line; *)
+        (* doc *)
+      (* ] *)
+    in
+    let doc = match template.commentsAbove with
+    | [] -> doc
+    | attrs -> doc
+      (* Doc.concat [printCommentLayer template.commentsAbove; Doc.hardLine; doc] *)
+    in
+    let doc = match template.commentsBelow with
+    | [] -> doc
+    | attrs ->
+      Doc.concat [doc; Doc.hardLine; printCommentLayer template.commentsBelow]
+    in
+    doc
+
+  and printTypExpr (typExpr : Parsetree.core_type) =
+    let renderedType = printTypExprWithoutAttributes typExpr in
+    match typExpr.ptyp_attributes with
+    | [] -> renderedType
+    | attrs ->
+      let {attrsBefore; attrsAfter} =
+        splitBeforeAfterLocation attrs typExpr.ptyp_loc
+      in
+      let renderedType = match attrsBefore with
+      | [] -> renderedType
+      | attrs ->
+        Doc.concat [
+          Doc.join ~sep:(Doc.text " ") (List.map printAttribute attrs);
+          Doc.text " ";
+          renderedType
+        ]
+      in
+      begin match attrsAfter with
+      | [] -> renderedType
+      | attrs ->
+        Doc.concat [
+          renderedType;
+          Doc.text " ";
+          Doc.join ~sep:(Doc.text " ") (List.map printAttribute attrs);
+        ]
+      end
+
+  and printTypExprWithoutAttributes (typExpr : Parsetree.core_type) =
+    let renderedType = match typExpr.ptyp_desc with
+    | Ptyp_any -> Doc.text "_"
+    | Ptyp_var var -> Doc.text ("'" ^ var)
+    | Ptyp_extension(extension) ->
+      printExtension extension
+    | Ptyp_alias(typ, alias) ->
+      Doc.concat [printTypExpr typ; Doc.text " as "; Doc.text alias]
+    | Ptyp_constr(longidentLoc, constrArgs) ->
+        let constrName = printLongident longidentLoc.txt in
+        begin match constrArgs with
+        | [] -> constrName
+        | args -> Doc.group(
+          Doc.concat([
+            constrName;
+            Doc.text "<";
+            Doc.indent (
+              Doc.concat [
+                Doc.softLine;
+                renderSequence
+                  ~getNodeLoc:(fun n -> n.Parsetree.ptyp_loc)
+                  ~render:(fun n _ _ -> printTypExprWithoutAttributes n)
+                  ~sep:(Doc.text ",")
+                  ~getAttrs:(fun n -> n.Parsetree.ptyp_attributes)
+                  args;
+              ]
+            );
+            Doc.softLine;
+            Doc.text ">";
+          ])
+        )
+        end
+    | Ptyp_arrow _ ->
+      let rec parseArrowParsetree acc typ = match (typ : Parsetree.core_type) with
+      | {ptyp_desc = Ptyp_arrow (lbl, typ1, typ2)} ->
+        let arg = (lbl, typ1) in
+        parseArrowParsetree (arg::acc) typ2
+      | typ ->
+        (acc, typ)
+      in
+      let (args, returnType) = parseArrowParsetree [] typExpr in
+      let renderedArgs = match args with
+      | [] -> Doc.nil
+      | [(_, n)] ->  printTypExprWithoutAttributes n
+      | args -> Doc.concat [
+        Doc.text "(";
+        Doc.indent (
+          Doc.concat [
+            Doc.softLine;
+            renderSequence
+              ~getNodeLoc:(fun (_, n) -> n.Parsetree.ptyp_loc)
+              ~render:(fun (_, n) _ _ -> printTypExprWithoutAttributes n)
+              ~sep:(Doc.text ",")
+              ~getAttrs:(fun (_, n) -> n.Parsetree.ptyp_attributes)
+              args;
+          ]
+        );
+        Doc.softLine;
+        Doc.text ")";
+      ]
+      in
+      Doc.concat [
+        renderedArgs;
+        Doc.text " => ";
+        printTypExpr returnType;
+      ]
+
+    | Ptyp_tuple types ->
+      Doc.group(
+        Doc.concat([
+          Doc.text "/";
+          Doc.indent (
+            Doc.concat([
+              Doc.softLine;
+              renderSequence
+                ~getNodeLoc:(fun n -> n.Parsetree.ptyp_loc)
+                ~render:(fun n _ _ -> printTypExprWithoutAttributes n)
+                ~sep:(Doc.text ",")
+                ~getAttrs:(fun n -> n.Parsetree.ptyp_attributes)
+                types;
+            ])
+          );
+          Doc.ifBreaks (Doc.text ",") Doc.nil;
+          Doc.softLine;
+          Doc.text "/";
+        ])
+      )
+    | _ -> failwith "unimplemented"
+    in
+    renderedType
+
 
   (*
    * {
@@ -6863,26 +8655,49 @@ module Printer = struct
    *   pvb_loc: Location.t;
    * }
    *)
-  and printValueBinding vb =
+  and printValueBinding ~recFlag vb _comments i =
+    let prefix = if i > 0 then Doc.text "and " else
+      Doc.concat [Doc.text "let "; recFlag]
+    in
     Doc.concat [
-      printPattern vb.pvb_pat;
+      prefix;
+      printPattern vb.Parsetree.pvb_pat;
       Doc.text " = ";
-      printExpression vb.pvb_expr;
+      printExpression vb.pvb_expr
     ]
+   (* let { *)
+      (* commentsBefore; commentsAfter; attrs; *)
+    (* } = partitionAttributes vb.pvb_attributes vb.pvb_loc in *)
+    (* let comments = attachCommentsBeforeNode commentsBefore vb.pvb_loc in *)
+    (* Doc.concat [ *)
+      (* comments; *)
+      (* Doc.group (Doc.join ~sep:Doc.line (List.map printAttribute attrs)); *)
+      (* begin match attrs with | [] -> Doc.nil | _ -> Doc.line end; *)
+
+    (* ] *)
+
+  and printAttribute (attr : Parsetree.attribute) =
+    match attr with
+    | ({txt = "napkinscript.singleLineComment"} | {txt = "napkinscript.multiLineComment"}) as id,
+        PStr [{pstr_desc =
+          Parsetree.Pstr_eval ({pexp_desc = Pexp_constant (Pconst_string
+          (commentTxt, _))}, _)}]
+        ->
+        if id.txt = "napkinscript.singleLineComment" then
+          Doc.concat [Doc.text ("//" ^ commentTxt); Doc.hardLine]
+        else
+          Doc.text ("/*" ^ commentTxt ^ "*/")
+    | (id, _) -> Doc.text ("@" ^ id.txt)
+
 
   and printExtension (stringLoc, _payload) =
     Doc.text ("%" ^ stringLoc.Location.txt)
 
   and printPattern (p : Parsetree.pattern) =
-    match p.ppat_desc with
+    let renderedPattern = match p.ppat_desc with
     | Ppat_any -> Doc.text "_"
     | Ppat_var stringLoc ->
-        Doc.group (
-          Doc.concat([
-            Doc.text (stringLoc.txt);
-            Doc.softLine;
-          ])
-        )
+      Doc.text (stringLoc.txt)
     | Ppat_constant c -> printConstant c
     | Ppat_tuple patterns ->
       Doc.group(
@@ -7051,6 +8866,21 @@ module Printer = struct
         Doc.text aliasLoc.txt
       ])
     | _ -> failwith "unsupported pattern"
+    in
+    match p.ppat_attributes with
+    | [] -> renderedPattern
+    | attrs ->
+      let {
+        commentsBefore; commentsAfter; attrs;
+      } = partitionAttributes attrs p.ppat_loc in
+      let comments = attachCommentsBeforeNode commentsBefore p.ppat_loc in
+      Doc.concat [
+        comments;
+        Doc.group (Doc.join ~sep:Doc.line (List.map printAttribute attrs));
+        Doc.line;
+        renderedPattern;
+        Doc.group (Doc.join ~sep:Doc.line (List.map printAttribute commentsAfter));
+      ]
 
   and printPatternRecordRow row =
     match row with
@@ -7072,12 +8902,108 @@ module Printer = struct
 
   and printExpression (e : Parsetree.expression) =
     match e.pexp_desc with
+      (* 1 or "string" or 3.14 *)
     | Parsetree.Pexp_constant c -> printConstant c
+     (* foo *)
+    | Pexp_ident longidentLoc ->
+      printLongident longidentLoc.txt
+
+      (* expr.longident *)
+    | Pexp_field (expr, longidentLoc) ->
+      Doc.concat [
+        printExpression expr;
+        Doc.text ".";
+        printLongident longidentLoc.txt
+      ]
+
+      (* expr.longident = expr2 *)
+    | Pexp_setfield (expr1, longidentLoc, expr2) ->
+      Doc.concat [
+        printExpression expr1;
+        Doc.text ".";
+        printLongident longidentLoc.txt;
+        Doc.text " = ";
+        printExpression expr2;
+      ]
+
+      (* [expr1, expr2, expr3] *)
+    | Pexp_array exprs ->
+      Doc.group(
+        Doc.concat [
+          Doc.text "[";
+          Doc.indent (
+            Doc.concat [
+              Doc.softLine;
+              Doc.join ~sep:(Doc.concat [Doc.text ","; Doc.line])
+               (List.map printExpression exprs)
+            ]
+          );
+          Doc.line;
+          Doc.text "]";
+        ]
+      )
+
+      (* if expr1 { expr2 } else { optionalExpr3 } *)
+    | Pexp_ifthenelse (expr1, expr2, _optionalExpr3) ->
+        Doc.group (
+          Doc.concat [
+            Doc.text "if ";
+            Doc.group (
+              Doc.indent (
+                printExpression expr1
+              )
+            );
+            Doc.text " {";
+            Doc.indent (
+              Doc.concat [
+                Doc.hardLine;
+                printExpression expr2;
+              ]
+            );
+            Doc.hardLine;
+            Doc.text "}";
+          ]
+        )
+
+      (* switch switchExpr { cases } *)
+    | Pexp_match (switchExpr, cases) ->
+      Doc.concat [
+        Doc.text "switch ";
+        printExpression switchExpr;
+        Doc.concat [
+          Doc.text " {";
+          Doc.hardLine;
+          interleaveWhitespace
+            ~getLoc:(fun case -> case.Parsetree.pc_lhs.ppat_loc)
+            ~render:(fun case i -> printCase case)
+            ~sep:Doc.hardLine
+            cases;
+          Doc.hardLine;
+          Doc.text "}";
+        ]
+      ]
     | _ -> failwith "unsupported expression"
 
+
+   (* { *)
+     (* pc_lhs: pattern; *)
+     (* pc_guard: expression option; *)
+     (* pc_rhs: expression; *)
+    (* } *)
+  and printCase (case : Parsetree.case) =
+    Doc.concat [
+      Doc.text "| ";
+      printPattern case.pc_lhs;
+      Doc.text " => ";
+      Doc.softLine;
+      printExpression case.pc_rhs;
+    ]
+
   let printStructure (s: Parsetree.structure) =
-    let stringDoc = Doc.toString ~width:80 (printStructure s) in
-    print_endline stringDoc;
+    let doc = printStructure s in
+    Doc.debug doc;
+    let renderedDoc = Doc.toString ~width:80 doc in
+    print_endline renderedDoc;
     print_newline()
 
 end
@@ -7137,7 +9063,7 @@ end = struct
         Diagnostics.makeReport p.diagnostics (Bytes.to_string p.scanner.src)
       )
     in
-    (ast, report)
+    (ast, report, p.comments)
 
   let parseImplementation filename =
     parseFile Structure filename
@@ -7146,29 +9072,31 @@ end = struct
     parseFile Signature filename
 
   let process parseFn printFn recover filename =
-    let (ast, report) =
+    let (ast, report, comments) =
       Profile.record ~name:"parser" (fun () -> parseFn filename)
     in
     match report with
     | Some report when recover = true ->
-      printFn ast;
+      printFn ast comments;
       prerr_string report;
     | Some report ->
       prerr_string report;
       exit 1
     | None ->
-      printFn ast
+      printFn ast comments
 
   type action =
     | ProcessImplementation
     | ProcessInterface
 
-  let printImplementation ~target filename ast =
+  let printImplementation ~target filename ast comments =
     match target with
     | "ml" | "ocaml" ->
         Pprintast.structure Format.std_formatter ast
     | "ns" | "napkinscript" ->
-        Printer.printStructure ast
+        Printer.printStructure (
+          AstUtils.mergeCommentsIntoStructure comments ast
+        )
     | "ast" -> Printast.implementation Format.std_formatter ast
     | _ -> (* default binary *)
       if !Clflags.ancient then (
@@ -7182,7 +9110,7 @@ end = struct
 				output_value stdout ast
       )
 
-  let printInterface ~target filename ast =
+  let printInterface ~target filename ast comments =
     match target with
     | "ml" | "ocaml" -> Pprintast.signature Format.std_formatter ast
     (* | "ns" | "napkinscript" -> PPrin *)
