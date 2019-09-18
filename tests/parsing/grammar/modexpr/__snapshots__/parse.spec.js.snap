@@ -20,6 +20,19 @@ exports[`constrained.js 1`] = `
 include (X : MyMod)"
 `;
 
+exports[`firstClassModules.js 1`] = `
+"module Device = (val
+  (let deviceName = parseCmdline () in
+   try Hashtbl.find devices deviceName with | Not_found -> exit 2 : (module
+                                                                    Device)))
+let draw_using_device device_name picture =
+  let module Device = (val
+    (Hashtbl.find devices device_name : (module DEVICE))) in
+    Device.draw picture
+module New_three = (val (three : (module X_int)))
+let to_int m = let module M = (val (m : (module X_int))) in M.x"
+`;
+
 exports[`functor.js 1`] = `
 "module F(A:X)(B:Y) = A
 module F(A:X)(B:Y) = A

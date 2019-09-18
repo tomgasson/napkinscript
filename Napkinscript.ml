@@ -792,6 +792,7 @@ module Grammar = struct
     | TypeConstrName
     | TypeParams
     | TypeParam
+    | PackageConstraint
 
     | TypeRepresentation
 
@@ -867,6 +868,7 @@ module Grammar = struct
     | Primitive -> "an external primitive"
     | AtomicTypExpr -> "a type"
     | ListExpr -> "an ocaml list expr"
+    | PackageConstraint -> "a package constraint"
 
   let isSignatureItemStart = function
     | Token.At
@@ -901,6 +903,7 @@ module Grammar = struct
     | Lbrace
     | Forwardslash
     | LessThan
+    | Module
     | Percent -> true
     | _ -> false
 
@@ -918,7 +921,7 @@ module Grammar = struct
     | Lparen | List | Lbracket | Lbrace | Forwardslash
     | LessThan
     | Minus | MinusDot | Plus | PlusDot | Bang | Band
-    | Percent | At
+    | Percent | At | Module
     | If | Switch | While | For | Assert | Lazy | Try -> true
     | _ -> false
 
@@ -946,7 +949,7 @@ module Grammar = struct
     | Lparen | Lbracket | Lbrace | Forwardslash | List
     | Underscore
     | Lident _ | Uident _
-    | Exception | Lazy | Percent
+    | Exception | Lazy | Percent | Module
     | At -> true
     | _ -> false
 
@@ -981,6 +984,7 @@ module Grammar = struct
     | Forwardslash
     | Lparen
     | Uident _ | Lident _ | List
+    | Module
     | Percent
     | Lbrace -> true
     | _ -> false
@@ -1063,6 +1067,7 @@ module Grammar = struct
     | PatternRecord -> isPatternRecordItemStart token
     | Attribute -> isAttributeStart token
     | TypeConstraint -> token = Constraint
+    | PackageConstraint -> token = And
     | ConstructorDeclaration -> token = Bar
     | Primitive -> begin match token with Token.String _ -> true | _ -> false end
     | JsxAttribute -> isJsxAttributeStart token
@@ -1092,6 +1097,7 @@ module Grammar = struct
     | ParameterList -> token = EqualGreater || token = Lbrace
     | Attribute -> token <> At
     | TypeConstraint -> token <> Constraint
+    | PackageConstraint -> token <> And
     | ConstructorDeclaration -> token <> Bar
     | Primitive -> isStructureItemStart token || token = Semicolon
     | JsxAttribute -> token = Forwardslash || token = GreaterThan
@@ -3202,6 +3208,8 @@ Solution: you need to pull out each field you want explicitly."
       Ast_helper.Pat.lazy_ ~loc ~attrs pat
     | List ->
       parseListPattern ~attrs p
+    | Module ->
+      parseModulePattern ~attrs p
     | Percent ->
       let (loc, extension) = parseExtension p in
       Ast_helper.Pat.extension ~loc ~attrs extension
@@ -3356,6 +3364,37 @@ Solution: you need to pull out each field you want explicitly."
       (true, parseConstrainedPattern p)
     | _ ->
       (false, parseConstrainedPattern p)
+
+  and parseModulePattern ~attrs p =
+    let startPos = p.Parser.startPos in
+    Parser.expect Module p;
+    Parser.expect Lparen p;
+    let uident = match p.token with
+    | Uident uident ->
+      let loc = mkLoc p.startPos p.endPos in
+      Parser.next p;
+      Location.mkloc uident loc
+    | _ -> (* TODO: error recovery *)
+      Location.mknoloc "_"
+    in
+    begin match p.token with
+    | Colon ->
+      Parser.next p;
+      let packageType = parsePackageType p in
+      Parser.expect Rparen p;
+      let loc = mkLoc startPos p.prevEndPos in
+      let unpack = Ast_helper.Pat.unpack ~loc:uident.loc uident in
+      Ast_helper.Pat.constraint_
+        ~loc
+        ~attrs
+        unpack
+        packageType
+    | _ ->
+      Parser.expect Rparen p;
+      let loc = mkLoc startPos p.prevEndPos in
+      Ast_helper.Pat.unpack ~loc ~attrs uident
+    end
+
 
   and parseListPattern ~attrs p =
     let startPos = p.Parser.startPos in
@@ -3655,6 +3694,9 @@ Solution: you need to pull out each field you want explicitly."
         end
       | List ->
         parseListExpr p
+      | Module ->
+        Parser.next p;
+        parseFirstClassModuleExpr p
       | Lbracket ->
         parseArrayExp p
       | Lbrace ->
@@ -3677,6 +3719,29 @@ Solution: you need to pull out each field you want explicitly."
     in
     Parser.eatBreadcrumb p;
     expr
+
+  (* module(module-expr)
+   * module(module-expr : package-type) *)
+  and parseFirstClassModuleExpr p =
+    let startPos = p.Parser.startPos in
+    Parser.expect Lparen p;
+
+    let modExpr = parseModuleExpr p in
+    let modEndLoc = p.prevEndPos in
+    begin match p.Parser.token with
+    | Colon ->
+      Parser.next p;
+      let packageType = parsePackageType p in
+      Parser.expect Rparen p;
+      let loc = mkLoc startPos modEndLoc in
+      let firstClassModule = Ast_helper.Exp.pack ~loc modExpr in
+      let loc = mkLoc startPos p.prevEndPos in
+      Ast_helper.Exp.constraint_ ~loc firstClassModule packageType
+    | _ ->
+      Parser.expect Rparen p;
+      let loc = mkLoc startPos p.prevEndPos in
+      Ast_helper.Exp.pack ~loc modExpr
+    end
 
   and parseBracketAccess p expr startPos =
     Parser.leaveBreadcrumb p Grammar.ExprArrayAccess;
@@ -4444,21 +4509,26 @@ Solution: you need to pull out each field you want explicitly."
     match p.Parser.token with
     | Module ->
       Parser.next p;
-      let name = match p.Parser.token with
-      | Uident ident ->
-        Parser.next p;
-        let loc = mkLoc startPos p.prevEndPos in
-        Location.mkloc ident loc
-      | t ->
-        Parser.err p (Diagnostics.uident t);
-        Location.mknoloc "_"
-      in
-      let body = parseModuleBindingBody p in
-      Parser.optional p Semicolon |> ignore;
-      let expr = parseExprBlock p in
-      let endPos = p.prevEndPos in
-      let loc = mkLoc startPos endPos in
-      Ast_helper.Exp.letmodule ~loc name body expr
+      begin match p.token with
+      | Lparen ->
+        parseFirstClassModuleExpr p
+      | _ ->
+        let name = match p.Parser.token with
+        | Uident ident ->
+          Parser.next p;
+          let loc = mkLoc startPos p.prevEndPos in
+          Location.mkloc ident loc
+        | t ->
+          Parser.err p (Diagnostics.uident t);
+          Location.mknoloc "_"
+        in
+        let body = parseModuleBindingBody p in
+        Parser.optional p Semicolon |> ignore;
+        let expr = parseExprBlock p in
+        let endPos = p.prevEndPos in
+        let loc = mkLoc startPos endPos in
+        Ast_helper.Exp.letmodule ~loc name body expr
+      end
     | Exception ->
       let extensionConstructor = parseExceptionDef ~attrs:[] p in
       Parser.optional p Semicolon |> ignore;
@@ -5066,6 +5136,12 @@ Solution: you need to pull out each field you want explicitly."
       let constr = parseValuePath p in
       let args =  parseTypeConstructorArgs p in
       Ast_helper.Typ.constr ~loc:(mkLoc startPos p.prevEndPos) ~attrs constr args
+    | Module ->
+      Parser.next p;
+      Parser.expect Lparen p;
+      let packageType = parsePackageType p in
+      Parser.expect Rparen p;
+      packageType
     | Percent ->
       let (loc, extension) = parseExtension p in
       Ast_helper.Typ.extension ~loc extension
@@ -5082,6 +5158,44 @@ Solution: you need to pull out each field you want explicitly."
     in
     Parser.eatBreadcrumb p;
     typ
+
+  (* package-type	::=
+      | modtype-path
+      ∣ modtype-path with package-constraint  { and package-constraint }
+   *)
+  and parsePackageType p =
+    let attrs = parseAttributes p in
+    let startPos = p.Parser.startPos in
+    let modTypePath = parseModuleLongIdent p in
+    begin match p.Parser.token with
+    | With ->
+      Parser.next p;
+      let constraints = parsePackageConstraints p in
+      let loc = mkLoc startPos p.prevEndPos in
+      Ast_helper.Typ.package ~loc ~attrs modTypePath constraints
+    | _ ->
+      let loc = mkLoc startPos p.prevEndPos in
+      Ast_helper.Typ.package ~loc ~attrs modTypePath []
+    end
+
+  (* package-constraint  { and package-constraint } *)
+  and parsePackageConstraints p =
+    let first = parsePackageConstraint p in
+    let rest = parseList
+      ~grammar:Grammar.PackageConstraint
+      ~f:parsePackageConstraint
+      p
+    in
+    first::rest
+
+  (* type typeconstr = typexpr *)
+  and parsePackageConstraint p =
+    let _ = Parser.optional p And in
+    Parser.expect Typ p;
+    let typeConstr = parseValuePath p in
+    Parser.expect Equal p;
+    let typ = parseTypExpr p in
+    (typeConstr, typ)
 
   and parseBsObjectType p =
     let startPos = p.Parser.startPos in
@@ -6101,6 +6215,26 @@ Solution: you need to pull out each field you want explicitly."
       let modExpr = parseConstrainedModExpr p in
       Parser.expect Rparen p;
       modExpr
+    | Lident "unpack" -> (* TODO: should this be made a keyword?? *)
+      Parser.next p;
+      Parser.expect Lparen p;
+      let expr = parseExpr p in
+      begin match p.Parser.token with
+      | Colon ->
+        Parser.next p;
+        let packageType = parsePackageType p in
+        Parser.expect Rparen p;
+        let loc = mkLoc startPos p.prevEndPos in
+        let constraintExpr = Ast_helper.Exp.constraint_
+          ~loc
+          expr packageType
+        in
+        Ast_helper.Mod.unpack ~loc constraintExpr
+      | _ ->
+        Parser.expect Rparen p;
+        let loc = mkLoc startPos p.prevEndPos in
+        Ast_helper.Mod.unpack ~loc expr
+      end
     | Percent ->
       let (loc, extension) = parseExtension p in
       Ast_helper.Mod.extension ~loc extension

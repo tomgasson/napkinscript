@@ -82,6 +82,17 @@ let (t : [%raw.typ ]) = x
 let (t : [%raw.typ \\"ex\\"]) = x"
 `;
 
+exports[`firstClassModules.js 1`] = `
+"type nonrec t = (module Hashmap)
+type nonrec t = (module Hashmap with type key = string)
+type nonrec t = (module Hashmap with type key = string and type value = int)
+type nonrec toValueLikeInstance =
+  'a t -> (module RxValueLikeInstance.S with type a = 'a)
+type nonrec 'a t = (module Test with type a = 'a)
+type nonrec t = (module Console) ref
+let (devices : (string, (module DEVICE)) Hastbl.t) = Hashtbl.creat 17"
+`;
+
 exports[`poly.js 1`] = `
 "external getLogger :
   unit ->

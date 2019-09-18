@@ -261,6 +261,43 @@ exports[`extension.js 1`] = `
 let x = ([%bs.raw \\"1\\"]) + ([%bs.raw \\"2\\"])"
 `;
 
+exports[`firstClassModule.js 1`] = `
+"let makeSet (type s) cmp =
+  let module S = (Set.Make)(struct type nonrec t = s
+                                   let compare = cmp end) in ((module
+    S) : (module Set.S with type elt = s))
+let three = ((module Three) : (module X_int))
+let numbers = [|three;(module Four)|]
+let numbers = (three, (module Four))
+let numbers = [three; (module Four)]
+let numbers = [|three;(module struct let x = 4 end)|]
+let numbers = (three, (module struct let x = 4 end))
+let numbers = [three; (module struct let x = 4 end)]
+let plus m1 m2 = ((module
+  struct let x = (to_int m1) + (to_int m2) end) : (module X_int))
+let plus m1 m2 = ((module
+  struct let x = (to_int m1) + (to_int m2) end) : (module X_int))
+let unique_instance = ((module
+  struct module Query_handler = Unique
+         let this = Unique.create 0 end) : (module Query_handler_instance))
+let build_instance (type a)
+  ((module Q)  : (module Query_handler with type config = a)) config =
+  ((module
+  struct module Query_handler = Q
+         let this = Q.create config end) : (module Query_handler_instance))
+let build_instance (type a)
+  ((module Q)  : (module Query_handler with type config = a)) config =
+  ((module
+  struct module Query_handler = Q
+         let this = Q.create config end) : (module Query_handler_instance))
+let unique_instance = build_instance (module Unique) 0
+let build_dispatch_table handlers =
+  let table = Hashtbl.create (module String) in
+  List.iter handlers
+    ~f:(fun (((module I)  : (module Query_handler_instance)) as instance) ->
+          Hashtbl.set table ~key:I.Query_handler.name ~data:instance) table"
+`;
+
 exports[`float.js 1`] = `
 "let () = 1. /. 2.
 let () = 3. *. 4.
