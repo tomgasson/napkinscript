@@ -4,9 +4,8 @@ module Doc = struct
   type lineStyle =
     | Classic (* fits? -> replace with space *)
     | Soft (* fits? -> replaced with nothing *)
-    | Hard (* always included *)
+    | Hard (* always included, forces breaks in parents *)
     | Literal (* always included, no identation *)
-
 
   type t =
     | Nil
@@ -17,7 +16,7 @@ module Doc = struct
     | LineSuffix of t
     | LineBreak of lineStyle
     | Group of (bool (* should break *) * t)
-    | Cursor
+    (* | Cursor *)
 
   let nil = Nil
   let line = LineBreak Classic
@@ -29,7 +28,46 @@ module Doc = struct
   let ifBreaks t f = IfBreaks(t, f)
   let lineSuffix d = LineSuffix d
   let group d = Group(false, d)
-  let cursor = Cursor
+  let breakableGroup ~forceBreak d = Group(forceBreak, d)
+  (* let cursor = Cursor *)
+
+  let space = Text " "
+  let comma = Text ","
+  let lessThan = Text "<"
+  let greaterThan = Text ">"
+  let lbrace = Text "{"
+  let rbrace = Text "}"
+  let lparen = Text "("
+  let rparen = Text ")"
+  let trailingComma = IfBreaks (comma, nil)
+
+  let propagateForcedBreaks doc =
+    let rec walk doc = match doc with
+    | Text _ | Nil | LineSuffix _ ->
+      (false, doc)
+    | LineBreak (Hard | Literal) ->
+      (true, doc)
+    | LineBreak (Classic | Soft) ->
+      (false, doc)
+    | Indent children ->
+      let (childForcesBreak, newChildren) = walk children in
+      (childForcesBreak, Indent newChildren)
+    | IfBreaks (trueDoc, falseDoc) ->
+      (false, doc)
+    | Group(forceBreak, children) ->
+      let (childForcesBreak, newChildren) = walk children in
+      let shouldBreak = forceBreak || childForcesBreak in
+      (shouldBreak, Group (shouldBreak, newChildren))
+    | Concat children ->
+      let (forceBreak, newChildren) = List.fold_left (fun (forceBreak, newChildren) child ->
+        let (childForcesBreak, newChild) = walk child in
+        (forceBreak || childForcesBreak, newChild::newChildren)
+      ) (false, []) children
+      in
+      (forceBreak, Concat (List.rev newChildren))
+    in
+    let (_, processedDoc) = walk doc in
+    processedDoc
 
   let join ~sep docs =
     let rec loop acc sep docs =
@@ -48,7 +86,7 @@ module Doc = struct
     | (_ind, Flat, LineBreak break)::rest ->
         if break = Hard || break = Literal then true
         else
-          let w = if break = Classic then w + 1 else w in
+          let w = if break = Classic then w - 1 else w in
           fits w rest
     | (_ind, _mode, Nil)::rest -> fits w rest
     | (_ind, Break, LineBreak break)::rest -> true
@@ -63,58 +101,148 @@ module Doc = struct
     | (ind, mode, Concat docs)::rest ->
       let ops = List.map (fun doc -> (ind, mode, doc)) docs in
       fits w (List.append ops rest)
-    | (_ind, _mode, Cursor)::rest -> fits w rest
+    (* | (_ind, _mode, Cursor)::rest -> fits w rest *)
     | (_ind, _mode, LineSuffix _)::rest -> fits w rest
 
   let toString ~width doc =
+    let doc = propagateForcedBreaks doc in
     let buffer = Buffer.create 1000 in
 
-    let rec process ~pos stack =
+    let rec process ~pos lineSuffices stack =
       match stack with
-      | (ind, mode, doc)::rest ->
+      | ((ind, mode, doc) as cmd)::rest ->
         begin match doc with
         | Nil ->
-          process ~pos rest
+          process ~pos lineSuffices rest
         | Text txt ->
           Buffer.add_string buffer txt;
-          process ~pos:(String.length txt + pos) rest
+          process ~pos:(String.length txt + pos) lineSuffices rest
+        | LineSuffix doc ->
+          process ~pos ((ind, mode, doc)::lineSuffices) rest
         | Concat docs ->
           let ops = List.map (fun doc -> (ind, mode, doc)) docs in
-          process ~pos (List.append ops rest)
+          process ~pos lineSuffices (List.append ops rest)
         | Indent doc ->
-          process ~pos ((ind + 2, mode, doc)::rest)
+          process ~pos lineSuffices ((ind + 2, mode, doc)::rest)
         | IfBreaks(breakDoc, flatDoc) ->
           if mode = Break then
-            process ~pos ((ind, mode, breakDoc)::rest)
+            process ~pos lineSuffices ((ind, mode, breakDoc)::rest)
           else
-            process ~pos ((ind, mode, flatDoc)::rest)
+            process ~pos lineSuffices ((ind, mode, flatDoc)::rest)
         | LineBreak lineStyle  ->
           if mode = Break then (
-            Buffer.add_string buffer "\n";
-            Buffer.add_string buffer (String.make ind ' ');
-            process ~pos:ind rest
+            begin match lineSuffices with
+            | [] ->
+              Buffer.add_string buffer "\n";
+              Buffer.add_string buffer (String.make ind ' ');
+              process ~pos:ind [] rest
+            | docs ->
+              process ~pos:ind [] (List.concat [lineSuffices; cmd::rest])
+            end
           ) else (
-            let pos = match lineStyle with
-            | Classic -> Buffer.add_string buffer " "; pos + 1
-            | Hard | Literal -> Buffer.add_string buffer "\n"; 0
-            | Soft -> pos
-            in
-            process ~pos rest
+            begin match lineSuffices with
+            | [] ->
+              let pos = match lineStyle with
+              | Classic -> Buffer.add_string buffer " "; pos + 1
+              | Hard | Literal -> Buffer.add_string buffer "\n"; 0
+              | Soft -> pos
+              in
+              process ~pos [] rest
+            | docs ->
+              process ~pos:ind [] (List.concat [lineSuffices; cmd::rest])
+            end
           )
-        | Cursor ->
-          process ~pos rest
         | Group (shouldBreak, doc) ->
-          if (* shouldBreak || *) not (fits (width - pos) ((ind, Flat, doc)::rest)) then
-            process ~pos ((ind, Break, doc)::rest)
+          if shouldBreak || not (fits (width - pos) ((ind, Flat, doc)::rest)) then
+            process ~pos lineSuffices ((ind, Break, doc)::rest)
           else
-            process ~pos ((ind, Flat, doc)::rest)
-        | _ -> ()
+            process ~pos lineSuffices ((ind, Flat, doc)::rest)
         end
       | [] -> ()
     in
-
-    process ~pos:0 [0, Flat, doc];
+    process ~pos:0 [] [0, Flat, doc];
     Buffer.contents buffer
+
+
+  let debug t =
+    let rec toDoc = function
+      | Nil -> text "nil"
+      | Text txt -> text ("text(" ^ txt ^ ")")
+      | LineSuffix doc -> group(
+          concat [
+            text "linesuffix(";
+            indent (
+              concat [line; toDoc doc]
+            );
+            line;
+            text ")"
+          ]
+        )
+      | Concat docs -> group(
+          concat [
+            text "concat(";
+            indent (
+              concat [
+                line;
+                join ~sep:(concat [text ","; line])
+                  (List.map toDoc docs) ;
+              ]
+            );
+            line;
+            text ")"
+          ]
+        )
+      | Indent doc ->
+          concat [
+            text "indent(";
+            softLine;
+            toDoc doc;
+            softLine;
+            text ")";
+          ]
+      | IfBreaks (trueDoc, falseDoc) ->
+        group(
+          concat [
+            text "ifBreaks(";
+            indent (
+              concat [
+                line;
+                toDoc trueDoc;
+                concat [text ",";  line];
+                toDoc falseDoc;
+              ]
+            );
+            line;
+            text ")"
+          ]
+        )
+      | LineBreak break ->
+        let breakTxt = match break with
+          | Classic -> "Classic"
+          | Soft -> "Soft"
+          | Hard -> "Hard"
+          | Literal -> "Literal"
+        in
+        text ("LineBreak(" ^ breakTxt ^ ")")
+      | Group (shouldBreak, doc) ->
+        group(
+          concat [
+            text "Group(";
+            indent (
+              concat [
+                line;
+                text ("shouldbreak: " ^ (string_of_bool shouldBreak));
+                concat [text ",";  line];
+                toDoc doc;
+              ]
+            );
+            line;
+            text ")"
+          ]
+        )
+    in
+    let doc = toDoc t in
+    toString ~width:10 doc |> print_endline
 end
 
 module Time: sig
@@ -525,13 +653,13 @@ end = struct
   let makeSingleLineComment ~loc txt = {
     txt;
     loc;
-    style = SingleLine
+    style = SingleLine;
   }
 
   let makeMultiLineComment ~loc txt = {
     txt;
     loc;
-    style = MultiLine
+    style = MultiLine;
   }
 
 end
@@ -5753,17 +5881,21 @@ Solution: you need to pull out each field you want explicitly."
 
   (* type-constraint	::=	constraint ' ident =  typexpr *)
   and parseTypeConstraint p =
+    let startPos = p.Parser.startPos in
     Parser.expect Constraint p;
     Parser.expect SingleQuote p;
     begin match p.Parser.token with
     | Lident ident ->
+      let identLoc = mkLoc startPos p.endPos in
       Parser.next p;
       Parser.expect Equal p;
       let typ = parseTypExpr p in
-      (Ast_helper.Typ.var ident, typ, Location.none)
+      let loc = mkLoc startPos p.prevEndPos in
+      (Ast_helper.Typ.var ~loc:identLoc ident, typ, loc)
     | t ->
       Parser.err p (Diagnostics.lident t);
-      (Ast_helper.Typ.any (), parseTypExpr p, Location.none)
+      let loc = mkLoc startPos p.prevEndPos in
+      (Ast_helper.Typ.any (), parseTypExpr p, loc)
     end
 
   (* type-constraints ::=
@@ -6987,7 +7119,368 @@ module Printer = struct
             printValueBinding (List.hd valueBindings);
           ]
         )
+    | Pstr_type(recFlag, typeDeclarations) ->
+      let recFlag = match recFlag with
+      | Asttypes.Nonrecursive -> Doc.nil
+      | Asttypes.Recursive -> Doc.text "rec "
+      in
+      Doc.join Doc.line (
+        List.mapi (printTypeDeclaration ~recFlag) typeDeclarations
+      )
     | _ -> failwith "unsupported"
+
+  (*
+   * type_declaration = {
+   *    ptype_name: string loc;
+   *    ptype_params: (core_type * variance) list;
+   *          (* ('a1,...'an) t; None represents  _*)
+   *    ptype_cstrs: (core_type * core_type * Location.t) list;
+   *          (* ... constraint T1=T1'  ... constraint Tn=Tn' *)
+   *    ptype_kind: type_kind;
+   *    ptype_private: private_flag;   (* = private ... *)
+   *    ptype_manifest: core_type option;  (* = T *)
+   *    ptype_attributes: attributes;   (* ... [@@id1] [@@id2] *)
+   *    ptype_loc: Location.t;
+   * }
+   *
+   *
+   *  type t                     (abstract, no manifest)
+   *  type t = T0                (abstract, manifest=T0)
+   *  type t = C of T | ...      (variant,  no manifest)
+   *  type t = T0 = C of T | ... (variant,  manifest=T0)
+   *  type t = {l: T; ...}       (record,   no manifest)
+   *  type t = T0 = {l : T; ...} (record,   manifest=T0)
+   *  type t = ..                (open,     no manifest)
+   *
+   *
+   * and type_kind =
+   *  | Ptype_abstract
+   *  | Ptype_variant of constructor_declaration list
+   *        (* Invariant: non-empty list *)
+   *  | Ptype_record of label_declaration list
+   *        (* Invariant: non-empty list *)
+   *  | Ptype_open
+   *)
+  and printTypeDeclaration ~recFlag i (td: Parsetree.type_declaration) =
+    let prefix = if i > 0 then
+      Doc.text "and "
+    else
+      Doc.concat [Doc.text "type "; recFlag]
+    in
+    let typeName = Doc.text td.ptype_name.txt in
+    let typeParams = match td.ptype_params with
+    | [] -> Doc.nil
+    | typeParams -> Doc.group (
+        Doc.concat [
+          Doc.lessThan;
+          Doc.indent (
+            Doc.concat [
+              Doc.softLine;
+              Doc.join ~sep:(Doc.concat [Doc.comma; Doc.line]) (
+                List.map printTypeParam typeParams
+              )
+            ]
+          );
+          Doc.trailingComma;
+          Doc.softLine;
+          Doc.greaterThan;
+        ]
+      )
+    in
+    let manifestAndKind = match td.ptype_kind with
+    | Ptype_abstract ->
+      begin match td.ptype_manifest with
+      | None -> Doc.nil
+      | Some(typ) ->
+        Doc.concat [
+          Doc.text " = ";
+          printPrivateFlag td.ptype_private;
+          printTypExpr typ;
+        ]
+      end
+    | Ptype_open -> Doc.concat [
+        Doc.text " = ";
+        printPrivateFlag td.ptype_private;
+        Doc.text "..";
+      ]
+    | Ptype_record(lds) -> Doc.concat [
+        Doc.text " = ";
+        printRecordDeclaration lds;
+      ]
+    | Ptype_variant(cds) ->
+      let overMultipleLines =
+        td.ptype_loc.loc_end.pos_lnum > td.ptype_loc.loc_start.pos_lnum
+      in
+      Doc.concat [
+        Doc.text " = ";
+        printConstructorDeclarations ~forceBreak:overMultipleLines cds;
+      ]
+    in
+    let constraints = match td.ptype_cstrs with
+    | [] -> Doc.nil
+    | cstrs -> Doc.indent (
+        Doc.group (
+          Doc.concat [
+            Doc.hardLine;
+            Doc.group(
+              Doc.join ~sep:Doc.line (
+                List.map printTypeDefinitionConstraint cstrs
+              )
+            )
+          ]
+        )
+      )
+    in
+    Doc.concat [
+      prefix;
+      typeName;
+      typeParams;
+      manifestAndKind;
+      constraints;
+    ]
+
+  and printTypeDefinitionConstraint ((typ1, typ2, _loc ): Parsetree.core_type * Parsetree.core_type * Location.t) =
+    Doc.concat [
+      Doc.text "constraint ";
+      printTypExpr typ1;
+      Doc.text " = ";
+      printTypExpr typ2;
+    ]
+
+  and printPrivateFlag (flag : Asttypes.private_flag) = match flag with
+    | Private -> Doc.text "private "
+    | Public -> Doc.nil
+
+  and printTypeParam (param : (Parsetree.core_type * Asttypes.variance)) =
+    let (typ, variance) = param in
+    let printedVariance = match variance with
+    | Covariant -> Doc.text "+"
+    | Contravariant -> Doc.text "-"
+    | Invariant -> Doc.nil
+    in
+    Doc.concat [
+      printedVariance;
+      printTypExpr typ
+    ]
+
+  and printRecordDeclaration (lds: Parsetree.label_declaration list) =
+    let forceBreak = match (lds, List.rev lds) with
+    | (first::_, last::_) ->
+       first.pld_loc.loc_start.pos_lnum < last.pld_loc.loc_end.pos_lnum
+    | _ -> false
+    in
+    Doc.breakableGroup ~forceBreak (
+      Doc.concat [
+        Doc.lbrace;
+        Doc.indent (
+          Doc.concat [
+            Doc.softLine;
+            Doc.join ~sep:(Doc.concat [Doc.comma; Doc.line])
+              (List.map printLabelDeclaration lds)
+          ]
+        );
+        Doc.trailingComma;
+        Doc.softLine;
+        Doc.rbrace;
+      ]
+    )
+
+  and printConstructorDeclarations ~forceBreak (cds: Parsetree.constructor_declaration list) =
+    Doc.breakableGroup ~forceBreak (
+      Doc.indent (
+        Doc.concat [
+          Doc.softLine;
+          Doc.join ~sep:Doc.line (
+            List.mapi printConstructorDeclaration cds
+          )
+        ]
+      )
+    )
+
+  (*
+   * {
+   *  pcd_name: string loc;
+   *  pcd_args: constructor_arguments;
+   *  pcd_res: core_type option;
+   *  pcd_loc: Location.t;
+   *  pcd_attributes: attributes; (* C of ... [@id1] [@id2] *)
+   * }
+   *)
+  and printConstructorDeclaration i (cd : Parsetree.constructor_declaration) =
+    let bar = if i > 0 then Doc.text "| "
+      else Doc.ifBreaks (Doc.text "| ") Doc.nil
+    in
+    let constrName = Doc.text cd.pcd_name.txt in
+    let constrArgs = printConstructorArguments cd.pcd_args in
+    let gadt = match cd.pcd_res with
+    | None -> Doc.nil
+    | Some(typ) -> Doc.indent (
+        Doc.concat [
+          Doc.text ": ";
+          printTypExpr typ;
+        ]
+      )
+    in
+    Doc.concat [
+      bar;
+      constrName;
+      constrArgs;
+      gadt;
+    ]
+
+  and printConstructorArguments (cdArgs : Parsetree.constructor_arguments) =
+    match cdArgs with
+    | Pcstr_tuple [] -> Doc.nil
+    | Pcstr_tuple types -> Doc.group (
+        Doc.indent (
+          Doc.concat [
+            Doc.lparen;
+            Doc.indent (
+              Doc.concat [
+                Doc.softLine;
+                Doc.join ~sep:(Doc.concat [Doc.comma; Doc.line]) (
+                  List.map printTypExpr types
+                )
+              ]
+            );
+            Doc.trailingComma;
+            Doc.softLine;
+            Doc.rparen;
+          ]
+        )
+      )
+    | Pcstr_record lds ->
+      Doc.indent (
+        Doc.concat [
+          Doc.lparen;
+          (* manually inline the printRecordDeclaration, gives better layout *)
+          Doc.lbrace;
+          Doc.indent (
+            Doc.concat [
+              Doc.softLine;
+              Doc.join ~sep:(Doc.concat [Doc.comma; Doc.line])
+                (List.map printLabelDeclaration lds)
+            ]
+          );
+          Doc.trailingComma;
+          Doc.softLine;
+          Doc.rbrace;
+          Doc.rparen;
+        ]
+      )
+
+
+  and printLabelDeclaration (ld : Parsetree.label_declaration) =
+    let mutableFlag = match ld.pld_mutable with
+    | Mutable -> Doc.text "mutable "
+    | Immutable -> Doc.nil
+    in
+    let name = Doc.text ld.pld_name.txt in
+    Doc.concat [
+      mutableFlag;
+      name;
+      Doc.text ": ";
+      printTypExpr ld.pld_type;
+    ]
+
+  and printTypExpr (typExpr : Parsetree.core_type) =
+    let renderedType = match typExpr.ptyp_desc with
+    | Ptyp_any -> Doc.text "_"
+    | Ptyp_var var -> Doc.text ("'" ^ var)
+    | Ptyp_extension(extension) ->
+      printExtension extension
+    | Ptyp_alias(typ, alias) ->
+      Doc.concat [printTypExpr typ; Doc.text " as "; Doc.text alias]
+    | Ptyp_constr(longidentLoc, constrArgs) ->
+        let constrName = printLongident longidentLoc.txt in
+        begin match constrArgs with
+        | [] -> constrName
+        | args -> Doc.group(
+          Doc.concat([
+            constrName;
+            Doc.text "<";
+            Doc.indent (
+              Doc.concat [
+                Doc.softLine;
+                Doc.join ~sep:(Doc.concat [Doc.comma; Doc.line]) (
+                  List.map printTypExpr constrArgs
+                )
+              ]
+            );
+            Doc.trailingComma;
+            Doc.softLine;
+            Doc.text ">";
+          ])
+        )
+        end
+    | Ptyp_arrow _ ->
+      let rec parseArrowParsetree acc typ = match (typ : Parsetree.core_type) with
+      | {ptyp_desc = Ptyp_arrow (lbl, typ1, typ2)} ->
+        let arg = (lbl, typ1) in
+        parseArrowParsetree (arg::acc) typ2
+      | typ ->
+        (acc, typ)
+      in
+      let (args, returnType) = parseArrowParsetree [] typExpr in
+      let renderedArgs = match args with
+      | [] -> Doc.nil
+      | [(_, n)] ->  printTypExpr n
+      | args -> Doc.concat [
+        Doc.text "(";
+        Doc.indent (
+          Doc.concat [
+            Doc.softLine;
+            Doc.join ~sep:(Doc.concat [Doc.comma; Doc.line]) (
+              List.map printTypeParameter args
+            )
+          ]
+        );
+        Doc.softLine;
+        Doc.text ")";
+      ]
+      in
+      Doc.group (
+        Doc.concat [
+          renderedArgs;
+          Doc.text " => ";
+          printTypExpr returnType;
+        ]
+      )
+
+    | Ptyp_tuple types ->
+      Doc.group(
+        Doc.concat([
+          Doc.text "/";
+          Doc.indent (
+            Doc.concat([
+              Doc.softLine;
+              Doc.join ~sep:(Doc.concat [Doc.comma; Doc.line]) (
+                List.map printTypExpr types
+              )
+            ])
+          );
+          Doc.trailingComma;
+          Doc.softLine;
+          Doc.text "/";
+        ])
+      )
+    | _ -> failwith "unimplemented"
+    in
+    renderedType
+
+  (* es6 arrow type arg
+   * type t = (~foo=string, ~bar=float, unit) => unit
+   * i.e. ~foo=string, ~bar=float *)
+  and printTypeParameter ((lbl, typ) : Asttypes.arg_label * Parsetree.core_type) =
+    let label = match lbl with
+    | Asttypes.Nolabel -> Doc.nil
+    | Labelled lbl -> Doc.text ("~" ^ lbl ^ "=")
+    | Optional lbl -> Doc.text ("?" ^ lbl ^ "=")
+    in
+    Doc.concat [
+      label;
+      printTypExpr typ;
+    ]
 
   (*
    * {
@@ -7209,7 +7702,11 @@ module Printer = struct
     | Parsetree.Pexp_constant c -> printConstant c
     | _ -> failwith "unsupported expression"
 
-  let printStructure (s: Parsetree.structure) =
+  and printAttribute (attr : Parsetree.attribute) =
+    match attr with
+    | (id, _) -> Doc.text ("@" ^ id.txt)
+
+  let printImplementation (s: Parsetree.structure) =
     let stringDoc = Doc.toString ~width:80 (printStructure s) in
     print_endline stringDoc;
     print_newline()
@@ -7271,7 +7768,7 @@ end = struct
         Diagnostics.makeReport p.diagnostics (Bytes.to_string p.scanner.src)
       )
     in
-    (ast, report)
+    (ast, report, p)
 
   let parseImplementation filename =
     parseFile Structure filename
@@ -7280,29 +7777,29 @@ end = struct
     parseFile Signature filename
 
   let process parseFn printFn recover filename =
-    let (ast, report) =
+    let (ast, report, parserState) =
       Profile.record ~name:"parser" (fun () -> parseFn filename)
     in
     match report with
     | Some report when recover = true ->
-      printFn ast;
+      printFn ast parserState;
       prerr_string report;
     | Some report ->
       prerr_string report;
       exit 1
     | None ->
-      printFn ast
+      printFn ast parserState
 
   type action =
     | ProcessImplementation
     | ProcessInterface
 
-  let printImplementation ~target filename ast =
+  let printImplementation ~target filename ast _parserState =
     match target with
     | "ml" | "ocaml" ->
         Pprintast.structure Format.std_formatter ast
     | "ns" | "napkinscript" ->
-        Printer.printStructure ast
+        Printer.printImplementation ast
     | "ast" -> Printast.implementation Format.std_formatter ast
     | _ -> (* default binary *)
       if !Clflags.ancient then (
@@ -7316,7 +7813,7 @@ end = struct
 				output_value stdout ast
       )
 
-  let printInterface ~target filename ast =
+  let printInterface ~target filename ast _parserState =
     match target with
     | "ml" | "ocaml" -> Pprintast.signature Format.std_formatter ast
     (* | "ns" | "napkinscript" -> PPrin *)

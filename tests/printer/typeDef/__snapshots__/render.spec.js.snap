@@ -1,0 +1,211 @@
+// Jest Snapshot v1, https://goo.gl/fbAQLP
+
+exports[`abstract.js 1`] = `
+"type t
+type t<'a, 'b>
+type t = string
+type t = private string
+type t = Module.Long.With.Very.VeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeryLongName.t
+type t = private Module.Long.With.Very.VeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeryLongName.t
+type t<
+  'superlongthing,
+  'superlongthing,
+  'superlongthing,
+  'superlongthing,
+  'superlongthing,
+> = string
+type t<
+  'superlongthing,
+  'superlongthing,
+  'superlongthing,
+  'superlongthing,
+  'superlongthing,
+> = Module.Long.With.Very.VeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeryLongName.t
+type t<
+  'superlongthing,
+  'superlongthing,
+  'superlongthing,
+  'superlongthing,
+  'superlongthing,
+> = Module.Long.With.Very.VeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeryLongName.t
+  constraint 't = ('a, 's) => 'sub
+type t = 't
+  constraint 't = ('a, 's) => 'sub
+
+"
+`;
+
+exports[`constraint.js 1`] = `
+"
+
+"
+`;
+
+exports[`open.js 1`] = `
+"type t = ..
+type t = private ..
+type t<'a, 'b> = ..
+type t<'a, 'b> = private ..
+type t = ..
+  constraint 't = ('a, 's) => 'sub
+
+"
+`;
+
+exports[`record.js 1`] = `
+"type user = {name: string, age: int}
+type result<'success, 'failure> = {ok: 'success, fail: 'failure}
+type result<
+  'success1,
+  'failure1,
+  'success2,
+  'failure2,
+  'success3,
+  'failure3,
+> = {ok: 'success1, fail: 'failure2}
+type user = {
+  name: string,
+  age: int,
+  a: string,
+  lot: string,
+  more: string,
+  fields: string,
+}
+type user<
+  'lotsOfTypeVars,
+  'lotsOfTypeVars2,
+  'lotsOfTypeVars3,
+  'lotsOfTypeVars4,
+> = {
+  name: string,
+  age: int,
+  a: string,
+  lot: string,
+  more: string,
+  fields: string,
+}
+type user = {
+  name: string,
+  age: int,
+}
+type result<'good, 'bad> = {good: 'good, bad: 'bad}
+  constraint 'good = boolean constraint 'bad = float
+type user = {
+  name: 't,
+  age: int,
+}
+  constraint 't = string
+
+"
+`;
+
+exports[`typeParams.js 1`] = `
+"type t<'a, 'b>
+type t<+'a, -'b>
+type t<
+  'superlongthing,
+  'superlongthing,
+  'superlongthing,
+  'superlongthing,
+  'superlongthing,
+>
+type t<
+  +'superlongthing,
+  -'superlongthing,
+  +'superlongthing,
+  -'superlongthing,
+  +'superlongthing,
+>
+type t<
+  +'superlongthing,
+  -'superlongthing,
+  +'superlongthing,
+  -'superlongthing,
+  +'superlongthing,
+>
+  constraint 't = ('action, 'state) => 'nextSubtree
+
+"
+`;
+
+exports[`variant.js 1`] = `
+"type color = Red | Blue
+type color = 
+  | Red
+  | Blue
+  | SuperLongColoooooooooourName
+  | AnotherSuuuuuuuuuperLongName
+type color = Red: color | Blue: color
+type color = 
+  | Red: color
+  | Blue: color
+  | SuperLongColoooooooooourName: color
+  | AnotherSuuuuuuuuuperLongName: color
+type color = Rgb(float, float, float) | Hex(int)
+type color = 
+  | Rgb(
+      superLongTypeName,
+      superLongTypeName,
+      superLongTypeName,
+      superLongTypeName,
+    )
+  | Hex(
+      superLongTypeName,
+      superLongTypeName,
+      superLongTypeName,
+      superLongTypeName,
+    )
+type node<_, 'value> = 
+  | Root({
+      mutable value: 'value,
+      mutable updatedTime: float,
+    }): node<root, 'value>
+  | Derived({
+      mutable cachedValue: 'value,
+      parent: node<_, 'value>,
+      root: node<root, 'value>,
+      updateF: 'value => 'value,
+      mutable updatedTime: float,
+    }): node<derived, 'value>
+type t<'a> = 
+  | AutoDisposing('a => unit, option<exn> => unit, ref<bool>)
+  | Delegating(
+      'ctx,
+      t<'b>,
+      ('a, t<'b>, 'ctx) => unit,
+      (option<exn>, t<'b>, 'ctx) => unit,
+      ref<bool>,
+    ): t<'a>
+type t<'a> = 
+  | AutoDisposing('a => unit, option<exn> => unit, ref<bool>)
+  | Delegating(
+      'ctx,
+      t<'b>,
+      ('a, t<'b>, 'ctx) => unit,
+      (option<exn>, t<'b>, 'ctx) => unit,
+      ref<bool>,
+    ): t<
+      'superLongTypeName,
+      'superLongTypeName,
+      'superLongTypeName,
+      'superLongTypeName,
+    >
+type jsx<'nature> = 
+  | Empty: jsx<empty>
+  | Cons(elem</'s1, 'a1/, 'sub1>, jsx<'tl>): jsx</('s1, 'a1) => 'sub1, 'tl/>
+type jsx<'nature> = 
+  | Empty: jsx<empty>
+  | Cons(elem</'s1, 'a1/, 'sub1>, jsx<'tl>): jsxxxxxxxxxxxxxxxxx<
+      /('s1, 'a1) => 'sub1, 'tl/,
+    >
+type color = 
+  | Red
+  | Blue
+  constraint 't = string
+type result<'good, 'bad> = 
+  | Good('good)
+  | Bad('bad)
+  constraint 'good = boolean constraint 'bad = float
+
+"
+`;
