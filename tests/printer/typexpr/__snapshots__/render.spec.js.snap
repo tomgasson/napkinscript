@@ -1,0 +1,233 @@
+// Jest Snapshot v1, https://goo.gl/fbAQLP
+
+exports[`alias.js 1`] = `
+"type t = string as 'x
+type t = ((float, string) => unit) as 'x
+type t = ((float, string) => unit) as 'x
+type t = (float, string) => (unit as 'x)
+
+"
+`;
+
+exports[`any.js 1`] = `
+"type t = _
+type t = node<_>
+type t = {name: _}
+type t = Plant(_)
+type t = (_, _) => unit
+let x: _ = ()
+external foo: _ = \\"foo_c_binding\\"
+
+"
+`;
+
+exports[`bsObject.js 1`] = `
+"type user = {\\"age\\": int}
+type user = {\\"age\\": int, \\"name\\": string}
+type user = {
+  \\"age\\": int,
+  \\"name\\": string,
+  \\"moreFields\\": veryVeryVeryLongtype,
+  \\"superLongNameThat\\": whyDoesATypeWithThisAmountOfCharactersMakeItIntoThisFile,
+  \\"because\\": testingLineBreaks,
+}
+type magic = {..}
+type t = {..\\"age\\": int}
+type magicallyLong = {..
+  \\"age\\": int,
+  \\"name\\": string,
+  \\"moreFields\\": veryVeryVeryLongtype,
+  \\"superLongNameThat\\": whyDoesATypeWithThisAmountOfCharactersMakeItIntoThisFile,
+  \\"because\\": testingLineBreaks,
+}
+external test: (
+  baz,
+  bar,
+  foo
+) => {..
+  \\"age\\": int,
+  \\"name\\": string,
+  \\"moreFields\\": veryVeryVeryLongtype,
+  \\"superLongNameThat\\": whyDoesATypeWithThisAmountOfCharactersMakeItIntoThisFile,
+  \\"because\\": testingLineBreaks,
+} =
+  \\"primitive\\"
+
+"
+`;
+
+exports[`extension.js 1`] = `
+"type t = %extension
+external foo: %extension = \\"primitive\\"
+let x: %extension = z
+
+"
+`;
+
+exports[`firstClassModule.js 1`] = `
+"type t = module(S)
+type t = module(Hashmap with type key = string)
+type t = module(Hashmap with type key = string and type value = int)
+type t = module(Hashmap with
+  type key = string
+  and type value = int
+  and type superLongThingHere = definitelyLineBreak
+)
+type t = constr<module(S)>
+external foo: module(S) = \\"primitive\\"
+let x: module(S) = y
+let x: module(Hashmap with
+  type key = string
+  and type value = int
+  and type superLongThingHere = definitelyLineBreak
+) = y
+type toValueLikeInstance = t<'a> => module(RxValueLikeInstance.S with
+  type a = 'a
+)
+type t<'a> = module(Test with type a = 'a)
+type t = ref<module(Console)>
+let devices: Hastbl.t<string, module(DEVICE)> = xyz
+
+"
+`;
+
+exports[`polyTyp.js 1`] = `
+"external getLogger: unit => {
+  \\"log\\": 'a => unit,
+  \\"log2\\": 'a. int => int,
+  \\"log3\\": 'a 'b. ('b, 'a) => int,
+} =
+  \\"./src/logger.mock.js\\"
+
+"
+`;
+
+exports[`tuple.js 1`] = `
+"type t = /string, int, float/
+type t = /
+  superLongTypeNameThatWillBreak,
+  superLongTypeNameThatWillBreak,
+  superLongTypeNameThatWillBreak,
+  superLongTypeNameThatWillBreak,
+  superLongTypeNameThatWillBreak,
+  superLongTypeNameThatWillBreak
+/
+type t = constr</string, int, float/>
+type t = constr</
+  superLongTypeNameThatWillBreak,
+  superLongTypeNameThatWillBreak,
+  superLongTypeNameThatWillBreak,
+  superLongTypeNameThatWillBreak,
+  superLongTypeNameThatWillBreak,
+  superLongTypeNameThatWillBreak
+/>
+external foo: /string, int, float/ = \\"external_binding\\"
+external foo: /
+  superLongTypeNameThatWillBreak,
+  superLongTypeNameThatWillBreak,
+  superLongTypeNameThatWillBreak,
+  superLongTypeNameThatWillBreak,
+  superLongTypeNameThatWillBreak,
+  superLongTypeNameThatWillBreak
+/ =
+  \\"external_binding\\"
+let x: /int, int/ = /1, 2/
+let x: /
+  superLongTypeNameThatWillBreak,
+  superLongTypeNameThatWillBreak,
+  superLongTypeNameThatWillBreak,
+  superLongTypeNameThatWillBreak,
+  superLongTypeNameThatWillBreak,
+  superLongTypeNameThatWillBreak
+/ = /1, 2/
+
+"
+`;
+
+exports[`typeConstr.js 1`] = `
+"type t = Option.t<string>
+type t = Mod.Sub.t<a, b, c>
+type t = Mod.Sub.t<
+  soooooLoooooong,
+  soooooLoooooong,
+  soooooLoooooong,
+  soooooLoooooong,
+  soooooLoooooong,
+  soooooLoooooong,
+  b,
+  c,
+>
+type t = Mod.Sub.t<
+  Mod.Sub.t<soooooLoooooong, soooooLoooooong, soooooLoooooong>,
+  soooooLoooooong,
+  soooooLoooooong,
+  soooooLoooooong,
+  b,
+  c,
+>
+type t = Mod.Sub.t<
+  Mod.Sub.t<
+    soooooLoooooong,
+    soooooLoooooong,
+    soooooLoooooong,
+    soooooLoooooong,
+    soooooLoooooong,
+  >,
+  Nested.Module.t<string, float>,
+  soooooLoooooong,
+  soooooLoooooong,
+  b,
+  c,
+>
+let t: list<{\\"age\\": int}> = x
+let t: list<{
+  \\"age\\": int,
+  \\"name\\": string,
+  \\"moreFields\\": veryVeryVeryLongtype,
+  \\"superLongNameThat\\": whyDoesATypeWithThisAmountOfCharactersMakeItIntoThisFile,
+  \\"because\\": testingLineBreaks,
+}> = x
+let t: list<
+  {\\"age\\": int, \\"name\\": string},
+  {\\"name\\": string, \\"age\\": int},
+  {\\"name\\": string, \\"age\\": int},
+> = x
+type t = Option.t</tupleTyp1, tupleTyp2, tupleTyp3/>
+type t = Option.t</
+  tupleTyp1,
+  tupleTyp2,
+  tupleTyp3,
+  tupleTyp3,
+  tupleTyp3,
+  tupleTyp3,
+  tupleTyp3,
+  tupleTyp3,
+  tupleTyp3,
+  tupleTyp3
+/>
+let t: Option.t</
+  tupleTyp1,
+  tupleTyp2,
+  tupleTyp3,
+  tupleTyp3,
+  tupleTyp3,
+  tupleTyp3,
+  tupleTyp3,
+  tupleTyp3,
+  tupleTyp3,
+  tupleTyp3,
+  tupleTyp3,
+  tupleTyp3
+/> = x
+
+"
+`;
+
+exports[`var.js 1`] = `
+"type t = 'a
+type t = constr<'a>
+external foo: 'foo = \\"primitive\\"
+let x: 'a = y
+
+"
+`;

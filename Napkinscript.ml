@@ -33,6 +33,8 @@ module Doc = struct
 
   let space = Text " "
   let comma = Text ","
+  let dot = Text "."
+  let dotdot = Text ".."
   let lessThan = Text "<"
   let greaterThan = Text ">"
   let lbrace = Text "{"
@@ -2915,7 +2917,8 @@ Solution: you need to pull out each field you want explicitly."
 
 
   (* {"foo": bar} -> Js.t({. foo: bar})
-   * {.. "foo": bar} -> Js.t({.. foo: bar}) *)
+   * {.. "foo": bar} -> Js.t({.. foo: bar})
+   * {..} -> Js.t({..}) *)
   let makeBsObjType ?attrs ~loc ~closed rows =
     let obj = Ast_helper.Typ.object_ ~loc rows closed in
     let jsDotTCtor =
@@ -7127,7 +7130,42 @@ module Printer = struct
       Doc.join Doc.line (
         List.mapi (printTypeDeclaration ~recFlag) typeDeclarations
       )
+    | Pstr_primitive valueDescription ->
+      printValueDescription valueDescription
     | _ -> failwith "unsupported"
+
+  (*
+   * type value_description = {
+   *   pval_name : string Asttypes.loc;
+   *   pval_type : Parsetree.core_type;
+   *   pval_prim : string list;
+   *   pval_attributes : Parsetree.attributes;
+   *   pval_loc : Location.t;
+   * }
+   *)
+  and printValueDescription valueDescription =
+    Doc.group (
+      Doc.concat [
+        Doc.text "external ";
+        Doc.text valueDescription.pval_name.txt;
+        Doc.text ": ";
+        printTypExpr valueDescription.pval_type;
+        Doc.text " =";
+        Doc.indent(
+          Doc.concat [
+            Doc.line;
+            Doc.join ~sep:Doc.line (
+              List.map(fun s -> Doc.concat [
+                Doc.text "\"";
+                Doc.text s;
+                Doc.text "\"";
+              ])
+              valueDescription.pval_prim
+            );
+          ]
+        )
+      ]
+    )
 
   (*
    * type_declaration = {
@@ -7390,29 +7428,67 @@ module Printer = struct
     | Ptyp_extension(extension) ->
       printExtension extension
     | Ptyp_alias(typ, alias) ->
-      Doc.concat [printTypExpr typ; Doc.text " as "; Doc.text alias]
+      let typ =
+        (* Technically type t = (string, float) => unit as 'x, doesn't require
+         * parens around the arrow expression. This is very confusing though.
+         * Is the "as" part of "unit" or "(string, float) => unit". By printing
+         * parens we guide the user towards its meaning.*)
+        let needsParens = match typ.ptyp_desc with
+        | Ptyp_arrow _ -> true
+        | _ -> false
+        in
+        let doc = printTypExpr typ in
+        if needsParens then
+          Doc.concat [Doc.lparen; doc; Doc.rparen]
+        else
+          doc
+      in
+      Doc.concat [typ; Doc.text " as "; Doc.text ("'" ^ alias)]
+    | Ptyp_constr({txt = Longident.Ldot(Longident.Lident "Js", "t")}, [typ]) ->
+      printTypExpr typ
+    | Ptyp_constr(longidentLoc, [{ ptyp_desc = Parsetree.Ptyp_tuple tuple }]) ->
+      let constrName = printLongident longidentLoc.txt in
+      Doc.group(
+        Doc.concat([
+          constrName;
+          Doc.lessThan;
+          printTupleType ~inline:true tuple;
+          Doc.greaterThan;
+        ])
+      )
     | Ptyp_constr(longidentLoc, constrArgs) ->
-        let constrName = printLongident longidentLoc.txt in
-        begin match constrArgs with
-        | [] -> constrName
-        | args -> Doc.group(
-          Doc.concat([
-            constrName;
-            Doc.text "<";
-            Doc.indent (
-              Doc.concat [
-                Doc.softLine;
-                Doc.join ~sep:(Doc.concat [Doc.comma; Doc.line]) (
-                  List.map printTypExpr constrArgs
-                )
-              ]
-            );
-            Doc.trailingComma;
-            Doc.softLine;
-            Doc.text ">";
-          ])
-        )
-        end
+      let constrName = printLongident longidentLoc.txt in
+      begin match constrArgs with
+      | [] -> constrName
+      | [{
+          Parsetree.ptyp_desc =
+            Ptyp_constr({txt = Longident.Ldot(Longident.Lident "Js", "t")},
+          [{ptyp_desc = Ptyp_object (fields, openFlag)}])
+        }] ->
+        Doc.concat([
+          constrName;
+          Doc.lessThan;
+          printBsObjectSugar ~inline:true fields openFlag;
+          Doc.greaterThan;
+        ])
+      | args -> Doc.group(
+        Doc.concat([
+          constrName;
+          Doc.lessThan;
+          Doc.indent (
+            Doc.concat [
+              Doc.softLine;
+              Doc.join ~sep:(Doc.concat [Doc.comma; Doc.line]) (
+                List.map printTypExpr constrArgs
+              )
+            ]
+          );
+          Doc.trailingComma;
+          Doc.softLine;
+          Doc.greaterThan;
+        ])
+      )
+      end
     | Ptyp_arrow _ ->
       let rec parseArrowParsetree acc typ = match (typ : Parsetree.core_type) with
       | {ptyp_desc = Ptyp_arrow (lbl, typ1, typ2)} ->
@@ -7439,34 +7515,91 @@ module Printer = struct
         Doc.text ")";
       ]
       in
+      let returnTypeNeedsParens = match returnType.ptyp_desc with
+      | Ptyp_alias _ -> true
+      | _ -> false
+      in
+      let returnDoc =
+        let doc = printTypExpr returnType in
+        if returnTypeNeedsParens then
+          Doc.concat [Doc.lparen; doc; Doc.rparen]
+        else doc
+      in
       Doc.group (
         Doc.concat [
           renderedArgs;
           Doc.text " => ";
-          printTypExpr returnType;
+          returnDoc;
         ]
       )
-
-    | Ptyp_tuple types ->
-      Doc.group(
-        Doc.concat([
-          Doc.text "/";
-          Doc.indent (
-            Doc.concat([
-              Doc.softLine;
-              Doc.join ~sep:(Doc.concat [Doc.comma; Doc.line]) (
-                List.map printTypExpr types
-              )
-            ])
-          );
-          Doc.trailingComma;
-          Doc.softLine;
-          Doc.text "/";
-        ])
-      )
-    | _ -> failwith "unimplemented"
+    | Ptyp_tuple types -> printTupleType ~inline:false types
+    | Ptyp_object (fields, openFlag) ->
+      printBsObjectSugar ~inline:false fields openFlag
+    | Ptyp_poly(stringLocs, typ) ->
+      Doc.concat [
+        Doc.join ~sep:Doc.space (List.map (fun {Location.txt} ->
+          Doc.text ("'" ^ txt)) stringLocs);
+        Doc.dot;
+        Doc.space;
+        printTypExpr typ
+      ]
+    | Ptyp_package packageType ->
+      printPackageType ~printModuleKeywordAndParens:true packageType
+    | Ptyp_class _ -> failwith "classes are not supported in types"
+    | Ptyp_variant _ -> failwith "Polymorphic variants currently not supported"
     in
     renderedType
+
+  and printBsObjectSugar ~inline fields openFlag =
+    let flag = match openFlag with
+    | Asttypes.Closed -> Doc.nil
+    | Open -> Doc.dotdot
+    in
+    let doc = Doc.concat [
+      Doc.lbrace;
+      flag;
+      Doc.indent (
+        Doc.concat [
+          Doc.softLine;
+          Doc.join ~sep:(Doc.concat [Doc.comma; Doc.line]) (
+            List.map printObjectField fields
+          )
+        ]
+      );
+      Doc.trailingComma;
+      Doc.softLine;
+      Doc.rbrace;
+    ] in
+    if inline then doc else Doc.group doc
+
+
+  and printTupleType ~inline (types: Parsetree.core_type list) =
+    let tuple = Doc.concat([
+      Doc.text "/";
+      Doc.indent (
+        Doc.concat([
+          Doc.softLine;
+          Doc.join ~sep:(Doc.concat [Doc.comma; Doc.line]) (
+            List.map printTypExpr types
+          )
+        ])
+      );
+      (* Doc.trailingComma; *) (* Trailing comma not supported in tuples right now… *)
+      Doc.softLine;
+      Doc.text "/";
+    ])
+    in
+    if inline == false then Doc.group(tuple) else tuple
+
+  and printObjectField (field : Parsetree.object_field) =
+    match field with
+    | Otag (labelLoc, attrs, typ) ->
+      Doc.concat [
+        Doc.text ("\"" ^ labelLoc.txt ^ "\"");
+        Doc.text ": ";
+        printTypExpr typ;
+      ]
+    | _ -> Doc.nil
 
   (* es6 arrow type arg
    * type t = (~foo=string, ~bar=float, unit) => unit
@@ -7495,6 +7628,55 @@ module Printer = struct
       printPattern vb.pvb_pat;
       Doc.text " = ";
       printExpression vb.pvb_expr;
+    ]
+
+  and printPackageType ~printModuleKeywordAndParens (packageType: Parsetree.package_type) =
+    let doc = match packageType with
+    | (longidentLoc, []) -> Doc.group(
+        Doc.concat [
+          printLongident longidentLoc.txt;
+        ]
+      )
+    | (longidentLoc, packageConstraints) -> Doc.group(
+        Doc.concat [
+          printLongident longidentLoc.txt;
+          printPackageConstraints packageConstraints;
+          Doc.softLine;
+        ]
+      )
+    in
+    if printModuleKeywordAndParens then
+      Doc.concat[
+        Doc.text "module(";
+        doc;
+        Doc.rparen
+      ]
+    else
+      doc
+
+
+
+
+  and printPackageConstraints packageConstraints  =
+    Doc.concat [
+      Doc.text " with";
+      Doc.indent (
+        Doc.concat [
+          Doc.line;
+          Doc.join ~sep:Doc.line (
+            List.mapi printPackageconstraint packageConstraints
+          )
+        ]
+      )
+    ]
+
+  and printPackageconstraint i (longidentLoc, typ) =
+    let prefix = if i == 0 then Doc.text "type " else Doc.text "and type " in
+    Doc.concat [
+      prefix;
+      printLongident longidentLoc.Location.txt;
+      Doc.text " = ";
+      printTypExpr typ
     ]
 
   and printExtension (stringLoc, _payload) =
@@ -7677,6 +7859,32 @@ module Printer = struct
         Doc.text " as ";
         Doc.text aliasLoc.txt
       ])
+
+     (* Note: module(P : S) is represented as *)
+     (* Ppat_constraint(Ppat_unpack, Ptyp_package) *)
+    | Ppat_constraint ({ppat_desc = Ppat_unpack stringLoc}, {ptyp_desc = Ptyp_package packageType}) ->
+        Doc.concat [
+          Doc.text "module(";
+          Doc.text stringLoc.txt;
+          Doc.text ": ";
+          printPackageType ~printModuleKeywordAndParens:false packageType;
+          Doc.rparen;
+        ]
+    | Ppat_constraint (pattern, typ) ->
+      Doc.concat [
+        printPattern pattern;
+        Doc.text ": ";
+        printTypExpr typ;
+      ]
+
+     (* Note: module(P : S) is represented as *)
+     (* Ppat_constraint(Ppat_unpack, Ptyp_package) *)
+    | Ppat_unpack stringLoc ->
+        Doc.concat [
+          Doc.text "module(";
+          Doc.text stringLoc.txt;
+          Doc.rparen;
+        ]
     | _ -> failwith "unsupported pattern"
 
   and printPatternRecordRow row =
@@ -7700,7 +7908,26 @@ module Printer = struct
   and printExpression (e : Parsetree.expression) =
     match e.pexp_desc with
     | Parsetree.Pexp_constant c -> printConstant c
-    | _ -> failwith "unsupported expression"
+    | Pexp_construct ({txt = Longident.Lident "()"}, _) -> Doc.text "()"
+    | Pexp_ident(longidentLoc) ->
+      printLongident longidentLoc.txt
+    | Pexp_tuple exprs ->
+      Doc.group(
+        Doc.concat([
+          Doc.text "/";
+          Doc.indent (
+            Doc.concat([
+              Doc.softLine;
+              Doc.join ~sep:(Doc.concat [Doc.text ","; Doc.line])
+                (List.map printExpression exprs)
+            ])
+          );
+          Doc.ifBreaks (Doc.text ",") Doc.nil;
+          Doc.softLine;
+          Doc.text "/";
+        ])
+      )
+    | _ -> failwith "expression not yet implemented in printer"
 
   and printAttribute (attr : Parsetree.attribute) =
     match attr with
@@ -7858,6 +8085,10 @@ end = struct
           locationInfo
       in
       prerr_string msg;
+      exit 1
+    | Failure txt ->
+      prerr_string txt;
+      prerr_newline();
       exit 1
     | _ -> exit 1
 end
