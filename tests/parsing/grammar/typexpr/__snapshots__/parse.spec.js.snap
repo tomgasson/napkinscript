@@ -70,7 +70,14 @@ type nonrec t = f:int -> string
 type nonrec t = f:int -> string
 type nonrec t = f:(int -> string) -> float
 type nonrec t = f:(int -> string) -> float
-type nonrec t = f:int -> string -> float"
+type nonrec t = f:int -> string -> float
+type nonrec t =
+  ((a:int -> ((b:int -> ((float)[@attr ]) -> unit)[@attrBeforeLblB ]))
+  [@attrBeforeLblA ])
+type nonrec t =
+  ((a:int -> ((b:int -> ((float)[@attr ]) -> unit)[@attrBeforeLblB ]))
+  [@attrBeforeLblA ])
+type nonrec t = ((a:int -> unit)[@attr ])"
 `;
 
 exports[`extension.js 1`] = `
@@ -92,6 +99,8 @@ type nonrec 'a t = (module Test with type a = 'a)
 type nonrec t = (module Console) ref
 let (devices : (string, (module DEVICE)) Hastbl.t) = Hashtbl.creat 17"
 `;
+
+exports[`parenthesized.js 1`] = `"type nonrec t = ((a:int -> unit)[@attr ])"`;
 
 exports[`poly.js 1`] = `
 "external getLogger :
@@ -173,9 +182,9 @@ exports[`uncurried.js 1`] = `
   mutable field: ((float -> int -> bool -> unit)[@bs ]) }
 type nonrec t = ((float -> int -> bool -> unit)[@bs ])
 type nonrec t =
-  ((float ->
-      ((int -> ((bool -> ((string -> unit)[@attr4 ]))[@bs ][@attr3 ]))
-      [@attr2 ]))[@bs ][@attr ])
+  ((((float)[@attr ]) ->
+      ((int)[@attr2 ]) ->
+        ((((bool)[@attr3 ]) -> ((string)[@attr4 ]) -> unit)[@bs ]))[@bs ])
 type nonrec t =
   ((float ->
       ((int)[@attr2 ]) ->

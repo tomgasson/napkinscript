@@ -30,3 +30,11 @@ type t = ~f: int => string
 type t = (~f: int => string) => float
 type t = ~f: (int => string) => float
 type t = ~f: int => string => float
+
+// if the @attr sits before the labelled arg, it's part of the arrow
+// otherwise it's part of the type_expr itself, like on the last float
+type t = (@attrBeforeLblA ~a: int, @attrBeforeLblB ~b: int, @attr float) => unit
+// above is equivalent too
+type t = @attrBeforeLblA ((~a: int) =>  (@attrBeforeLblB ((~b: int) => (@attr float => unit))) )
+
+type t = @attr ~a: int => unit

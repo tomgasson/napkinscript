@@ -5261,7 +5261,9 @@ Solution: you need to pull out each field you want explicitly."
       | _ ->
         let t = parseTypExpr p in
         Parser.expect Rparen p;
-        {t with ptyp_loc = mkLoc startPos p.prevEndPos}
+        {t with
+          ptyp_loc = mkLoc startPos p.prevEndPos;
+          ptyp_attributes = attrs @ t.ptyp_attributes}
       end
     | Uident _ | Lident _ | List ->
       let constr = parseValuePath p in
@@ -5377,6 +5379,10 @@ Solution: you need to pull out each field you want explicitly."
     *  | ~ident: type_expr
     *  | ~ident: type_expr=?
     *
+    * note:
+    *  | attrs ~ident: type_expr    -> attrs are on the arrow
+    *  | attrs type_expr            -> attrs are here part of the type_expr
+    *
     * uncurried_type_parameter ::=
     *  | . type_parameter
     *)
@@ -5399,7 +5405,9 @@ Solution: you need to pull out each field you want explicitly."
         (uncurried, attrs, Asttypes.Labelled name, typ, startPos)
       end
     | _ ->
-      (uncurried, attrs, Asttypes.Nolabel, parseTypExpr p, startPos)
+      let typ = parseTypExpr p in
+      let typWithAttributes = {typ with ptyp_attributes = attrs @ typ.ptyp_attributes} in
+      (uncurried, [], Asttypes.Nolabel, typWithAttributes, startPos)
 
   (* (int, ~x:string, float) *)
   and parseTypeParameters p =
@@ -5436,7 +5444,7 @@ Solution: you need to pull out each field you want explicitly."
       in
       Parser.expect EqualGreater p;
       let returnType = parseTypExpr ~alias:false p in
-      Ast_helper.Typ.arrow arg typ returnType
+      Ast_helper.Typ.arrow ~attrs arg typ returnType
     | _ ->
       let parameters = parseTypeParameters p in
       Parser.expect EqualGreater p;
@@ -7081,6 +7089,58 @@ Solution: you need to pull out each field you want explicitly."
     (loc, (attrId, payload))
 end
 
+(* Collection of utilities to view the ast in a more a convenient form,
+ * allowing for easier processing.
+ * Example: given a ptyp_arrow type, what are its arguments and what is the
+ * returnType? *)
+module ParsetreeViewer : sig
+  (* Restructures a nested tree of arrow types into its args & returnType
+   * The parsetree contains: a => b => c => d, for printing purposes
+   * we restructure the tree into (a, b, c) and its returnType d *)
+  val arrowType: Parsetree.core_type ->
+      Parsetree.attributes *
+      (Parsetree.attributes * Asttypes.arg_label * Parsetree.core_type) list *
+      Parsetree.core_type
+
+  (* filters @bs out of the provided attributes *)
+  val processUncurriedAttribute: Parsetree.attributes -> bool * Parsetree.attributes
+end = struct
+  open Parsetree
+
+  let arrowType ct =
+    let rec process attrsBefore acc typ = match typ with
+    | {ptyp_desc = Ptyp_arrow (Nolabel as lbl, typ1, typ2); ptyp_attributes = []} ->
+      let arg = ([], lbl, typ1) in
+      process attrsBefore (arg::acc) typ2
+    | {ptyp_desc = Ptyp_arrow (Nolabel as lbl, typ1, typ2); ptyp_attributes = [({txt ="bs"}, _) ] as attrs} ->
+      let arg = (attrs, lbl, typ1) in
+      process attrsBefore (arg::acc) typ2
+    | {ptyp_desc = Ptyp_arrow (Nolabel, typ1, typ2); ptyp_attributes = attrs} as returnType ->
+      let args = List.rev acc in
+      (attrsBefore, args, returnType)
+    | {ptyp_desc = Ptyp_arrow ((Labelled _ | Optional _) as lbl, typ1, typ2); ptyp_attributes = attrs} ->
+      let arg = (attrs, lbl, typ1) in
+      process attrsBefore (arg::acc) typ2
+    | typ ->
+      (attrsBefore, List.rev acc, typ)
+    in
+    begin match ct with
+    | {ptyp_desc = Ptyp_arrow (Nolabel, _typ1, _typ2); ptyp_attributes = attrs} as typ ->
+      process attrs [] {typ with ptyp_attributes = []}
+    | typ -> process [] [] typ
+    end
+
+  let processUncurriedAttribute attrs =
+    let rec process uncurriedSpotted acc attrs =
+      match attrs with
+      | [] -> (uncurriedSpotted, List.rev acc)
+      | ({Location.txt = "bs"}, _)::rest -> process true acc rest
+      | attr::rest -> process uncurriedSpotted (attr::acc) rest
+    in
+    process false [] attrs
+
+end
+
 module Printer = struct
   (* TODO: should this go inside a ast utility module? *)
   let rec collectPatternsFromListConstruct acc pattern =
@@ -7490,31 +7550,7 @@ module Printer = struct
       )
       end
     | Ptyp_arrow _ ->
-      let rec parseArrowParsetree acc typ = match (typ : Parsetree.core_type) with
-      | {ptyp_desc = Ptyp_arrow (lbl, typ1, typ2)} ->
-        let arg = (lbl, typ1) in
-        parseArrowParsetree (arg::acc) typ2
-      | typ ->
-        (acc, typ)
-      in
-      let (args, returnType) = parseArrowParsetree [] typExpr in
-      let renderedArgs = match args with
-      | [] -> Doc.nil
-      | [(_, n)] ->  printTypExpr n
-      | args -> Doc.concat [
-        Doc.text "(";
-        Doc.indent (
-          Doc.concat [
-            Doc.softLine;
-            Doc.join ~sep:(Doc.concat [Doc.comma; Doc.line]) (
-              List.map printTypeParameter args
-            )
-          ]
-        );
-        Doc.softLine;
-        Doc.text ")";
-      ]
-      in
+      let (attrsBefore, args, returnType) = ParsetreeViewer.arrowType typExpr in
       let returnTypeNeedsParens = match returnType.ptyp_desc with
       | Ptyp_alias _ -> true
       | _ -> false
@@ -7525,13 +7561,77 @@ module Printer = struct
           Doc.concat [Doc.lparen; doc; Doc.rparen]
         else doc
       in
-      Doc.group (
-        Doc.concat [
-          renderedArgs;
-          Doc.text " => ";
-          returnDoc;
-        ]
-      )
+      let (isUncurried, attrs) = ParsetreeViewer.processUncurriedAttribute attrsBefore in
+      begin match args with
+      | [] -> Doc.nil
+      | [([], Nolabel, n)] when not isUncurried ->
+          let hasAttrsBefore = not (attrs = []) in
+          let attrs = if hasAttrsBefore then
+            Doc.concat [
+              Doc.join ~sep:Doc.line (List.map printAttribute attrsBefore);
+              Doc.space;
+            ]
+          else Doc.nil
+          in
+          Doc.group (
+            Doc.concat [
+              Doc.group attrs;
+              Doc.group (
+                if hasAttrsBefore then
+                  Doc.concat [
+                    Doc.lparen;
+                    Doc.indent (
+                      Doc.concat [
+                        Doc.softLine;
+                        printTypExpr n;
+                        Doc.text " => ";
+                        returnDoc;
+                      ]
+                    );
+                    Doc.softLine;
+                    Doc.rparen
+                  ]
+                else
+                Doc.concat [
+                  printTypExpr n;
+                  Doc.text " => ";
+                  returnDoc;
+                ]
+              )
+            ]
+          )
+      | args ->
+        let attrs = match attrs with
+        | [] -> Doc.nil
+        | attrs -> Doc.concat [
+            Doc.join ~sep:Doc.line (List.map printAttribute attrs);
+            Doc.space;
+          ]
+        in
+        let renderedArgs = Doc.concat [
+          attrs;
+          Doc.text "(";
+          Doc.indent (
+            Doc.concat [
+              Doc.softLine;
+              if isUncurried then Doc.concat [Doc.dot; Doc.space] else Doc.nil;
+              Doc.join ~sep:(Doc.concat [Doc.comma; Doc.line]) (
+                List.map printTypeParameter args
+              )
+            ]
+          );
+          Doc.trailingComma;
+          Doc.softLine;
+          Doc.text ")";
+        ] in
+        Doc.group (
+          Doc.concat [
+            renderedArgs;
+            Doc.text " => ";
+            returnDoc;
+          ]
+        )
+      end
     | Ptyp_tuple types -> printTupleType ~inline:false types
     | Ptyp_object (fields, openFlag) ->
       printBsObjectSugar ~inline:false fields openFlag
@@ -7548,7 +7648,20 @@ module Printer = struct
     | Ptyp_class _ -> failwith "classes are not supported in types"
     | Ptyp_variant _ -> failwith "Polymorphic variants currently not supported"
     in
-    renderedType
+    let shouldPrintItsOwnAttributes = match typExpr.ptyp_desc with
+    | Ptyp_arrow _ -> true (* es6 arrow types print their own attributes *)
+    | _ -> false
+    in
+    begin match typExpr.ptyp_attributes with
+    | [] -> renderedType
+    | attrs when not shouldPrintItsOwnAttributes ->
+      Doc.group (Doc.concat [
+        Doc.join ~sep:Doc.line (List.map printAttribute attrs);
+        Doc.line;
+        renderedType;
+      ])
+    | _ -> renderedType
+    end
 
   and printBsObjectSugar ~inline fields openFlag =
     let flag = match openFlag with
@@ -7602,18 +7715,36 @@ module Printer = struct
     | _ -> Doc.nil
 
   (* es6 arrow type arg
-   * type t = (~foo=string, ~bar=float, unit) => unit
-   * i.e. ~foo=string, ~bar=float *)
-  and printTypeParameter ((lbl, typ) : Asttypes.arg_label * Parsetree.core_type) =
+   * type t = (~foo: string, ~bar: float=?, unit) => unit
+   * i.e. ~foo: string, ~bar: float *)
+  and printTypeParameter (attrs, lbl, typ)  =
+    let (isUncurried, attrs) = ParsetreeViewer.processUncurriedAttribute attrs in
+    let uncurried = if isUncurried then Doc.concat [Doc.dot; Doc.space] else Doc.nil in
+    let attrs = match attrs with
+    | [] -> Doc.nil
+    | attrs -> Doc.concat [
+      Doc.join ~sep:Doc.line (List.map printAttribute attrs);
+      Doc.line;
+    ] in
     let label = match lbl with
     | Asttypes.Nolabel -> Doc.nil
-    | Labelled lbl -> Doc.text ("~" ^ lbl ^ "=")
-    | Optional lbl -> Doc.text ("?" ^ lbl ^ "=")
+    | Labelled lbl -> Doc.text ("~" ^ lbl ^ ": ")
+    | Optional lbl -> Doc.text ("~" ^ lbl ^ ": ")
     in
-    Doc.concat [
-      label;
-      printTypExpr typ;
-    ]
+    let optionalIndicator = match lbl with
+    | Asttypes.Nolabel
+    | Labelled _ -> Doc.nil
+    | Optional lbl -> Doc.text "=?"
+    in
+    Doc.group (
+      Doc.concat [
+        uncurried;
+        attrs;
+        label;
+        printTypExpr typ;
+        optionalIndicator;
+      ]
+    )
 
   (*
    * {

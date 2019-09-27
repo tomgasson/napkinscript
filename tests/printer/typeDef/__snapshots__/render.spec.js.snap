@@ -28,9 +28,9 @@ type t<
   'superlongthing,
   'superlongthing,
 > = Module.Long.With.Very.VeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeryLongName.t
-  constraint 't = ('a, 's) => 'sub
+  constraint 't = ('s, 'a) => 'sub
 type t = 't
-  constraint 't = ('a, 's) => 'sub
+  constraint 't = ('s, 'a) => 'sub
 
 "
 `;
@@ -47,7 +47,7 @@ type t = private ..
 type t<'a, 'b> = ..
 type t<'a, 'b> = private ..
 type t = ..
-  constraint 't = ('a, 's) => 'sub
+  constraint 't = ('s, 'a) => 'sub
 
 "
 `;
@@ -123,7 +123,7 @@ type t<
   -'superlongthing,
   +'superlongthing,
 >
-  constraint 't = ('action, 'state) => 'nextSubtree
+  constraint 't = ('state, 'action) => 'nextSubtree
 
 "
 `;
@@ -172,8 +172,8 @@ type t<'a> =
   | Delegating(
       'ctx,
       t<'b>,
-      ('a, t<'b>, 'ctx) => unit,
-      (option<exn>, t<'b>, 'ctx) => unit,
+      ('ctx, t<'b>, 'a) => unit,
+      ('ctx, t<'b>, option<exn>) => unit,
       ref<bool>,
     ): t<'a>
 type t<'a> = 
@@ -181,8 +181,8 @@ type t<'a> =
   | Delegating(
       'ctx,
       t<'b>,
-      ('a, t<'b>, 'ctx) => unit,
-      (option<exn>, t<'b>, 'ctx) => unit,
+      ('ctx, t<'b>, 'a) => unit,
+      ('ctx, t<'b>, option<exn>) => unit,
       ref<bool>,
     ): t<
       'superLongTypeName,
@@ -192,11 +192,11 @@ type t<'a> =
     >
 type jsx<'nature> = 
   | Empty: jsx<empty>
-  | Cons(elem</'s1, 'a1/, 'sub1>, jsx<'tl>): jsx</('s1, 'a1) => 'sub1, 'tl/>
+  | Cons(elem</'s1, 'a1/, 'sub1>, jsx<'tl>): jsx</('a1, 's1) => 'sub1, 'tl/>
 type jsx<'nature> = 
   | Empty: jsx<empty>
   | Cons(elem</'s1, 'a1/, 'sub1>, jsx<'tl>): jsxxxxxxxxxxxxxxxxx</
-      ('s1, 'a1) => 'sub1,
+      ('a1, 's1) => 'sub1,
       'tl
     />
 type color = 
