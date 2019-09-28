@@ -4,7 +4,9 @@ exports[`abstract.js 1`] = `
 "type t
 type t<'a, 'b>
 type t = string
+type t = @attr string
 type t = private string
+type t = private @attr string
 type t = Module.Long.With.Very.VeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeryLongName.t
 type t = private Module.Long.With.Very.VeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeryLongName.t
 type t<
@@ -35,8 +37,31 @@ type t = 't
 "
 `;
 
-exports[`constraint.js 1`] = `
+exports[`attributes.js 1`] = `
+"@attr type t = float
+@attr
+type t = float
+@attr @attr @attr @attr @attr @attr @attr @attr @attr @attr @attr @attr
+type t = int
+@attr @attr @attr @attr @attr @attr @attr @attr @attr @attr @attr @attr
+type t = int
+@attrWithSuperLongIdentifeirName
+@attrWithSuperLongIdentifeirName
+@attrWithSuperLongIdentifeirName
+@attrWithSuperLongIdentifeirName
+type t = string
+@attrWithSuperLongIdentifeirName
+@attrWithSuperLongIdentifeirName
+@attrWithSuperLongIdentifeirName
+@attrWithSuperLongIdentifeirName
+type t = string
+
 "
+`;
+
+exports[`constraint.js 1`] = `
+"type t = Reducer
+  constraint 't = @attr ('state, 'action) => 'nextSubtree
 
 "
 `;
@@ -95,6 +120,40 @@ type user = {
   age: int,
 }
   constraint 't = string
+type t = private {name: string, age: int}
+type t = private {
+  name: string,
+  age: int,
+}
+type t = User.t = private {name: string, age: int}
+type t = @attr User.t = private {name: string, age: int}
+type t = User.t = private {
+  name: string,
+  age: int,
+}
+type user = {
+  @attr name: string,
+  @attr age: int,
+  @attrAbove
+  isAdmin: bool,
+  @attrAbove
+  hairStyle: Hair.t,
+}
+type user = {
+  @attr @attr @attr @attr @attr @attr @attr @attr @attr @attr @attr @attr
+  name: string,
+  @attr age: int,
+  @attrAbove @attrAbove @attrAbove @attrAbove @attrAbove @attrAbove @attrAbove
+  isAdmin: bool,
+  @attrAbove
+  @attrSuperLongNaaaaaaaaaaaaaaameSooooooooLong
+  @attrSuperLongNaaaaaaaaaaaaaaameSooooooooLong
+  hairStyle: Hair.t,
+  @attrAbove
+  @attrSuperLongNaaaaaaaaaaaaaaameSooooooooLong
+  @attrSuperLongNaaaaaaaaaaaaaaameSooooooooLong
+  hairStyle: Hair.t,
+}
 
 "
 `;
@@ -130,19 +189,43 @@ type t<
 
 exports[`variant.js 1`] = `
 "type color = Red | Blue
-type color = 
+type color =
+  | Red
+  | Blue
+  | SuperLongColoooooooooourName
+  | AnotherSuuuuuuuuuperLongName
+type color = private Red | Blue
+type color =
+  private
+  | Red
+  | Blue
+  | Green
+type color =
+  private
+  | Red
+  | Blue
+  | SuperLongColoooooooooourName
+  | AnotherSuuuuuuuuuperLongName
+type color = Colour.t = private Red | Blue
+type color = Colour.t =
+  private
+  | Red
+  | Blue
+  | Green
+type color = Colour.t =
+  private
   | Red
   | Blue
   | SuperLongColoooooooooourName
   | AnotherSuuuuuuuuuperLongName
 type color = Red: color | Blue: color
-type color = 
+type color =
   | Red: color
   | Blue: color
   | SuperLongColoooooooooourName: color
   | AnotherSuuuuuuuuuperLongName: color
 type color = Rgb(float, float, float) | Hex(int)
-type color = 
+type color =
   | Rgb(
       superLongTypeName,
       superLongTypeName,
@@ -155,7 +238,7 @@ type color =
       superLongTypeName,
       superLongTypeName,
     )
-type node<_, 'value> = 
+type node<_, 'value> =
   | Root({
       mutable value: 'value,
       mutable updatedTime: float,
@@ -167,7 +250,7 @@ type node<_, 'value> =
       updateF: 'value => 'value,
       mutable updatedTime: float,
     }): node<derived, 'value>
-type t<'a> = 
+type t<'a> =
   | AutoDisposing('a => unit, option<exn> => unit, ref<bool>)
   | Delegating(
       'ctx,
@@ -176,7 +259,7 @@ type t<'a> =
       ('ctx, t<'b>, option<exn>) => unit,
       ref<bool>,
     ): t<'a>
-type t<'a> = 
+type t<'a> =
   | AutoDisposing('a => unit, option<exn> => unit, ref<bool>)
   | Delegating(
       'ctx,
@@ -190,23 +273,40 @@ type t<'a> =
       'superLongTypeName,
       'superLongTypeName,
     >
-type jsx<'nature> = 
+type jsx<'nature> =
   | Empty: jsx<empty>
   | Cons(elem</'s1, 'a1/, 'sub1>, jsx<'tl>): jsx</('a1, 's1) => 'sub1, 'tl/>
-type jsx<'nature> = 
+type jsx<'nature> =
   | Empty: jsx<empty>
   | Cons(elem</'s1, 'a1/, 'sub1>, jsx<'tl>): jsxxxxxxxxxxxxxxxxx</
       ('a1, 's1) => 'sub1,
       'tl
     />
-type color = 
-  | Red
-  | Blue
+type color = Red | Blue
   constraint 't = string
-type result<'good, 'bad> = 
+type result<'good, 'bad> =
   | Good('good)
   | Bad('bad)
   constraint 'good = boolean constraint 'bad = float
+type color =
+  | @attr Red
+  | @attr Blue
+type gadtType<'x> =
+  | Foo(int): @onFirstRow gadtType<int>
+  | Bar(@onInt int): @onSecondRow gadtType<unit>
+type color<'value> =
+  | Rgb(
+      @attr superLongTypeName,
+      @attr superLongTypeName,
+      @attr superLongTypeName,
+      @attr superLongTypeName,
+    ): @toRgb color<float>
+  | Hex(
+      @attr superLongTypeName,
+      @attr superLongTypeName,
+      @attr superLongTypeName,
+      @attr superLongTypeName,
+    ): @toHex color<float>
 
 "
 `;

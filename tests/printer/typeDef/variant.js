@@ -1,6 +1,23 @@
 type color = Red | Blue
 type color = Red | Blue | SuperLongColoooooooooourName | AnotherSuuuuuuuuuperLongName
 
+type color = private Red | Blue
+type color =
+  private
+  | Red
+  | Blue
+  | Green
+type color = private Red | Blue | SuperLongColoooooooooourName | AnotherSuuuuuuuuuperLongName
+
+type color = Colour.t = private Red | Blue
+type color = Colour.t =
+  private
+  | Red
+  | Blue
+  | Green
+type color = Colour.t = private Red | Blue | SuperLongColoooooooooourName | AnotherSuuuuuuuuuperLongName
+
+
 // gadt
 type color = | Red: color | Blue: color
 type color = Red: color | Blue: color | SuperLongColoooooooooourName: color | AnotherSuuuuuuuuuperLongName: color
@@ -57,3 +74,15 @@ type result<'good, 'bad> =
   | Bad('bad)
   constraint 'good = boolean
   constraint 'bad = float 
+
+type color =
+  | @attr Red
+  | @attr Blue
+
+type gadtType<'x> =
+| Foo(int): @onFirstRow gadtType<int>
+| Bar(@onInt int): @onSecondRow gadtType<unit>
+
+type color<'value> =
+  | Rgb(@attr superLongTypeName, @attr superLongTypeName, @attr superLongTypeName, @attr superLongTypeName) : @toRgb color<float>
+  | Hex(@attr superLongTypeName, @attr superLongTypeName, @attr superLongTypeName, @attr superLongTypeName) : @toHex color<float>

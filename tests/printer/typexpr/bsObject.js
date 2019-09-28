@@ -8,3 +8,11 @@ type t = {.. "age": int}
 type magicallyLong = {.."age": int, "name": string, "moreFields": veryVeryVeryLongtype, "superLongNameThat": whyDoesATypeWithThisAmountOfCharactersMakeItIntoThisFile, "because": testingLineBreaks}
 
 external test: (foo, bar, baz) => {.."age": int, "name": string, "moreFields": veryVeryVeryLongtype, "superLongNameThat": whyDoesATypeWithThisAmountOfCharactersMakeItIntoThisFile, "because": testingLineBreaks} = "primitive"
+
+
+// attributes
+type user = @attr {"age": @attr int}
+type magic = @attr {..}
+type t = @attr {.. "age": int}
+
+external test: (foo, bar, baz) => @attr {.."age": int, "name": string, "moreFields": veryVeryVeryLongtype, "superLongNameThat": whyDoesATypeWithThisAmountOfCharactersMakeItIntoThisFile, "because": testingLineBreaks} = "primitive"

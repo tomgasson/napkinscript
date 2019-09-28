@@ -18,4 +18,36 @@ type user = {
   name: 't,
   age: int
 } constraint 't = string
+
+type t = private {name: string, age: int,}
+type t = private {
+  name: string,
+  age: int,
+}
+
+type t = User.t = private {name: string, age: int,}
+type t = @attr User.t = private {name: string, age: int,}
+type t = User.t = private {
+  name: string,
+  age: int
+}
   
+// attributes
+type user = {
+  @attr name: string,
+  @attr age: int,
+  @attrAbove
+  isAdmin: bool,
+  @attrAbove
+  hairStyle: Hair.t,
+}
+
+type user = {
+  @attr @attr @attr @attr @attr @attr @attr @attr @attr @attr @attr @attr name: string,
+  @attr age: int,
+  @attrAbove @attrAbove @attrAbove @attrAbove @attrAbove @attrAbove @attrAbove
+  isAdmin: bool,
+  @attrAbove @attrSuperLongNaaaaaaaaaaaaaaameSooooooooLong @attrSuperLongNaaaaaaaaaaaaaaameSooooooooLong
+  hairStyle: Hair.t,
+  @attrAbove @attrSuperLongNaaaaaaaaaaaaaaameSooooooooLong @attrSuperLongNaaaaaaaaaaaaaaameSooooooooLong hairStyle: Hair.t
+}

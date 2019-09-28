@@ -41,3 +41,5 @@ let x: /
   superLongTypeNameThatWillBreak,
   superLongTypeNameThatWillBreak
 / = /1, 2/
+
+type t = @attr / @attr string, @attr int, @attr float/

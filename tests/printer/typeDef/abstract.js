@@ -3,7 +3,9 @@ type t
 type t<'a, 'b>
 
 type t = string
+type t = @attr string
 type t = private string
+type t = private @attr string
 type t = Module.Long.With.Very.VeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeryLongName.t
 type t = private Module.Long.With.Very.VeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeryLongName.t
 

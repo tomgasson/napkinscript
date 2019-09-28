@@ -19,3 +19,9 @@ let t: list<
 type t = Option.t</tupleTyp1, tupleTyp2, tupleTyp3/>
 type t = Option.t</tupleTyp1, tupleTyp2, tupleTyp3, tupleTyp3, tupleTyp3, tupleTyp3, tupleTyp3, tupleTyp3, tupleTyp3, tupleTyp3/>
 let t: Option.t</tupleTyp1, tupleTyp2, tupleTyp3, tupleTyp3, tupleTyp3, tupleTyp3, tupleTyp3, tupleTyp3, tupleTyp3, tupleTyp3, tupleTyp3, tupleTyp3/> = x
+
+type t = @attrs Option.t<string,>
+
+let t: @attrs list<{"age": int}> = x
+
+external color : @attr colour<'t> = "c_color"

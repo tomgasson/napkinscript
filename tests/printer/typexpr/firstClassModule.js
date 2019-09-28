@@ -17,3 +17,9 @@ type t<'a> = module(Test with type a = 'a)
 type t = ref<module(Console)>
 
 let devices: Hastbl.t<string, module(DEVICE)> = xyz
+
+
+// attributes
+type t = @attr module(S)
+external foo: @attr module(S) = "primitive"
+let devices: @attr Hastbl.t<string, module(DEVICE)> = xyz

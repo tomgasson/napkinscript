@@ -22,6 +22,7 @@ module Doc = struct
   let line = LineBreak Classic
   let hardLine = LineBreak Hard
   let softLine = LineBreak Soft
+  let literalLine = LineBreak Literal
   let text s = Text s
   let concat l = Concat l
   let indent d = Indent d
@@ -2919,12 +2920,12 @@ Solution: you need to pull out each field you want explicitly."
   (* {"foo": bar} -> Js.t({. foo: bar})
    * {.. "foo": bar} -> Js.t({.. foo: bar})
    * {..} -> Js.t({..}) *)
-  let makeBsObjType ?attrs ~loc ~closed rows =
+  let makeBsObjType ~attrs ~loc ~closed rows =
     let obj = Ast_helper.Typ.object_ ~loc rows closed in
     let jsDotTCtor =
       Location.mkloc (Longident.Ldot (Longident.Lident "Js", "t")) loc
     in
-    Ast_helper.Typ.constr ~loc ?attrs jsDotTCtor [obj]
+    Ast_helper.Typ.constr ~loc ~attrs jsDotTCtor [obj]
 
   (* TODO: diagnostic reporting *)
   let lidentOfPath longident =
@@ -3511,7 +3512,8 @@ Solution: you need to pull out each field you want explicitly."
     begin match p.token with
     | Colon ->
       Parser.next p;
-      let packageType = parsePackageType p in
+      let packageTypAttrs = parseAttributes p in
+      let packageType = parsePackageType ~attrs:packageTypAttrs p in
       Parser.expect Rparen p;
       let loc = mkLoc startPos p.prevEndPos in
       let unpack = Ast_helper.Pat.unpack ~loc:uident.loc uident in
@@ -3862,7 +3864,8 @@ Solution: you need to pull out each field you want explicitly."
     begin match p.Parser.token with
     | Colon ->
       Parser.next p;
-      let packageType = parsePackageType p in
+      let attrs = parseAttributes p in
+      let packageType = parsePackageType ~attrs p in
       Parser.expect Rparen p;
       let loc = mkLoc startPos modEndLoc in
       let firstClassModule = Ast_helper.Exp.pack ~loc modExpr in
@@ -5249,7 +5252,7 @@ Solution: you need to pull out each field you want explicitly."
       Parser.next p;
       Ast_helper.Typ.any ~loc:(mkLoc startPos endPos) ~attrs ()
     | Forwardslash ->
-      parseTupleType p
+      parseTupleType ~attrs p
     | Lparen ->
       Parser.next p;
       begin match p.Parser.token with
@@ -5272,14 +5275,14 @@ Solution: you need to pull out each field you want explicitly."
     | Module ->
       Parser.next p;
       Parser.expect Lparen p;
-      let packageType = parsePackageType p in
+      let packageType = parsePackageType ~attrs p in
       Parser.expect Rparen p;
       packageType
     | Percent ->
       let (loc, extension) = parseExtension p in
-      Ast_helper.Typ.extension ~loc extension
+      Ast_helper.Typ.extension ~attrs ~loc extension
     | Lbrace ->
-      parseBsObjectType p
+      parseBsObjectType ~attrs p
     | token ->
       begin match Recover.skipTokensAndMaybeRetry p ~isStartOfGrammar:Grammar.isAtomicTypExprStart with
       | Retry ->
@@ -5296,8 +5299,7 @@ Solution: you need to pull out each field you want explicitly."
       | modtype-path
       ∣ modtype-path with package-constraint  { and package-constraint }
    *)
-  and parsePackageType p =
-    let attrs = parseAttributes p in
+  and parsePackageType ~attrs p =
     let startPos = p.Parser.startPos in
     let modTypePath = parseModuleLongIdent p in
     begin match p.Parser.token with
@@ -5330,7 +5332,7 @@ Solution: you need to pull out each field you want explicitly."
     let typ = parseTypExpr p in
     (typeConstr, typ)
 
-  and parseBsObjectType p =
+  and parseBsObjectType ~attrs p =
     let startPos = p.Parser.startPos in
     Parser.expect Lbrace p;
     let objectType = match p.Parser.token with
@@ -5346,7 +5348,7 @@ Solution: you need to pull out each field you want explicitly."
       in
       Parser.expect Rbrace p;
       let loc = mkLoc startPos p.prevEndPos in
-      makeBsObjType ~loc ~closed:closedFlag fields
+      makeBsObjType ~attrs ~loc ~closed:closedFlag fields
     | _ ->
       let closedFlag = Asttypes.Closed in
       let fields =
@@ -5358,7 +5360,7 @@ Solution: you need to pull out each field you want explicitly."
       in
       Parser.expect Rbrace p;
       let loc = mkLoc startPos p.prevEndPos in
-      makeBsObjType ~loc ~closed:closedFlag fields
+      makeBsObjType ~attrs ~loc ~closed:closedFlag fields
     in
     objectType
 
@@ -5500,14 +5502,14 @@ Solution: you need to pull out each field you want explicitly."
     (* Parser.eatBreadcrumb p; *)
     typ
 
-  and parseTupleType p =
+  and parseTupleType ~attrs p =
     let startPos = p.Parser.startPos in
     Parser.expect Forwardslash p;
     let types =
       parseCommaDelimitedList ~grammar:Grammar.TypExprList ~closing:Forwardslash ~f:parseTypExpr p
     in
     Parser.expect Forwardslash p;
-    Ast_helper.Typ.tuple ~loc:(mkLoc startPos p.prevEndPos) types
+    Ast_helper.Typ.tuple ~attrs ~loc:(mkLoc startPos p.prevEndPos) types
 
   (* be more robust: option(<node<int>>) option<<node<int>> *)
   and parseTypeConstructorArg p =
@@ -5642,7 +5644,7 @@ Solution: you need to pull out each field you want explicitly."
           in
           Parser.expect Rbrace p;
           let loc = mkLoc startPos p.prevEndPos in
-          let typ = makeBsObjType ~loc ~closed:closedFlag fields in
+          let typ = makeBsObjType ~attrs:[] ~loc ~closed:closedFlag fields in
           Parser.optional p Comma |> ignore;
           let moreArgs =
             parseCommaDelimitedList
@@ -5690,7 +5692,7 @@ Solution: you need to pull out each field you want explicitly."
               ) in
               Parser.expect Rbrace p;
               let loc = mkLoc startPos p.prevEndPos in
-              let typ = makeBsObjType ~loc ~closed:closedFlag fields in
+              let typ = makeBsObjType ~attrs:[]  ~loc ~closed:closedFlag fields in
               Parser.optional p Comma |> ignore;
               let moreArgs =
                 parseCommaDelimitedList
@@ -5977,7 +5979,7 @@ Solution: you need to pull out each field you want explicitly."
       Parser.expect Rbrace p;
       let loc = mkLoc startPos p.prevEndPos in
       let typ =
-        makeBsObjType ~loc ~closed:closedFlag fields
+        makeBsObjType ~attrs:[] ~loc ~closed:closedFlag fields
         |> parseTypeAlias p
       in
       (Some typ, Asttypes.Public, Parsetree.Ptype_abstract)
@@ -6020,7 +6022,7 @@ Solution: you need to pull out each field you want explicitly."
           Parser.expect Rbrace p;
           let loc = mkLoc startPos p.prevEndPos in
           let typ =
-            makeBsObjType ~loc ~closed:closedFlag fields |> parseTypeAlias p
+            makeBsObjType ~attrs:[] ~loc ~closed:closedFlag fields |> parseTypeAlias p
           in
           (Some typ, Asttypes.Public, Parsetree.Ptype_abstract)
       | _ ->
@@ -6365,7 +6367,8 @@ Solution: you need to pull out each field you want explicitly."
       begin match p.Parser.token with
       | Colon ->
         Parser.next p;
-        let packageType = parsePackageType p in
+        let attrs = parseAttributes p in
+        let packageType = parsePackageType ~attrs p in
         Parser.expect Rparen p;
         let loc = mkLoc startPos p.prevEndPos in
         let constraintExpr = Ast_helper.Exp.constraint_
@@ -7210,18 +7213,22 @@ module Printer = struct
         Doc.text valueDescription.pval_name.txt;
         Doc.text ": ";
         printTypExpr valueDescription.pval_type;
-        Doc.text " =";
-        Doc.indent(
+        Doc.group (
           Doc.concat [
-            Doc.line;
-            Doc.join ~sep:Doc.line (
-              List.map(fun s -> Doc.concat [
-                Doc.text "\"";
-                Doc.text s;
-                Doc.text "\"";
-              ])
-              valueDescription.pval_prim
-            );
+            Doc.text " =";
+            Doc.indent(
+              Doc.concat [
+                Doc.line;
+                Doc.join ~sep:Doc.line (
+                  List.map(fun s -> Doc.concat [
+                    Doc.text "\"";
+                    Doc.text s;
+                    Doc.text "\"";
+                  ])
+                  valueDescription.pval_prim
+                );
+              ]
+            )
           ]
         )
       ]
@@ -7260,6 +7267,7 @@ module Printer = struct
    *  | Ptype_open
    *)
   and printTypeDeclaration ~recFlag i (td: Parsetree.type_declaration) =
+    let attrs = printAttributes ~loc:td.ptype_loc td.ptype_attributes in
     let prefix = if i > 0 then
       Doc.text "and "
     else
@@ -7301,20 +7309,48 @@ module Printer = struct
         printPrivateFlag td.ptype_private;
         Doc.text "..";
       ]
-    | Ptype_record(lds) -> Doc.concat [
+    | Ptype_record(lds) ->
+      let manifest = match td.ptype_manifest with
+      | None -> Doc.nil
+      | Some(typ) -> Doc.concat [
+          Doc.text " = ";
+          printTypExpr typ;
+        ]
+      in
+      Doc.concat [
+        manifest;
         Doc.text " = ";
+        printPrivateFlag td.ptype_private;
         printRecordDeclaration lds;
       ]
     | Ptype_variant(cds) ->
-      let overMultipleLines =
-        td.ptype_loc.loc_end.pos_lnum > td.ptype_loc.loc_start.pos_lnum
+      let manifest = match td.ptype_manifest with
+      | None -> Doc.nil
+      | Some(typ) -> Doc.concat [
+          Doc.text " = ";
+          printTypExpr typ;
+        ]
       in
       Doc.concat [
-        Doc.text " = ";
-        printConstructorDeclarations ~forceBreak:overMultipleLines cds;
+        manifest;
+        Doc.text " =";
+        printConstructorDeclarations ~privateFlag:td.ptype_private cds;
       ]
     in
-    let constraints = match td.ptype_cstrs with
+    let constraints = printTypeDefinitionConstraints td.ptype_cstrs in
+    Doc.group (
+      Doc.concat [
+        attrs;
+        prefix;
+        typeName;
+        typeParams;
+        manifestAndKind;
+        constraints;
+      ]
+    )
+
+  and printTypeDefinitionConstraints cstrs =
+    match cstrs with
     | [] -> Doc.nil
     | cstrs -> Doc.indent (
         Doc.group (
@@ -7328,14 +7364,6 @@ module Printer = struct
           ]
         )
       )
-    in
-    Doc.concat [
-      prefix;
-      typeName;
-      typeParams;
-      manifestAndKind;
-      constraints;
-    ]
 
   and printTypeDefinitionConstraint ((typ1, typ2, _loc ): Parsetree.core_type * Parsetree.core_type * Location.t) =
     Doc.concat [
@@ -7383,11 +7411,24 @@ module Printer = struct
       ]
     )
 
-  and printConstructorDeclarations ~forceBreak (cds: Parsetree.constructor_declaration list) =
+  and printConstructorDeclarations ~privateFlag (cds: Parsetree.constructor_declaration list) =
+    let forceBreak = match (cds, List.rev cds) with
+    | (first::_, last::_) ->
+       first.pcd_loc.loc_start.pos_lnum < last.pcd_loc.loc_end.pos_lnum
+    | _ -> false
+    in
+    let privateFlag = match privateFlag with
+    | Asttypes.Private -> Doc.concat [
+        Doc.text "private";
+        Doc.line;
+      ]
+    | Public -> Doc.nil
+    in
     Doc.breakableGroup ~forceBreak (
       Doc.indent (
         Doc.concat [
-          Doc.softLine;
+          Doc.line;
+          privateFlag;
           Doc.join ~sep:Doc.line (
             List.mapi printConstructorDeclaration cds
           )
@@ -7405,6 +7446,7 @@ module Printer = struct
    * }
    *)
   and printConstructorDeclaration i (cd : Parsetree.constructor_declaration) =
+    let attrs = printAttributes cd.pcd_attributes in
     let bar = if i > 0 then Doc.text "| "
       else Doc.ifBreaks (Doc.text "| ") Doc.nil
     in
@@ -7421,9 +7463,14 @@ module Printer = struct
     in
     Doc.concat [
       bar;
-      constrName;
-      constrArgs;
-      gadt;
+      Doc.group (
+        Doc.concat [
+          attrs; (* TODO: fix parsing of attributes, so when can print them above the bar? *)
+          constrName;
+          constrArgs;
+          gadt;
+        ]
+      )
     ]
 
   and printConstructorArguments (cdArgs : Parsetree.constructor_arguments) =
@@ -7469,17 +7516,21 @@ module Printer = struct
 
 
   and printLabelDeclaration (ld : Parsetree.label_declaration) =
+    let attrs = printAttributes ~loc:ld.pld_name.loc ld.pld_attributes in
     let mutableFlag = match ld.pld_mutable with
     | Mutable -> Doc.text "mutable "
     | Immutable -> Doc.nil
     in
     let name = Doc.text ld.pld_name.txt in
-    Doc.concat [
-      mutableFlag;
-      name;
-      Doc.text ": ";
-      printTypExpr ld.pld_type;
-    ]
+    Doc.group (
+      Doc.concat [
+        attrs;
+        mutableFlag;
+        name;
+        Doc.text ": ";
+        printTypExpr ld.pld_type;
+      ]
+    )
 
   and printTypExpr (typExpr : Parsetree.core_type) =
     let renderedType = match typExpr.ptyp_desc with
@@ -7505,7 +7556,18 @@ module Printer = struct
       in
       Doc.concat [typ; Doc.text " as "; Doc.text ("'" ^ alias)]
     | Ptyp_constr({txt = Longident.Ldot(Longident.Lident "Js", "t")}, [typ]) ->
-      printTypExpr typ
+      let bsObject = printTypExpr typ in
+      begin match typExpr.ptyp_attributes with
+      | [] -> bsObject
+      | attrs ->
+        Doc.concat [
+          Doc.group (
+            Doc.join ~sep:Doc.line (List.map printAttribute attrs)
+          );
+          Doc.space;
+          printTypExpr typ;
+        ]
+      end
     | Ptyp_constr(longidentLoc, [{ ptyp_desc = Parsetree.Ptyp_tuple tuple }]) ->
       let constrName = printLongident longidentLoc.txt in
       Doc.group(
@@ -7649,17 +7711,19 @@ module Printer = struct
     | Ptyp_variant _ -> failwith "Polymorphic variants currently not supported"
     in
     let shouldPrintItsOwnAttributes = match typExpr.ptyp_desc with
-    | Ptyp_arrow _ -> true (* es6 arrow types print their own attributes *)
+    | Ptyp_arrow _ (* es6 arrow types print their own attributes *)
+    | Ptyp_constr({txt = Longident.Ldot(Longident.Lident "Js", "t")}, _) -> true
     | _ -> false
     in
     begin match typExpr.ptyp_attributes with
     | [] -> renderedType
     | attrs when not shouldPrintItsOwnAttributes ->
-      Doc.group (Doc.concat [
-        Doc.join ~sep:Doc.line (List.map printAttribute attrs);
-        Doc.line;
-        renderedType;
-      ])
+      Doc.group (
+        Doc.concat [
+          printAttributes attrs;
+          renderedType;
+        ]
+      )
     | _ -> renderedType
     end
 
@@ -8059,6 +8123,29 @@ module Printer = struct
         ])
       )
     | _ -> failwith "expression not yet implemented in printer"
+
+  (* The optional loc indicates whether we need to print the attributes in
+   * relation to some location. In practise this means the following:
+   *  `@attr type t = string` -> on the same line, print on the same line
+   *  `@attr
+   *   type t = string` -> attr is on prev line, print the attributes
+   *   with a line break between, we respect the users' original layout *)
+  and printAttributes ?loc (attrs: Parsetree.attributes) =
+    match attrs with
+    | [] -> Doc.nil
+    | attrs ->
+      let lineBreak = match loc with
+      | None -> Doc.line
+      | Some loc -> begin match List.rev attrs with
+        | ({loc = firstLoc}, _)::_ when loc.loc_start.pos_lnum > firstLoc.loc_end.pos_lnum ->
+          Doc.literalLine;
+        | _ -> Doc.line
+        end
+      in
+      Doc.concat [
+        Doc.group (Doc.join ~sep:Doc.line (List.map printAttribute attrs));
+        lineBreak;
+      ]
 
   and printAttribute (attr : Parsetree.attribute) =
     match attr with
