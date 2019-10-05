@@ -1,0 +1,213 @@
+// Jest Snapshot v1, https://goo.gl/fbAQLP
+
+exports[`array.js 1`] = `
+"let x = []
+let x = [a, b, c]
+let x = [
+  superLongIdentiiiiiiiifffffffiiiiieeeeeeeer,
+  superLongIdentiiiiiiiifffffffiiiiieeeeeeeer,
+  superLongIdentiiiiiiiifffffffiiiiieeeeeeeer,
+]
+
+"
+`;
+
+exports[`assert.js 1`] = `
+"assert false
+assert truth
+
+"
+`;
+
+exports[`constant.js 1`] = `
+"let x = 1
+let x = 3.14
+let x = \\"mystring\\"
+
+"
+`;
+
+exports[`constraint.js 1`] = `
+"let x = (Numbers.ten: int)
+
+"
+`;
+
+exports[`constructor.js 1`] = `
+"let x = true
+let y = false
+let r = Reducer()
+let r = Reducer(state, nexState, sideEffect)
+let r = Reducer(
+  superLongIdentiiiiiiiifffffffiiiiieeeeeeeer,
+  superLongIdentiiiiiiiifffffffiiiiieeeeeeeer,
+  superLongIdentiiiiiiiifffffffiiiiieeeeeeeer,
+)
+let r = Reducer([state, nexState, sideEffect])
+let r = Reducer([
+  superLongIdentiiiiiiiifffffffiiiiieeeeeeeer,
+  superLongIdentiiiiiiiifffffffiiiiieeeeeeeer,
+  superLongIdentiiiiiiiifffffffiiiiieeeeeeeer,
+])
+let r = Reducer({state: nextState, sideEffects: []})
+let c = Constr({
+  firstField: superLongIdentiiiiiiiifffffffiiiiieeeeeeeer,
+  secondField: superLongIdentiiiiiiiifffffffiiiiieeeeeeeer,
+  thirdField: superLongIdentiiiiiiiifffffffiiiiieeeeeeeer,
+})
+let forceBreak = Cartesian({
+  x: Omega.x,
+  y: Theta.y,
+})
+
+"
+`;
+
+exports[`extension.js 1`] = `
+"let x = %eval
+
+"
+`;
+
+exports[`field.js 1`] = `
+"let n = user.name
+
+"
+`;
+
+exports[`firstClassModule.js 1`] = `
+"let three = module(Three: X_int)
+let three = module(Three)
+
+"
+`;
+
+exports[`for.js 1`] = `
+"let () = for i in 0 to 10 {
+  ()
+}
+
+"
+`;
+
+exports[`ident.js 1`] = `
+"let x = a
+let c = Configuration.config
+
+"
+`;
+
+exports[`if.js 1`] = `
+"let name = if true {
+  user.name
+}
+let name = if true {
+  user.name
+} else {
+  \\"steve\\"
+}
+let name = if true {
+  user.name
+} else if false {
+  user.lastName
+} else {
+  defaultName
+}
+
+"
+`;
+
+exports[`lazy.js 1`] = `
+"let x = lazy sideEffect
+
+"
+`;
+
+exports[`let.js 1`] = `
+"let z = {
+  let a = 1
+  a
+}
+
+"
+`;
+
+exports[`letexception.js 1`] = `
+"let x = {
+  exception Foo
+  sideEffect
+}
+
+"
+`;
+
+exports[`letmodule.js 1`] = `
+"let x = {
+  module M = ME
+  Me.x
+}
+
+"
+`;
+
+exports[`open.js 1`] = `
+"let element = {
+  open React
+  element
+}
+let element = {
+  open! React
+  element
+}
+
+"
+`;
+
+exports[`record.js 1`] = `
+"let coord = {x: 3.13, y: 3.14}
+let record = {
+  firstField: superLongIdentiiiiiiiifffffffiiiiieeeeeeeer,
+  secondField: superLongIdentiiiiiiiifffffffiiiiieeeeeeeer,
+  thirdField: superLongIdentiiiiiiiifffffffiiiiieeeeeeeer,
+}
+let forceBreak = {
+  x: Omega.x,
+  y: Theta.y,
+}
+let withSpread = {...initialState, time: nextTime}
+let withSpreadAndForceBreak = {
+  ...initialState,
+  time: nextTime,
+}
+let withSpreadAndNaturalBreak = {
+  ...fields,
+  firstField: superLongIdentiiiiiiiifffffffiiiiieeeeeeeer,
+  secondField: superLongIdentiiiiiiiifffffffiiiiieeeeeeeer,
+  thirdField: superLongIdentiiiiiiiifffffffiiiiieeeeeeeer,
+}
+
+"
+`;
+
+exports[`sequence.js 1`] = `
+"let () = {
+  foo()
+  bar()
+}
+
+"
+`;
+
+exports[`setfield.js 1`] = `
+"user.name = \\"steve\\"
+
+"
+`;
+
+exports[`while.js 1`] = `
+"let () = while true {
+  ()
+}
+
+"
+`;

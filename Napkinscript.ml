@@ -36,12 +36,15 @@ module Doc = struct
   let comma = Text ","
   let dot = Text "."
   let dotdot = Text ".."
+  let dotdotdot = Text "..."
   let lessThan = Text "<"
   let greaterThan = Text ">"
   let lbrace = Text "{"
   let rbrace = Text "}"
   let lparen = Text "("
   let rparen = Text ")"
+  let lbracket = Text "["
+  let rbracket = Text "]"
   let trailingComma = IfBreaks (comma, nil)
 
   let propagateForcedBreaks doc =
@@ -7107,6 +7110,13 @@ module ParsetreeViewer : sig
 
   (* filters @bs out of the provided attributes *)
   val processUncurriedAttribute: Parsetree.attributes -> bool * Parsetree.attributes
+
+  (* if ... else if ... else ... is represented as nested expressions: if ... else { if ... }
+   * The purpose of this function is to flatten nested ifs into one sequence.
+   * Basically compute: ([if, else if, else if, else if], else) *)
+  val collectIfExpressions:
+    Parsetree.expression ->
+      (Parsetree.expression * Parsetree.expression) list * Parsetree.expression option
 end = struct
   open Parsetree
 
@@ -7142,6 +7152,18 @@ end = struct
     in
     process false [] attrs
 
+  let collectIfExpressions expr =
+    let rec collect acc expr = match expr.pexp_desc with
+    | Pexp_ifthenelse (ifExpr, thenExpr, Some elseExpr) ->
+      collect ((ifExpr, thenExpr)::acc) elseExpr
+    | Pexp_ifthenelse (ifExpr, thenExpr, (None as elseExpr)) ->
+      let ifs = List.rev ((ifExpr, thenExpr)::acc) in
+      (ifs, elseExpr)
+    | _ ->
+      (List.rev acc, Some expr)
+    in
+    collect [] expr
+
 end
 
 module Printer = struct
@@ -7176,15 +7198,15 @@ module Printer = struct
   and printStructureItem (si: Parsetree.structure_item) =
     match si.pstr_desc with
     | Pstr_value(rec_flag, valueBindings) ->
-        Doc.group (
-          Doc.concat [
-            Doc.text "let ";
-            (match rec_flag with
-            | Asttypes.Nonrecursive -> Doc.nil
-            | Asttypes.Recursive -> Doc.text "rec ");
-            printValueBinding (List.hd valueBindings);
-          ]
-        )
+      Doc.group (
+        Doc.concat [
+          Doc.text "let ";
+          (match rec_flag with
+          | Asttypes.Nonrecursive -> Doc.nil
+          | Asttypes.Recursive -> Doc.text "rec ");
+          printValueBinding (List.hd valueBindings);
+        ]
+      )
     | Pstr_type(recFlag, typeDeclarations) ->
       let recFlag = match recFlag with
       | Asttypes.Nonrecursive -> Doc.nil
@@ -7195,6 +7217,8 @@ module Printer = struct
       )
     | Pstr_primitive valueDescription ->
       printValueDescription valueDescription
+    | Pstr_eval (expr, _attrs) ->
+      printExpression expr
     | _ -> failwith "unsupported"
 
   (*
@@ -7819,10 +7843,27 @@ module Printer = struct
    * }
    *)
   and printValueBinding vb =
+    let exprNeedsParens = match vb.pvb_expr.pexp_desc with
+    | Pexp_constraint(
+        {pexp_desc = Pexp_pack _},
+        {ptyp_desc = Ptyp_package _}
+      ) -> false
+    | Pexp_constraint _ -> true
+    | _ -> false
+    in
+    let expr = printExpression vb.pvb_expr in
     Doc.concat [
       printPattern vb.pvb_pat;
       Doc.text " = ";
-      printExpression vb.pvb_expr;
+      if exprNeedsParens then Doc.group (
+        Doc.concat [
+          Doc.lparen;
+          Doc.softLine;
+          expr;
+          Doc.softLine;
+          Doc.rparen;
+        ]
+      ) else expr
     ]
 
   and printPackageType ~printModuleKeywordAndParens (packageType: Parsetree.package_type) =
@@ -8104,6 +8145,44 @@ module Printer = struct
     match e.pexp_desc with
     | Parsetree.Pexp_constant c -> printConstant c
     | Pexp_construct ({txt = Longident.Lident "()"}, _) -> Doc.text "()"
+    | Pexp_construct (longidentLoc, args) ->
+      let constr = printLongident longidentLoc.txt in
+      let args = match args with
+      | None -> Doc.nil
+      | Some({pexp_desc = Pexp_construct ({txt = Longident.Lident "()"}, _)}) ->
+        Doc.text "()"
+      | Some({pexp_desc = Pexp_tuple args }) ->
+        Doc.concat [
+          Doc.lparen;
+          Doc.indent (
+            Doc.concat [
+              Doc.softLine;
+              Doc.join ~sep:(Doc.concat [Doc.comma; Doc.line]) (
+                List.map printExpression args
+              )
+            ]
+          );
+          Doc.trailingComma;
+          Doc.softLine;
+          Doc.rparen;
+        ]
+      | Some(arg) ->
+        let shouldHug = match arg.pexp_desc with
+        | Pexp_array _
+        | Pexp_tuple _
+        | Pexp_record _ -> true
+        | _ -> false
+        in
+        Doc.concat [
+          Doc.lparen;
+          if shouldHug then Doc.nil else Doc.softLine;
+          printExpression arg;
+          if shouldHug then Doc.nil else Doc.trailingComma;
+          if shouldHug then Doc.nil else Doc.softLine;
+          Doc.rparen;
+        ]
+      in
+      Doc.concat [constr; args]
     | Pexp_ident(longidentLoc) ->
       printLongident longidentLoc.txt
     | Pexp_tuple exprs ->
@@ -8122,7 +8201,314 @@ module Printer = struct
           Doc.text "/";
         ])
       )
+    | Pexp_array exprs ->
+      Doc.group(
+        Doc.concat([
+          Doc.lbracket;
+          Doc.indent (
+            Doc.concat([
+              Doc.softLine;
+              Doc.join ~sep:(Doc.concat [Doc.text ","; Doc.line])
+                (List.map printExpression exprs)
+            ])
+          );
+          Doc.trailingComma;
+          Doc.softLine;
+          Doc.rbracket;
+        ])
+      )
+    | Pexp_record (rows, spreadExpr) ->
+      let spread = match spreadExpr with
+      | None -> Doc.nil
+      | Some expr -> Doc.concat [
+          Doc.dotdotdot;
+          printExpression expr;
+          Doc.comma;
+          Doc.line;
+        ]
+      in
+      (* If the record is written over multiple lines, break automatically
+       * `let x = {a: 1, b: 3}` -> same line, break when line-width exceeded
+       * `let x = {
+       *   a: 1,
+       *   b: 2,
+       *  }` -> record is written on multiple lines, break the group *)
+      let forceBreak =
+        e.pexp_loc.loc_start.pos_lnum < e.pexp_loc.loc_end.pos_lnum
+      in
+      Doc.breakableGroup ~forceBreak (
+        Doc.concat([
+          Doc.lbrace;
+          Doc.indent (
+            Doc.concat [
+              Doc.softLine;
+              spread;
+              Doc.join ~sep:(Doc.concat [Doc.text ","; Doc.line])
+                (List.map printRecordRow rows)
+            ]
+          );
+          Doc.trailingComma;
+          Doc.softLine;
+          Doc.rbrace;
+        ])
+      )
+    | Pexp_extension extension -> printExtension extension
+    | Pexp_apply (expr, [Nolabel, {pexp_desc=Pexp_construct({txt = Longident.Lident "()"}, _)}]) ->
+      Doc.concat [
+        printExpression expr;
+        Doc.text "()";
+      ]
+    | Pexp_unreachable -> Doc.dot
+    | Pexp_field (expr, longidentLoc) ->
+      Doc.concat [
+        printExpression expr;
+        Doc.dot;
+        printLongident longidentLoc.txt;
+      ]
+    |  Pexp_setfield (expr1, longidentLoc, expr2) ->
+       Doc.concat [
+         printExpression expr1;
+         Doc.dot;
+         printLongident longidentLoc.txt;
+         Doc.text " = ";
+         printExpression expr2;
+       ]
+    | Pexp_ifthenelse (ifExpr, thenExpr, elseExpr) ->
+      let (ifs, elseExpr) = ParsetreeViewer.collectIfExpressions e in
+      let ifDocs = Doc.join ~sep:Doc.space (
+        List.mapi (fun i (ifExpr, thenExpr) ->
+          let ifTxt = if i > 0 then Doc.text "else if " else  Doc.text "if " in
+          Doc.concat [
+            ifTxt;
+            printExpression ifExpr;
+            Doc.space;
+            Doc.lbrace;
+            Doc.indent (
+              Doc.concat [
+                Doc.hardLine;
+                printExpression thenExpr;
+              ]
+            );
+            Doc.line;
+            Doc.rbrace;
+          ]
+        ) ifs
+      ) in
+      let elseDoc = match elseExpr with
+      | None -> Doc.nil
+      | Some expr -> Doc.concat [
+          Doc.text " else ";
+          Doc.lbrace;
+          Doc.indent (
+            Doc.concat [
+              Doc.hardLine;
+              printExpression expr;
+            ]
+          );
+          Doc.line;
+          Doc.rbrace;
+        ]
+      in
+      Doc.concat [
+        ifDocs;
+        elseDoc;
+      ]
+    | Pexp_while (expr1, expr2) ->
+      Doc.breakableGroup ~forceBreak:true (
+        Doc.concat [
+          Doc.text "while ";
+          printExpression expr1;
+          Doc.space;
+          Doc.lbrace;
+          Doc.indent (
+            Doc.concat [
+              Doc.line;
+              printExpression expr2;
+            ]
+          );
+          Doc.line;
+          Doc.rbrace;
+        ]
+      )
+    | Pexp_for (pattern, fromExpr, toExpr, directionFlag, body) ->
+      Doc.breakableGroup ~forceBreak:true (
+        Doc.concat [
+          Doc.text "for ";
+          printPattern pattern;
+          Doc.text " in ";
+          printExpression fromExpr;
+          printDirectionFlag directionFlag;
+          printExpression toExpr;
+          Doc.space;
+          Doc.lbrace;
+          Doc.indent (
+            Doc.concat [
+              Doc.line;
+              printExpression body;
+            ];
+          );
+          Doc.line;
+          Doc.rbrace;
+        ]
+      )
+    | Pexp_constraint(
+        {pexp_desc = Pexp_pack modExpr},
+        {ptyp_desc = Ptyp_package packageType}
+      ) ->
+      Doc.concat [
+        Doc.text "module(";
+        Doc.indent (
+          Doc.concat [
+            Doc.softLine;
+            printModExpr modExpr;
+            Doc.text ": ";
+            printPackageType ~printModuleKeywordAndParens:false packageType;
+          ]
+        );
+        Doc.softLine;
+        Doc.rparen;
+      ]
+
+    | Pexp_constraint (expr, typ) ->
+      Doc.concat [
+        printExpression expr;
+        Doc.text ": ";
+        printTypExpr typ;
+      ]
+    | Pexp_letmodule ({txt = modName}, modExpr, expr) ->
+      Doc.breakableGroup ~forceBreak:true (
+        Doc.concat [
+          Doc.lbrace;
+          Doc.indent (
+            Doc.concat [
+              Doc.line;
+              Doc.text "module ";
+              Doc.text modName;
+              Doc.text " = ";
+              printModExpr modExpr;
+              Doc.line;
+              printExpression expr;
+            ]
+          );
+          Doc.line;
+          Doc.rbrace;
+        ]
+      )
+
+    | Pexp_letexception (extensionConstructor, expr) ->
+      Doc.breakableGroup ~forceBreak:true (
+        Doc.concat [
+          Doc.lbrace;
+          Doc.indent (
+            Doc.concat [
+              Doc.line;
+              Doc.text "exception ";
+              printExtensionConstructor extensionConstructor;
+              Doc.line;
+              printExpression expr;
+            ]
+          );
+          Doc.line;
+          Doc.rbrace;
+        ]
+      )
+    | Pexp_assert expr ->
+      Doc.concat [
+        Doc.text "assert ";
+        printExpression expr;
+      ]
+    | Pexp_lazy expr ->
+      Doc.concat [
+        Doc.text "lazy ";
+        printExpression expr;
+      ]
+    | Pexp_open (overrideFlag, longidentLoc, expr) ->
+      Doc.breakableGroup ~forceBreak:true (
+        Doc.concat [
+          Doc.lbrace;
+          Doc.indent (
+            Doc.concat [
+              Doc.line;
+              Doc.text "open";
+              printOverrideFlag overrideFlag;
+              Doc.space;
+              printLongident longidentLoc.txt;
+              Doc.line;
+              printExpression expr;
+            ]
+          );
+          Doc.line;
+          Doc.rbrace;
+        ]
+      )
+    | Pexp_pack (modExpr) ->
+      Doc.concat [
+        Doc.text "module(";
+        Doc.indent (
+          Doc.concat [
+            Doc.softLine;
+            printModExpr modExpr;
+          ]
+        );
+        Doc.softLine;
+        Doc.rparen;
+      ]
+    | Pexp_sequence (expr1, expr2) ->
+      Doc.breakableGroup ~forceBreak:true (
+        Doc.concat [
+          Doc.lbrace;
+          Doc.indent (
+            Doc.concat [
+              Doc.line;
+              printExpression expr1;
+              Doc.line;
+              printExpression expr2;
+            ]
+          );
+          Doc.line;
+          Doc.rbrace;
+        ]
+      )
+    | Pexp_let (recFlag, valueBindings, expr) ->
+      Doc.breakableGroup ~forceBreak:true (
+        Doc.concat [
+          Doc.lbrace;
+          Doc.indent (
+            Doc.concat [
+              Doc.line;
+              Doc.group (
+                Doc.concat [
+                  Doc.text "let ";
+                  (match recFlag with
+                  | Asttypes.Nonrecursive -> Doc.nil
+                  | Asttypes.Recursive -> Doc.text "rec ");
+                  printValueBinding (List.hd valueBindings);
+                ]
+              );
+              Doc.line;
+              printExpression expr;
+            ]
+          );
+          Doc.line;
+          Doc.rbrace;
+        ]
+      )
     | _ -> failwith "expression not yet implemented in printer"
+
+  and printOverrideFlag overrideFlag = match overrideFlag with
+    | Asttypes.Override -> Doc.text "!"
+    | Fresh -> Doc.nil
+
+  and printDirectionFlag flag = match flag with
+    | Asttypes.Downto -> Doc.text " downto "
+    | Asttypes.Upto -> Doc.text " to "
+
+  and printRecordRow (lbl, expr) =
+    Doc.concat [
+      printLongident lbl.txt;
+      Doc.text ": ";
+      printExpression expr;
+    ]
 
   (* The optional loc indicates whether we need to print the attributes in
    * relation to some location. In practise this means the following:
@@ -8150,6 +8536,17 @@ module Printer = struct
   and printAttribute (attr : Parsetree.attribute) =
     match attr with
     | (id, _) -> Doc.text ("@" ^ id.txt)
+
+  and printModExpr modExpr =
+    match modExpr.pmod_desc with
+    | Pmod_ident longidentLoc ->
+      printLongident longidentLoc.txt
+    | _ -> failwith "not yet implemented module expression"
+
+  and printExtensionConstructor (constr : Parsetree.extension_constructor) =
+    Doc.concat [
+      Doc.text constr.pext_name.txt;
+    ]
 
   let printImplementation (s: Parsetree.structure) =
     let stringDoc = Doc.toString ~width:80 (printStructure s) in
