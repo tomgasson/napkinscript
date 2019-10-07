@@ -8524,7 +8524,45 @@ module Printer = struct
           returnExprDoc;
         ]
       )
+    | Pexp_try (expr, cases) ->
+      Doc.concat [
+        Doc.text "try ";
+        printExpression expr;
+        Doc.text " catch ";
+        printCases cases;
+      ]
     | _ -> failwith "expression not yet implemented in printer"
+
+  and printCases (cases: Parsetree.case list) =
+    Doc.breakableGroup ~forceBreak:true (
+      Doc.concat [
+        Doc.lbrace;
+          Doc.concat [
+            Doc.line;
+            Doc.join ~sep:Doc.line (
+              List.map printCase cases
+            )
+          ];
+        Doc.line;
+        Doc.rbrace;
+      ]
+    )
+
+  (* TODO: guards *)
+  and printCase (case: Parsetree.case) =
+    Doc.group (
+      Doc.concat [
+        Doc.text "| ";
+        printPattern case.pc_lhs;
+        Doc.text " =>";
+        Doc.indent (
+          Doc.concat [
+            Doc.line;
+            printExpression case.pc_rhs;
+          ]
+        )
+      ]
+    )
 
   and printExprFunParameters ~uncurried parameters =
     match parameters with
