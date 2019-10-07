@@ -4,7 +4,6 @@ let f = (. a, b, . c, d) => a + b + c + d
 
 let f = @attr (. a) => @attr2 b => @attr3 (. c) => @attr4 d => ()
 let f = (. @attr a, @attr2 b, . @attr3 c, @attr4 d) => ()
-// different from above, attributes on parameter itself
 let f = (. (@attr a), (@attr2 b), . (@attr3 c), (@attr4 d)) => ()
 
 add(. 1, 2)

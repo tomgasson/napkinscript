@@ -61,7 +61,19 @@ let f ?a:x  ?b:y  c =
   match (x, y) with | (Some a, Some b) -> (a + b) + c | _ -> 3
 let f ?a:(x : int option)  ?b:(y : int option)  c =
   match (x, y) with | (Some a, Some b) -> (a + b) + c | _ -> 3
-let f a b = a + b"
+let f a b = a + b
+let f = ((fun () -> ())[@bs ])
+let f = ((fun () -> ())[@bs ])
+let f = ((fun a -> fun b -> fun c -> ())[@bs ])
+let f = ((fun a -> fun b -> ((fun c -> fun d -> ())[@bs ]))[@bs ])
+let f = ((fun a -> ((fun b -> ((fun c -> ())[@bs ]))[@bs ]))[@bs ])
+let f = ((fun ~a -> fun b -> ((fun ~c -> fun d -> ())[@bs ][@attr ]))
+  [@bs ][@attr ])
+let f =
+  ((fun ~a ->
+      fun ((b)[@attrOnB ]) -> ((fun ~c -> fun ((d)[@attrOnD ]) -> ())
+        [@bs ][@attr ]))
+  [@bs ][@attr ])"
 `;
 
 exports[`binary.js 1`] = `
@@ -863,9 +875,10 @@ let f =
       [@attr2 ]))
   [@bs ][@attr ])
 let f =
-  ((fun a -> ((fun b -> ((fun c -> ((fun d -> ())[@attr4 ]))[@bs ][@attr3 ]))
-      [@attr2 ]))
-  [@bs ][@attr ])
+  ((fun ((a)[@attr ]) ->
+      fun ((b)[@attr2 ]) -> ((fun ((c)[@attr3 ]) -> fun ((d)[@attr4 ]) -> ())
+        [@bs ]))
+  [@bs ])
 let f =
   ((fun ((a)[@attr ]) ->
       fun ((b)[@attr2 ]) -> ((fun ((c)[@attr3 ]) -> fun ((d)[@attr4 ]) -> ())

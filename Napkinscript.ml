@@ -3671,12 +3671,15 @@ Solution: you need to pull out each field you want explicitly."
       let lidents = parseLidentList p in
       TypeParameter (lidents, startPos)
     ) else (
-    (* TODO: this is a shift reduce conflict, we reduce here :)
-     * UPDATE: not sure if we should do this in the non-labelled arg case
-     * let f = ( @attr x ) => x + 1; -> on pattern x or on Pexp_fun? *)
     let uncurried = Parser.optional p Token.Dot in
+    (* two scenarios:
+     *   attrs ~lbl ...
+     *   attrs pattern
+     * Attributes before a labelled arg, indicate that it's on the whole arrow expr
+     * Otherwise it's part of the pattern
+     *  *)
     let attrs = parseAttributes p in
-    let (lbl, pat) = match p.Parser.token with
+    let (attrs, lbl, pat) = match p.Parser.token with
     | Tilde ->
       Parser.next p;
       let (lblName, _loc) = parseLident p in
@@ -3684,6 +3687,7 @@ Solution: you need to pull out each field you want explicitly."
       | Comma | Equal | Rparen ->
         let loc = mkLoc startPos p.prevEndPos in
         (
+          attrs,
           Asttypes.Labelled lblName,
           Ast_helper.Pat.var ~loc (Location.mkloc lblName loc)
         )
@@ -3696,21 +3700,23 @@ Solution: you need to pull out each field you want explicitly."
           let pat = Ast_helper.Pat.var ~loc (Location.mkloc lblName loc) in
           let loc = mkLoc startPos p.prevEndPos in
           Ast_helper.Pat.constraint_ ~loc pat typ in
-        (Asttypes.Labelled lblName, pat)
+        (attrs, Asttypes.Labelled lblName, pat)
       | As ->
         Parser.next p;
         let pat = parseConstrainedPattern p in
-        (Asttypes.Labelled lblName, pat)
+        (attrs, Asttypes.Labelled lblName, pat)
       | t ->
         Parser.err p (Diagnostics.unexpected t p.breadcrumbs);
         let loc = mkLoc startPos p.prevEndPos in
         (
+          attrs,
           Asttypes.Labelled lblName,
           Ast_helper.Pat.var ~loc (Location.mkloc lblName loc)
         )
       end
     | _ ->
-      (Asttypes.Nolabel, parseConstrainedPattern p)
+      let pattern = parseConstrainedPattern p in
+      ([], Asttypes.Nolabel, {pattern with ppat_attributes = attrs @ pattern.ppat_attributes})
     in
     let parameter = match p.Parser.token with
     | Equal ->
@@ -3732,7 +3738,7 @@ Solution: you need to pull out each field you want explicitly."
       (uncurried, attrs, lbl, None, pat, startPos)
     in
     TermParameter parameter
-    )
+  )
 
   and parseParameterList p =
     let parameters =
@@ -3749,6 +3755,7 @@ Solution: you need to pull out each field you want explicitly."
    *   | _
    *   | lident
    *   | ()
+   *   | (.)
    *   | ( parameter {, parameter} [,] )
    *)
   and parseParameters p =
@@ -3779,6 +3786,23 @@ Solution: you need to pull out each field you want explicitly."
           ~loc (Location.mkloc (Longident.Lident "()") loc) None
         in
         [TermParameter (false, [], Asttypes.Nolabel, None, unitPattern, startPos)]
+      | Dot ->
+        Parser.next p;
+        begin match p.token with
+        | Rparen ->
+          Parser.next p;
+          let loc = mkLoc startPos p.Parser.prevEndPos in
+          let unitPattern = Ast_helper.Pat.construct
+            ~loc (Location.mkloc (Longident.Lident "()") loc) None
+          in
+          [TermParameter (true, [], Asttypes.Nolabel, None, unitPattern, startPos)]
+        | _ ->
+          begin match parseParameterList p with
+          | (TermParameter (_, attrs, lbl, defaultExpr, pattern, startPos))::rest ->
+            (TermParameter (true, attrs, lbl, defaultExpr, pattern, startPos))::rest
+          | parameters -> parameters
+          end
+        end
       | _ -> parseParameterList p
       end
     | token ->
@@ -7120,6 +7144,12 @@ module ParsetreeViewer : sig
 
   val collectListExpressions:
     Parsetree.expression -> (Parsetree.expression list * Parsetree.expression option)
+
+  val funExpr:
+    Parsetree.expression ->
+      Parsetree.attributes *
+      (Parsetree.attributes * Asttypes.arg_label * Parsetree.expression option * Parsetree.pattern) list *
+      Parsetree.expression
 end = struct
   open Parsetree
 
@@ -7181,6 +7211,28 @@ end = struct
     in
     collect [] expr
 
+  let funExpr expr =
+    let rec collect attrsBefore acc expr = match expr with
+    | {pexp_desc = Pexp_fun (lbl, defaultExpr, pattern, returnExpr); pexp_attributes = []} ->
+      let parameter = ([], lbl, defaultExpr, pattern) in
+      collect attrsBefore (parameter::acc) returnExpr
+    | {pexp_desc = Pexp_fun (lbl, defaultExpr, pattern, returnExpr); pexp_attributes = [({txt ="bs"}, _)] as attrs} ->
+      let parameter = (attrs, lbl, defaultExpr, pattern) in
+      collect attrsBefore (parameter::acc) returnExpr
+    | {
+        pexp_desc = Pexp_fun ((Labelled _ | Optional _) as lbl, defaultExpr, pattern, returnExpr);
+        pexp_attributes = attrs
+      } ->
+      let parameter = (attrs, lbl, defaultExpr, pattern) in
+      collect attrsBefore (parameter::acc) returnExpr
+    | expr ->
+      (attrsBefore, List.rev acc, expr)
+    in
+    begin match expr with
+    | {pexp_desc = Pexp_fun (Nolabel, defaultExpr, pattern, returnExpr); pexp_attributes = attrs} as expr ->
+      collect attrs [] {expr with pexp_attributes = []}
+    | expr -> collect [] [] expr
+    end
 end
 
 module Printer = struct
@@ -7936,7 +7988,7 @@ module Printer = struct
     Doc.text ("%" ^ stringLoc.Location.txt)
 
   and printPattern (p : Parsetree.pattern) =
-    match p.ppat_desc with
+    let patternWithoutAttributes = match p.ppat_desc with
     | Ppat_any -> Doc.text "_"
     | Ppat_var stringLoc -> Doc.text (stringLoc.txt)
     | Ppat_constant c -> printConstant c
@@ -8133,6 +8185,17 @@ module Printer = struct
           Doc.rparen;
         ]
     | _ -> failwith "unsupported pattern"
+    in
+    begin match p.ppat_attributes with
+    | [] -> patternWithoutAttributes
+    | attrs ->
+      Doc.group (
+        Doc.concat [
+          printAttributes attrs;
+          patternWithoutAttributes;
+        ]
+      )
+    end
 
   and printPatternRecordRow row =
     match row with
@@ -8418,7 +8481,129 @@ module Printer = struct
       printExpressionBlock e
     | Pexp_let _ ->
       printExpressionBlock e
+    | Pexp_fun _ ->
+      let (attrsOnArrow, parameters, returnExpr) = ParsetreeViewer.funExpr e in
+      let (uncurried, attrs) =
+        ParsetreeViewer.processUncurriedAttribute attrsOnArrow
+      in
+      let parametersDoc = printExprFunParameters ~uncurried parameters in
+      let returnExprDoc =
+        let shouldInline = match returnExpr.pexp_desc with
+        | Pexp_array _
+        | Pexp_tuple _
+        | Pexp_construct (_, Some _)
+        | Pexp_record _ -> true
+        | _ -> false
+        in
+        let returnDoc = printExpression returnExpr in
+        if shouldInline then Doc.concat [
+          Doc.space;
+          returnDoc;
+        ] else
+          Doc.group (
+            Doc.indent (
+              Doc.concat [
+                Doc.line;
+                returnDoc;
+              ]
+            )
+          )
+      in
+      let attrs = match attrs with
+      | [] -> Doc.nil
+      | attrs -> Doc.concat [
+          Doc.join ~sep:Doc.line (List.map printAttribute attrs);
+          Doc.space;
+        ]
+      in
+      Doc.group (
+        Doc.concat [
+          attrs;
+          parametersDoc;
+          Doc.text " =>";
+          returnExprDoc;
+        ]
+      )
     | _ -> failwith "expression not yet implemented in printer"
+
+  and printExprFunParameters ~uncurried parameters =
+    match parameters with
+    (* let f = _ => () *)
+    | [([], Asttypes.Nolabel, None, {Parsetree.ppat_desc = Ppat_any})] when not uncurried ->
+      Doc.text "_"
+    (* let f = a => () *)
+    | [([], Asttypes.Nolabel, None, {Parsetree.ppat_desc = Ppat_var stringLoc})]  when not uncurried ->
+      Doc.text stringLoc.txt
+    (* let f = () => () *)
+    | [([], Nolabel, None, {ppat_desc = Ppat_construct({txt = Longident.Lident "()"}, None)})] when not uncurried ->
+      Doc.text "()"
+    (* let f = (~greeting, ~from as hometown, ~x=?) => () *)
+    | parameters ->
+      let lparen = if uncurried then Doc.text "(. " else Doc.lparen in
+      Doc.group (
+        Doc.concat [
+          lparen;
+          Doc.indent (
+            Doc.concat [
+              Doc.softLine;
+              Doc.join ~sep:(Doc.concat [Doc.comma; Doc.line])
+                (List.map printExpFunParameter parameters)
+            ]
+          );
+          Doc.trailingComma;
+          Doc.softLine;
+          Doc.rparen;
+        ]
+      )
+
+  and printExpFunParameter (attrs, lbl, defaultExpr, pattern) =
+    let (isUncurried, attrs) = ParsetreeViewer.processUncurriedAttribute attrs in
+    let uncurried = if isUncurried then Doc.concat [Doc.dot; Doc.space] else Doc.nil in
+    let attrs = match attrs with
+    | [] -> Doc.nil
+    | attrs -> Doc.concat [
+      Doc.join ~sep:Doc.line (List.map printAttribute attrs);
+      Doc.line;
+    ] in
+    (* =defaultValue *)
+    let defaultExprDoc = match defaultExpr with
+    | Some expr -> Doc.concat [
+        Doc.text "=";
+        printExpression expr
+      ]
+    | None -> Doc.nil
+    in
+    (* ~from as hometown
+     * ~from                   ->  punning *)
+    let labelWithPattern = match (lbl, pattern) with
+    | (Asttypes.Nolabel, pattern) -> printPattern pattern
+    | (
+        (Asttypes.Labelled lbl | Optional lbl),
+        {ppat_desc = Ppat_var stringLoc}
+      ) when lbl = stringLoc.txt ->
+      Doc.concat [
+        Doc.text "~";
+        Doc.text lbl;
+      ]
+    | ((Asttypes.Labelled lbl | Optional lbl), pattern) ->
+      Doc.concat [
+        Doc.text "~";
+        Doc.text lbl;
+        Doc.text " as ";
+        printPattern pattern;
+      ]
+    in
+    let optionalLabelSuffix = match lbl with
+    | Asttypes.Optional _ -> Doc.text "=?"
+    | _ -> Doc.nil
+    in
+    Doc.concat [
+      uncurried;
+      attrs;
+      labelWithPattern;
+      defaultExprDoc;
+      optionalLabelSuffix;
+    ]
 
   (*
    * let x = {

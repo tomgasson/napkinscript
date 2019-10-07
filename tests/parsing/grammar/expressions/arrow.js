@@ -68,3 +68,11 @@ let f = (~a as x : option<int>=?, ~b as y : option<int>=?, c) => switch /x, y/ {
 
 // trailing comma
 let f = (a, b,) => a + b
+
+let f = (.) => ()
+let f = (. ()) => ()
+let f = (. a, b, c) => ()
+let f = (. a, b, . c, d) => ()
+let f = (. a, . b, .c) => ()
+let f = (. @attr ~a, b, . @attr ~c, d) => ()
+let f = (. @attr ~a, @attrOnB b, . @attr ~c, @attrOnD d) => ()
