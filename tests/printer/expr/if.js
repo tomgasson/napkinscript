@@ -15,3 +15,17 @@ let name = if true {
 } else {
   defaultName
 }
+
+let () = if true {
+  let a = 1
+  let b = 2
+  open Belt
+  sideEffect()
+  ()
+} else {
+  let a = 5
+  let b = 6
+  open React
+  render()
+  ()
+}

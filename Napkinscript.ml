@@ -8324,15 +8324,7 @@ module Printer = struct
             ifTxt;
             printExpression ifExpr;
             Doc.space;
-            Doc.lbrace;
-            Doc.indent (
-              Doc.concat [
-                Doc.hardLine;
-                printExpression thenExpr;
-              ]
-            );
-            Doc.line;
-            Doc.rbrace;
+            printExpressionBlock thenExpr;
           ]
         ) ifs
       ) in
@@ -8340,15 +8332,7 @@ module Printer = struct
       | None -> Doc.nil
       | Some expr -> Doc.concat [
           Doc.text " else ";
-          Doc.lbrace;
-          Doc.indent (
-            Doc.concat [
-              Doc.hardLine;
-              printExpression expr;
-            ]
-          );
-          Doc.line;
-          Doc.rbrace;
+          printExpressionBlock expr;
         ]
       in
       Doc.concat [
@@ -8361,15 +8345,7 @@ module Printer = struct
           Doc.text "while ";
           printExpression expr1;
           Doc.space;
-          Doc.lbrace;
-          Doc.indent (
-            Doc.concat [
-              Doc.line;
-              printExpression expr2;
-            ]
-          );
-          Doc.line;
-          Doc.rbrace;
+          printExpressionBlock expr2;
         ]
       )
     | Pexp_for (pattern, fromExpr, toExpr, directionFlag, body) ->
@@ -8382,15 +8358,7 @@ module Printer = struct
           printDirectionFlag directionFlag;
           printExpression toExpr;
           Doc.space;
-          Doc.lbrace;
-          Doc.indent (
-            Doc.concat [
-              Doc.line;
-              printExpression body;
-            ];
-          );
-          Doc.line;
-          Doc.rbrace;
+          printExpressionBlock body;
         ]
       )
     | Pexp_constraint(
@@ -8418,42 +8386,10 @@ module Printer = struct
         printTypExpr typ;
       ]
     | Pexp_letmodule ({txt = modName}, modExpr, expr) ->
-      Doc.breakableGroup ~forceBreak:true (
-        Doc.concat [
-          Doc.lbrace;
-          Doc.indent (
-            Doc.concat [
-              Doc.line;
-              Doc.text "module ";
-              Doc.text modName;
-              Doc.text " = ";
-              printModExpr modExpr;
-              Doc.line;
-              printExpression expr;
-            ]
-          );
-          Doc.line;
-          Doc.rbrace;
-        ]
-      )
+      printExpressionBlock e
 
     | Pexp_letexception (extensionConstructor, expr) ->
-      Doc.breakableGroup ~forceBreak:true (
-        Doc.concat [
-          Doc.lbrace;
-          Doc.indent (
-            Doc.concat [
-              Doc.line;
-              Doc.text "exception ";
-              printExtensionConstructor extensionConstructor;
-              Doc.line;
-              printExpression expr;
-            ]
-          );
-          Doc.line;
-          Doc.rbrace;
-        ]
-      )
+      printExpressionBlock e
     | Pexp_assert expr ->
       Doc.concat [
         Doc.text "assert ";
@@ -8465,24 +8401,7 @@ module Printer = struct
         printExpression expr;
       ]
     | Pexp_open (overrideFlag, longidentLoc, expr) ->
-      Doc.breakableGroup ~forceBreak:true (
-        Doc.concat [
-          Doc.lbrace;
-          Doc.indent (
-            Doc.concat [
-              Doc.line;
-              Doc.text "open";
-              printOverrideFlag overrideFlag;
-              Doc.space;
-              printLongident longidentLoc.txt;
-              Doc.line;
-              printExpression expr;
-            ]
-          );
-          Doc.line;
-          Doc.rbrace;
-        ]
-      )
+      printExpressionBlock e
     | Pexp_pack (modExpr) ->
       Doc.concat [
         Doc.text "module(";
@@ -8495,47 +8414,81 @@ module Printer = struct
         Doc.softLine;
         Doc.rparen;
       ]
-    | Pexp_sequence (expr1, expr2) ->
-      Doc.breakableGroup ~forceBreak:true (
-        Doc.concat [
-          Doc.lbrace;
-          Doc.indent (
-            Doc.concat [
-              Doc.line;
-              printExpression expr1;
-              Doc.line;
-              printExpression expr2;
-            ]
-          );
-          Doc.line;
-          Doc.rbrace;
-        ]
-      )
-    | Pexp_let (recFlag, valueBindings, expr) ->
-      Doc.breakableGroup ~forceBreak:true (
-        Doc.concat [
-          Doc.lbrace;
-          Doc.indent (
-            Doc.concat [
-              Doc.line;
-              Doc.group (
-                Doc.concat [
-                  Doc.text "let ";
-                  (match recFlag with
-                  | Asttypes.Nonrecursive -> Doc.nil
-                  | Asttypes.Recursive -> Doc.text "rec ");
-                  printValueBinding (List.hd valueBindings);
-                ]
-              );
-              Doc.line;
-              printExpression expr;
-            ]
-          );
-          Doc.line;
-          Doc.rbrace;
-        ]
-      )
+    | Pexp_sequence _ ->
+      printExpressionBlock e
+    | Pexp_let _ ->
+      printExpressionBlock e
     | _ -> failwith "expression not yet implemented in printer"
+
+  (*
+   * let x = {
+   *   module Foo = Bar
+   *   exception Exit
+   *   open Belt
+   *   let a = 1
+   *   let b = 2
+   *   sideEffect()
+   *   a + b
+   * }
+   * What is an expr-block ? Everything between { ... }
+   *)
+  and printExpressionBlock expr =
+    let rec collectRows acc expr = match expr.Parsetree.pexp_desc with
+    | Parsetree.Pexp_letmodule ({txt = modName}, modExpr, expr) ->
+      let letModuleDoc = Doc.concat [
+        Doc.text "module ";
+        Doc.text modName;
+        Doc.text " = ";
+        printModExpr modExpr;
+      ] in
+      collectRows (letModuleDoc::acc) expr
+    | Pexp_letexception (extensionConstructor, expr) ->
+      let letExceptionDoc = Doc.concat [
+        Doc.text "exception ";
+        printExtensionConstructor extensionConstructor;
+      ] in
+      collectRows (letExceptionDoc::acc) expr
+    | Pexp_open (overrideFlag, longidentLoc, expr) ->
+      let openDoc = Doc.concat [
+        Doc.text "open";
+        printOverrideFlag overrideFlag;
+        Doc.space;
+        printLongident longidentLoc.txt;
+      ] in
+      collectRows (openDoc::acc) expr
+    | Pexp_sequence (expr1, expr2) ->
+      let exprDoc = printExpression expr1 in
+      collectRows (exprDoc::acc) expr2
+    | Pexp_let (recFlag, valueBindings, expr) ->
+      let letDoc = Doc.group (
+        Doc.concat [
+          Doc.text "let ";
+          (match recFlag with
+          | Asttypes.Nonrecursive -> Doc.nil
+          | Asttypes.Recursive -> Doc.text "rec ");
+          printValueBinding (List.hd valueBindings);
+        ]
+      ) in
+      collectRows(letDoc::acc) expr
+    | _ ->
+      let exprDoc = printExpression expr in
+      List.rev (exprDoc::acc)
+    in
+    let docs = collectRows [] expr in
+    Doc.breakableGroup ~forceBreak:true (
+      Doc.concat [
+        Doc.lbrace;
+        Doc.indent (
+          Doc.concat [
+            Doc.line;
+            Doc.join ~sep:Doc.line docs;
+          ]
+        );
+        Doc.line;
+        Doc.rbrace;
+      ]
+    )
+
 
   and printOverrideFlag overrideFlag = match overrideFlag with
     | Asttypes.Override -> Doc.text "!"

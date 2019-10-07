@@ -19,6 +19,21 @@ assert truth
 "
 `;
 
+exports[`block.js 1`] = `
+"let x = {
+  module Foo = Bar
+  exception Exit
+  open Belt
+  let a = 1
+  let b = 2
+  sideEffect()
+  sideEffect2()
+  ()
+}
+
+"
+`;
+
 exports[`constant.js 1`] = `
 "let x = 1
 let x = 3.14
@@ -99,6 +114,11 @@ exports[`for.js 1`] = `
 "let () = for i in 0 to 10 {
   ()
 }
+for i in 0 to 10 {
+  let a = 1
+  let b = 2
+  sideEffect()
+}
 
 "
 `;
@@ -125,6 +145,19 @@ let name = if true {
   user.lastName
 } else {
   defaultName
+}
+let () = if true {
+  let a = 1
+  let b = 2
+  open Belt
+  sideEffect()
+  ()
+} else {
+  let a = 5
+  let b = 6
+  open React
+  render()
+  ()
 }
 
 "
@@ -240,6 +273,12 @@ exports[`setfield.js 1`] = `
 
 exports[`while.js 1`] = `
 "let () = while true {
+  ()
+}
+while true {
+  let a = 1
+  let b = 2
+  infiniteLoop()
   ()
 }
 
