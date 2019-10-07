@@ -424,6 +424,19 @@ exports[`setfield.js 1`] = `
 "
 `;
 
+exports[`switch.js 1`] = `
+"switch x {
+| A => ()
+| B => ()
+}
+switch /a, b/ {
+| /Some(a), Some(b)/ => 42
+| _ => 3
+}
+
+"
+`;
+
 exports[`try.js 1`] = `
 "try {
   let x = 1

@@ -8531,6 +8531,13 @@ module Printer = struct
         Doc.text " catch ";
         printCases cases;
       ]
+    | Pexp_match (expr, cases) ->
+      Doc.concat [
+        Doc.text "switch ";
+        printExpression expr;
+        Doc.space;
+        printCases cases;
+      ]
     | _ -> failwith "expression not yet implemented in printer"
 
   and printCases (cases: Parsetree.case list) =
