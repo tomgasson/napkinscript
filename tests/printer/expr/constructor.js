@@ -19,3 +19,19 @@ let forceBreak = Cartesian({
   x: Omega.x,
   y: Theta.y
 })
+
+let c = Constr(list(
+  superLoooooooooooooooooooooooooooooongIiiiiiiiiideeeentifieeeeeeeeeeeeeeeeer,
+  superLoooooooooooooooooooooooooooooongIiiiiiiiiideeeentifieeeeeeeeeeeeeeeeer,
+  superLoooooooooooooooooooooooooooooongIiiiiiiiiideeeentifieeeeeeeeeeeeeeeeer,
+  ...superLoooooooooooooooooooooooooooooongListHere,
+))
+
+let c = Constr(list(
+  superLoooooooooooooooooooooooooooooongIiiiiiiiiideeeentifieeeeeeeeeeeeeeeeer,
+  superLoooooooooooooooooooooooooooooongIiiiiiiiiideeeentifieeeeeeeeeeeeeeeeer,
+  superLoooooooooooooooooooooooooooooongIiiiiiiiiideeeentifieeeeeeeeeeeeeeeeer,
+))
+
+let c = ConstructorWithASuuuuuuuuuuuuuuuperLoooooooooooooooooooooooooooooongIiiiiiiiiideeeentifieeeeeeeeeeeeeeeeer([])
+let c = ConstructorWithASuuuuuuuuuuuuuuuperLoooooooooooooooooooooooooooooongIiiiiiiiiideeeentifieeeeeeeeeeeeeeeeer(list())

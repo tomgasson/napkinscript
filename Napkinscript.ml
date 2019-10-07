@@ -7117,6 +7117,9 @@ module ParsetreeViewer : sig
   val collectIfExpressions:
     Parsetree.expression ->
       (Parsetree.expression * Parsetree.expression) list * Parsetree.expression option
+
+  val collectListExpressions:
+    Parsetree.expression -> (Parsetree.expression list * Parsetree.expression option)
 end = struct
   open Parsetree
 
@@ -7159,6 +7162,20 @@ end = struct
     | Pexp_ifthenelse (ifExpr, thenExpr, (None as elseExpr)) ->
       let ifs = List.rev ((ifExpr, thenExpr)::acc) in
       (ifs, elseExpr)
+    | _ ->
+      (List.rev acc, Some expr)
+    in
+    collect [] expr
+
+  let collectListExpressions expr =
+    let rec collect acc expr = match expr.pexp_desc with
+    | Pexp_construct ({txt = Longident.Lident "[]"}, _) ->
+      (List.rev acc, None)
+    | Pexp_construct (
+        {txt = Longident.Lident "::"},
+        Some {pexp_desc = Pexp_tuple (hd::[tail])}
+      ) ->
+        collect (hd::acc) tail
     | _ ->
       (List.rev acc, Some expr)
     in
@@ -7921,13 +7938,7 @@ module Printer = struct
   and printPattern (p : Parsetree.pattern) =
     match p.ppat_desc with
     | Ppat_any -> Doc.text "_"
-    | Ppat_var stringLoc ->
-        Doc.group (
-          Doc.concat([
-            Doc.text (stringLoc.txt);
-            Doc.softLine;
-          ])
-        )
+    | Ppat_var stringLoc -> Doc.text (stringLoc.txt)
     | Ppat_constant c -> printConstant c
     | Ppat_tuple patterns ->
       Doc.group(
@@ -8145,6 +8156,34 @@ module Printer = struct
     match e.pexp_desc with
     | Parsetree.Pexp_constant c -> printConstant c
     | Pexp_construct ({txt = Longident.Lident "()"}, _) -> Doc.text "()"
+    | Pexp_construct ({txt = Longident.Lident "[]"}, _) -> Doc.text "list()"
+    | Pexp_construct ({txt = Longident.Lident "::"}, _) ->
+      let (expressions, spread) = ParsetreeViewer.collectListExpressions e in
+      let spreadDoc = match spread with
+      | Some(expr) -> Doc.concat [
+          Doc.text ",";
+          Doc.line;
+          Doc.dotdotdot;
+          printExpression expr
+        ]
+      | None -> Doc.nil
+      in
+      Doc.group(
+        Doc.concat([
+          Doc.text "list(";
+          Doc.indent (
+            Doc.concat([
+              Doc.softLine;
+              Doc.join ~sep:(Doc.concat [Doc.text ","; Doc.line])
+                (List.map printExpression expressions);
+              spreadDoc;
+            ])
+          );
+          Doc.trailingComma;
+          Doc.softLine;
+          Doc.rparen;
+        ])
+      )
     | Pexp_construct (longidentLoc, args) ->
       let constr = printLongident longidentLoc.txt in
       let args = match args with
@@ -8170,6 +8209,8 @@ module Printer = struct
         let shouldHug = match arg.pexp_desc with
         | Pexp_array _
         | Pexp_tuple _
+        | Pexp_construct ({txt = Longident.Lident "::"}, _)
+        | Pexp_construct ({txt = Longident.Lident "[]"}, _)
         | Pexp_record _ -> true
         | _ -> false
         in
@@ -8201,6 +8242,7 @@ module Printer = struct
           Doc.text "/";
         ])
       )
+    | Pexp_array [] -> Doc.text "[]"
     | Pexp_array exprs ->
       Doc.group(
         Doc.concat([

@@ -59,6 +59,19 @@ let forceBreak = Cartesian({
   x: Omega.x,
   y: Theta.y,
 })
+let c = Constr(list(
+  superLoooooooooooooooooooooooooooooongIiiiiiiiiideeeentifieeeeeeeeeeeeeeeeer,
+  superLoooooooooooooooooooooooooooooongIiiiiiiiiideeeentifieeeeeeeeeeeeeeeeer,
+  superLoooooooooooooooooooooooooooooongIiiiiiiiiideeeentifieeeeeeeeeeeeeeeeer,
+  ...superLoooooooooooooooooooooooooooooongListHere,
+))
+let c = Constr(list(
+  superLoooooooooooooooooooooooooooooongIiiiiiiiiideeeentifieeeeeeeeeeeeeeeeer,
+  superLoooooooooooooooooooooooooooooongIiiiiiiiiideeeentifieeeeeeeeeeeeeeeeer,
+  superLoooooooooooooooooooooooooooooongIiiiiiiiiideeeentifieeeeeeeeeeeeeeeeer,
+))
+let c = ConstructorWithASuuuuuuuuuuuuuuuperLoooooooooooooooooooooooooooooongIiiiiiiiiideeeentifieeeeeeeeeeeeeeeeer([])
+let c = ConstructorWithASuuuuuuuuuuuuuuuperLoooooooooooooooooooooooooooooongIiiiiiiiiideeeentifieeeeeeeeeeeeeeeeer(list())
 
 "
 `;
@@ -146,6 +159,27 @@ exports[`letmodule.js 1`] = `
   module M = ME
   Me.x
 }
+
+"
+`;
+
+exports[`list.js 1`] = `
+"let x = list()
+let x = list(1)
+let x = list(1, 2)
+let x = list(1, 2, 3)
+let x = list(
+  superLoooooooooooooooooooooooooooooongIiiiiiiiiideeeentifieeeeeeeeeeeeeeeeer,
+  superLoooooooooooooooooooooooooooooongIiiiiiiiiideeeentifieeeeeeeeeeeeeeeeer,
+  superLoooooooooooooooooooooooooooooongIiiiiiiiiideeeentifieeeeeeeeeeeeeeeeer,
+)
+let x = list(1, ...otherList)
+let x = list(
+  superLoooooooooooooooooooooooooooooongIiiiiiiiiideeeentifieeeeeeeeeeeeeeeeer,
+  superLoooooooooooooooooooooooooooooongIiiiiiiiiideeeentifieeeeeeeeeeeeeeeeer,
+  superLoooooooooooooooooooooooooooooongIiiiiiiiiideeeentifieeeeeeeeeeeeeeeeer,
+  ...superLoooooooooooooooooooooooooooooongListHere,
+)
 
 "
 `;
