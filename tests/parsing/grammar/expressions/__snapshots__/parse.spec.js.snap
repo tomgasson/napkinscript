@@ -6,7 +6,8 @@ let () = foo (fun _ -> bla) blaz
 let () = foo ((fun _ -> bla)[@bs ]) blaz
 let () = foo (fun _ -> bla) (fun _ -> blaz)
 let () = List.map (fun x -> x + 1) myList
-let () = List.reduce (fun acc -> fun curr -> acc + curr) 0 myList"
+let () = List.reduce (fun acc -> fun curr -> acc + curr) 0 myList
+let unitUncurried = ((apply ())[@bs ])"
 `;
 
 exports[`argument.js 1`] = `

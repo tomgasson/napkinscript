@@ -35,3 +35,10 @@ let c = Constr(list(
 
 let c = ConstructorWithASuuuuuuuuuuuuuuuperLoooooooooooooooooooooooooooooongIiiiiiiiiideeeentifieeeeeeeeeeeeeeeeer([])
 let c = ConstructorWithASuuuuuuuuuuuuuuuperLoooooooooooooooooooooooooooooongIiiiiiiiiideeeentifieeeeeeeeeeeeeeeeer(list())
+
+
+let coordinate = JsCoord({"x": 1, "y": 1})
+let user = JsUser({
+  "name": "steve",
+  "age":  32
+})

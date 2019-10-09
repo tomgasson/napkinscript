@@ -3300,7 +3300,7 @@ Solution: you need to pull out each field you want explicitly."
         let endPos = p.endPos in
         let loc = mkLoc startPos endPos in
         let lid = Location.mkloc (Longident.Lident "()") loc in
-        Ast_helper.Pat.construct lid None
+        Ast_helper.Pat.construct ~loc lid None
       | _ ->
         let pat = parseConstrainedPattern p in
         Parser.expect Token.Rparen p;
@@ -5038,6 +5038,12 @@ Solution: you need to pull out each field you want explicitly."
         Parser.err p (Diagnostics.lident t);
         (uncurried, Nolabel, Recover.defaultExpr ())
       end
+    (* apply(.) *)
+    | Rparen when uncurried ->
+      let unitExpr = Ast_helper.Exp.construct
+        (Location.mknoloc (Longident.Lident "()")) None
+      in
+      (uncurried, Nolabel, unitExpr)
     | _ -> (uncurried, Nolabel, parseConstrainedExpr p)
 
   and parseCallExpr p funExpr =
@@ -7150,6 +7156,19 @@ module ParsetreeViewer : sig
       Parsetree.attributes *
       (Parsetree.attributes * Asttypes.arg_label * Parsetree.expression option * Parsetree.pattern) list *
       Parsetree.expression
+
+  (* example:
+   *  `makeCoordinate({
+   *    x: 1,
+   *    y: 2,
+   *  })`
+   *  Notice howe `({` and `})` "hug" or stick to each other *)
+  val isHuggableExpression: Parsetree.expression -> bool
+
+  (* For better type errors `Js.log("test")` gets parsed as `let () = Js.log("test")`
+   * This function determines if `let ()` is written by the user or inserted by
+   * the parser *)
+  val isGhostUnitBinding: int -> Parsetree.value_binding -> bool
 end = struct
   open Parsetree
 
@@ -7233,6 +7252,23 @@ end = struct
       collect attrs [] {expr with pexp_attributes = []}
     | expr -> collect [] [] expr
     end
+
+  let isHuggableExpression expr =
+    match expr.pexp_desc with
+    | Pexp_array _
+    | Pexp_tuple _
+    | Pexp_construct ({txt = Longident.Lident "::"}, _)
+    | Pexp_construct ({txt = Longident.Lident "[]"}, _)
+    | Pexp_extension ({txt = "bs.obj"}, _)
+    | Pexp_record _ -> true
+    | _ -> false
+
+  let isGhostUnitBinding i vb = match vb.pvb_pat with
+  | {
+      ppat_loc=loc;
+      ppat_desc = Ppat_construct({txt = Longident.Lident "()"}, None)
+    } when loc.loc_ghost && i == 0 -> true
+  | _ -> false
 end
 
 module Printer = struct
@@ -7267,14 +7303,12 @@ module Printer = struct
   and printStructureItem (si: Parsetree.structure_item) =
     match si.pstr_desc with
     | Pstr_value(rec_flag, valueBindings) ->
+			let recFlag = match rec_flag with
+			| Asttypes.Nonrecursive -> Doc.nil
+			| Asttypes.Recursive -> Doc.text "rec "
+			in
       Doc.group (
-        Doc.concat [
-          Doc.text "let ";
-          (match rec_flag with
-          | Asttypes.Nonrecursive -> Doc.nil
-          | Asttypes.Recursive -> Doc.text "rec ");
-          printValueBinding (List.hd valueBindings);
-        ]
+				printValueBinding ~recFlag 0 (List.hd valueBindings);
       )
     | Pstr_type(recFlag, typeDeclarations) ->
       let recFlag = match recFlag with
@@ -7911,29 +7945,41 @@ module Printer = struct
    *   pvb_loc: Location.t;
    * }
    *)
-  and printValueBinding vb =
-    let exprNeedsParens = match vb.pvb_expr.pexp_desc with
-    | Pexp_constraint(
-        {pexp_desc = Pexp_pack _},
-        {ptyp_desc = Ptyp_package _}
-      ) -> false
-    | Pexp_constraint _ -> true
-    | _ -> false
-    in
-    let expr = printExpression vb.pvb_expr in
-    Doc.concat [
-      printPattern vb.pvb_pat;
-      Doc.text " = ";
-      if exprNeedsParens then Doc.group (
+  and printValueBinding ~recFlag i vb =
+    let isGhost = ParsetreeViewer.isGhostUnitBinding i vb in
+		let header = if isGhost then Doc.nil else
+			if i == 0 then Doc.concat [Doc.text "let "; recFlag]
+			else Doc.text "and "
+		in
+    let printedExpr =
+      let exprDoc = printExpression vb.pvb_expr in
+      let needsParens = match vb.pvb_expr.pexp_desc with
+      | Pexp_constraint(
+          {pexp_desc = Pexp_pack _},
+          {ptyp_desc = Ptyp_package _}
+        ) -> false
+      | Pexp_constraint _ -> true
+      | _ -> false
+      in
+      if needsParens then Doc.group (
         Doc.concat [
           Doc.lparen;
           Doc.softLine;
-          expr;
+          exprDoc;
           Doc.softLine;
           Doc.rparen;
         ]
-      ) else expr
-    ]
+			) else exprDoc
+    in
+		if isGhost then
+			printedExpr
+		else
+			Doc.concat [
+				header;
+				printPattern vb.pvb_pat;
+				Doc.text " = ";
+        printedExpr;
+      ]
 
   and printPackageType ~printModuleKeywordAndParens (packageType: Parsetree.package_type) =
     let doc = match packageType with
@@ -7984,7 +8030,7 @@ module Printer = struct
       printTypExpr typ
     ]
 
-  and printExtension (stringLoc, _payload) =
+  and printExtension (stringLoc, payload) =
     Doc.text ("%" ^ stringLoc.Location.txt)
 
   and printPattern (p : Parsetree.pattern) =
@@ -8269,14 +8315,7 @@ module Printer = struct
           Doc.rparen;
         ]
       | Some(arg) ->
-        let shouldHug = match arg.pexp_desc with
-        | Pexp_array _
-        | Pexp_tuple _
-        | Pexp_construct ({txt = Longident.Lident "::"}, _)
-        | Pexp_construct ({txt = Longident.Lident "[]"}, _)
-        | Pexp_record _ -> true
-        | _ -> false
-        in
+        let shouldHug = ParsetreeViewer.isHuggableExpression arg in
         Doc.concat [
           Doc.lparen;
           if shouldHug then Doc.nil else Doc.softLine;
@@ -8357,12 +8396,43 @@ module Printer = struct
           Doc.rbrace;
         ])
       )
-    | Pexp_extension extension -> printExtension extension
-    | Pexp_apply (expr, [Nolabel, {pexp_desc=Pexp_construct({txt = Longident.Lident "()"}, _)}]) ->
-      Doc.concat [
-        printExpression expr;
-        Doc.text "()";
-      ]
+    | Pexp_extension extension ->
+      begin match extension with
+      | (
+          {txt = "bs.obj"},
+          PStr [{
+            pstr_loc = loc;
+            pstr_desc = Pstr_eval({pexp_desc = Pexp_record (rows, _)}, [])
+          }]
+        ) ->
+        (* If the object is written over multiple lines, break automatically
+         * `let x = {"a": 1, "b": 3}` -> same line, break when line-width exceeded
+         * `let x = {
+         *   "a": 1,
+         *   "b": 2,
+         *  }` -> object is written on multiple lines, break the group *)
+        let forceBreak =
+          loc.loc_start.pos_lnum < loc.loc_end.pos_lnum
+        in
+        Doc.breakableGroup ~forceBreak (
+          Doc.concat([
+            Doc.lbrace;
+            Doc.indent (
+              Doc.concat [
+                Doc.softLine;
+                Doc.join ~sep:(Doc.concat [Doc.text ","; Doc.line])
+                  (List.map printBsObjectRow rows)
+              ]
+            );
+            Doc.trailingComma;
+            Doc.softLine;
+            Doc.rbrace;
+          ])
+        )
+      | extension ->
+        printExtension extension
+      end
+    | Pexp_apply (expr, args) -> printPexpApply expr args e.pexp_attributes
     | Pexp_unreachable -> Doc.dot
     | Pexp_field (expr, longidentLoc) ->
       Doc.concat [
@@ -8540,6 +8610,98 @@ module Printer = struct
       ]
     | _ -> failwith "expression not yet implemented in printer"
 
+  (* callExpr(arg1, arg2)*)
+  and printPexpApply
+    (callExpr : Parsetree.expression)
+    (args : (Asttypes.arg_label * Parsetree.expression) list)
+    (attrs: Parsetree.attributes)
+    =
+    let (uncurried, _attrs) = ParsetreeViewer.processUncurriedAttribute attrs in
+    match (callExpr.pexp_desc, args) with
+    | (
+        Pexp_ident {txt = Longident.Lident ":=" },
+        [(Nolabel, arg1); (Nolabel, arg2)]
+      ) ->
+      Doc.concat [
+        printExpression arg1;
+        Doc.text " := ";
+        printExpression arg2;
+      ]
+    | _ ->
+			let callExprDoc = printExpression callExpr in
+			let argsDoc = printArguments ~uncurried args in
+			Doc.concat [
+				callExprDoc;
+				argsDoc;
+			]
+
+	and printArguments ~uncurried (args : (Asttypes.arg_label * Parsetree.expression) list) =
+		match args with
+		| [Nolabel, {pexp_desc = Pexp_construct ({txt = Longident.Lident "()"}, _)}] ->
+      if uncurried then Doc.text "(.)" else Doc.text "()"
+    | [(Nolabel, arg)] when ParsetreeViewer.isHuggableExpression arg ->
+      Doc.concat [
+        if uncurried then Doc.text "(." else Doc.lparen;
+        printExpression arg;
+        Doc.rparen;
+      ]
+		| args -> Doc.group (
+				Doc.concat [
+          if uncurried then Doc.text "(." else Doc.lparen;
+					Doc.indent (
+						Doc.concat [
+              if uncurried then Doc.line else Doc.softLine;
+							Doc.join ~sep:(Doc.concat [Doc.comma; Doc.line]) (
+								List.map printArgument args
+							)
+						]
+					);
+					Doc.trailingComma;
+					Doc.softLine;
+					Doc.rparen;
+				]
+			)
+
+(*
+   * argument ::=
+   *   | _                            (* syntax sugar *)
+   *   | expr
+   *   | expr : type
+   *   | ~ label-name
+   *   | ~ label-name
+   *   | ~ label-name ?
+   *   | ~ label-name =   expr
+   *   | ~ label-name =   _           (* syntax sugar *)
+   *   | ~ label-name =   expr : type
+   *   | ~ label-name = ? expr
+   *   | ~ label-name = ? _           (* syntax sugar *)
+   *   | ~ label-name = ? expr : type *)
+	and printArgument ((argLbl, arg) : Asttypes.arg_label * Parsetree.expression) =
+		match (argLbl, arg) with
+		(* ~a (punned)*)
+		| (
+				(Asttypes.Labelled lbl),
+				{pexp_desc=Pexp_ident {txt =Longident.Lident name}}
+			) when lbl = name ->
+			Doc.text ("~" ^ lbl)
+		(* ~a? (optional lbl punned)*)
+		| (
+				(Asttypes.Optional lbl),
+				{pexp_desc=Pexp_ident {txt =Longident.Lident name}}
+			) when lbl = name ->
+			Doc.text ("~" ^ lbl ^ "?")
+		| (lbl, expr) ->
+			let printedLbl = match argLbl with
+			| Asttypes.Nolabel -> Doc.nil
+			| Asttypes.Labelled lbl -> Doc.text ("~" ^ lbl ^ "=")
+			| Asttypes.Optional lbl -> Doc.text ("~" ^ lbl ^ "=?")
+			in
+			let printedExpr = printExpression expr in
+			Doc.concat [
+				printedLbl;
+				printedExpr;
+			]
+
   and printCases (cases: Parsetree.case list) =
     Doc.breakableGroup ~forceBreak:true (
       Doc.concat [
@@ -8690,14 +8852,12 @@ module Printer = struct
       let exprDoc = printExpression expr1 in
       collectRows (exprDoc::acc) expr2
     | Pexp_let (recFlag, valueBindings, expr) ->
+			let recFlag = match recFlag with
+			| Asttypes.Nonrecursive -> Doc.nil
+			| Asttypes.Recursive -> Doc.text "rec "
+			in
       let letDoc = Doc.group (
-        Doc.concat [
-          Doc.text "let ";
-          (match recFlag with
-          | Asttypes.Nonrecursive -> Doc.nil
-          | Asttypes.Recursive -> Doc.text "rec ");
-          printValueBinding (List.hd valueBindings);
-        ]
+				printValueBinding ~recFlag 0 (List.hd valueBindings);
       ) in
       collectRows(letDoc::acc) expr
     | _ ->
@@ -8735,6 +8895,14 @@ module Printer = struct
       printExpression expr;
     ]
 
+  and printBsObjectRow (lbl, expr) =
+    Doc.concat [
+      Doc.text "\"";
+      printLongident lbl.txt;
+      Doc.text "\"";
+      Doc.text ": ";
+      printExpression expr;
+    ]
   (* The optional loc indicates whether we need to print the attributes in
    * relation to some location. In practise this means the following:
    *  `@attr type t = string` -> on the same line, print on the same line

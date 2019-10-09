@@ -1,5 +1,60 @@
 // Jest Snapshot v1, https://goo.gl/fbAQLP
 
+exports[`apply.js 1`] = `
+"console.log()
+Js.log(\\"arg1\\", \\"arg2\\")
+let rbt = make(~compare)
+let rbt = make(~compare?)
+let rbt = make(~compare=intCompare)
+let rbt = make(~compare=?intCompare)
+let rbt = make(~compare=?intCompare: (int, int) => int)
+let () = applyFunctionToArguments(
+  superLongIdentifierWooooooowThisIsSuchLong,
+  superLongIdentifierWooooooowThisIsSuchLong,
+  superLongIdentifierWooooooowThisIsSuchLong,
+  superLongIdentifierWooooooowThisIsSuchLong,
+)
+let cmp = rbt.compare(. Js.Array2.unsafe_get(old, oldIter.contents), node.value)
+let cmp = rbt.compare2(.
+  Js.Array2.unsafe_get(old, oldIter.contents),
+  longerNode.longValue,
+)
+let uncurriedUnit = apply(.)
+let coordinate = make2dCoordinate({x: 1, y: 2})
+let coordinate = make3dCoordinate({
+  ...base,
+  field1: thisIsAPrettyLongNameHere,
+  field2: thisIsAPrettyLongNameHere,
+  field3: thisIsAPrettyLongNameHere,
+})
+let coordinate = make2dCoordinateArray([x, y])
+let coordinate = make3dCoordinateArray([
+  thisIsAPrettyLongNameHere,
+  thisIsAPrettyLongNameHere,
+  thisIsAPrettyLongNameHere,
+])
+let coordinate = make2dCoordinateTuple(/x, y/)
+let coordinate = make3dCoordinateTuple(/
+  thisIsAPrettyLongNameHere,
+  thisIsAPrettyLongNameHere,
+  thisIsAPrettyLongNameHere,
+/)
+let coordinate = make2dCoordinateList(list(x, y))
+let coordinate = make3dCoordinateList(list(
+  thisIsAPrettyLongNameHere,
+  thisIsAPrettyLongNameHere,
+  thisIsAPrettyLongNameHere,
+  ...allCoords,
+))
+let coordinate = makeJsCoordinate({\\"x\\": 1, \\"y\\": 1})
+let user = makeJsUser({
+  \\"name\\": \\"steve\\",
+  \\"age\\": 32,
+})
+
+"
+`;
+
 exports[`array.js 1`] = `
 "let x = []
 let x = [a, b, c]
@@ -29,6 +84,23 @@ exports[`block.js 1`] = `
   sideEffect()
   sideEffect2()
   ()
+}
+
+"
+`;
+
+exports[`bsObj.js 1`] = `
+"let user = {
+  \\"name\\": \\"Steve\\",
+  \\"age\\": 30,
+}
+let coord = {\\"x\\": 1, \\"y\\": 2}
+let person = {
+  \\"name\\": {
+    \\"first\\": \\"Bob\\",
+    \\"last\\": \\"Zhmith\\",
+  },
+  \\"age\\": 32,
 }
 
 "
@@ -87,6 +159,11 @@ let c = Constr(list(
 ))
 let c = ConstructorWithASuuuuuuuuuuuuuuuperLoooooooooooooooooooooooooooooongIiiiiiiiiideeeentifieeeeeeeeeeeeeeeeer([])
 let c = ConstructorWithASuuuuuuuuuuuuuuuperLoooooooooooooooooooooooooooooongIiiiiiiiiideeeentifieeeeeeeeeeeeeeeeer(list())
+let coordinate = JsCoord({\\"x\\": 1, \\"y\\": 1})
+let user = JsUser({
+  \\"name\\": \\"steve\\",
+  \\"age\\": 32,
+})
 
 "
 `;
