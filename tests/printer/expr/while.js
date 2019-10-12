@@ -8,3 +8,14 @@ while true {
   infiniteLoop()
   ()
 }
+
+// adds parens when condition breaks over multiple lines
+while (
+  continuePrefix.contents &&
+  aPrefixLen.contents <= aLen &&
+  bPrefixLen.contents <= bLen
+) {
+  let nextNonwhiteA = nextNonWhiteChar(aStr, 1, aPrefixLen.contents - 1)
+  let nextNonwhiteB = nextNonWhiteChar(bStr, 1, bPrefixLen.contents - 1)
+  ()
+}

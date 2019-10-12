@@ -26,3 +26,5 @@ let ifElseIfThen =
   } else {
     f3()
   }
+
+let x = if true { 1 } else { 2 } + if false { 2 } else { 3 }

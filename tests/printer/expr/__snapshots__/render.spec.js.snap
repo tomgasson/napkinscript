@@ -70,6 +70,123 @@ let x = [
 exports[`assert.js 1`] = `
 "assert false
 assert truth
+let x = assert true
+let x = assert 12
+let x = assert (12: int)
+let x = assert 12
+let x = assert list(1, 2, ...x)
+let x = assert module(Foo: Bar)
+let x = assert module(Foo)
+let x = assert Rgb(1, 2, 3)
+let x = assert [a, b, c]
+let x = assert {x: 1, y: 3}
+let x = assert /1, 2, 3/
+let x = assert %extension
+let x = assert user.name
+let x = assert (Array.get(streets, 0))
+let x = assert (apply(arg1, arg2))
+let x = assert -1
+let x = assert !true
+let x = assert (x => print(x))
+let x = assert (
+  switch x {
+  | Blue => ()
+  | Yello => ()
+  }
+)
+let x = assert (
+  for i in 0 to 10 {
+    print_int(i)
+  }
+)
+let x = assert (
+  if i < 10 {
+    print_int(i)
+  } else {
+    print_int(1000)
+  }
+)
+let x = assert (
+  while i < 10 {
+    print_int(i)
+  }
+)
+let x = assert (lazy false)
+let x = assert (
+  try sideEffect() catch {
+  | Exit => ()
+  }
+)
+let x = assert (@attr expr)
+let x = assert (a + b)
+
+"
+`;
+
+exports[`binary.js 1`] = `
+"let x = a && b + c
+let x = (a && b) + c
+let x = (a && b) || c
+let x = (a && b) + (c && d)
+while (
+  continuePrefix.contents &&
+  aPrefixLen.contents &&
+  bPrefixLen.contents &&
+  foobarLen.contents
+) {
+  ()
+}
+while (
+  rbt.compare(. Js.Array2.unsafe_get(old, oldIter.contents), node.value) < 0
+) {
+  ()
+}
+let x =
+  !filePath.includes(allMlSuffixesCategory) &&
+  !filePath.endsWith(allScriptDirectoriesCategory)
+let x = foo ++ bar
+let x = foo != bar
+let x = foo !== bar
+let x = foo ++ bar
+let x = 1 + 1
+let x = (a => a + 1) + (b => b + 2)
+let x = -1 + -1
+let x =
+  switch z {
+  | Red => 1
+  }
+  |> switch y {
+  | Blue => 2
+  }
+let x =
+  try z catch {
+  | Exit => 1
+  }
+  |> try y catch {
+  | Blue => 2
+  }
+let x =
+  if true {
+    1
+  } else {
+    2
+  } +
+  if false {
+    2
+  } else {
+    3
+  }
+let x =
+  for i in 0 to 10 {
+    ()
+  }
+  |> for i in 0 to 10 {
+    ()
+  }
+let x = (/a, b/) + (/b, c/)
+let x = Vec3(a, b, c) + Vec4(a, b, c, d)
+let x = {x: 1, y: 2} + {x: 2, y: 3}
+let x = user.firstName ++ user.lastName
 
 "
 `;
@@ -164,6 +281,30 @@ let user = JsUser({
   \\"name\\": \\"steve\\",
   \\"age\\": 32,
 })
+let rec peekMinNode = node =>
+  switch node {
+  | None => None
+  | Some(node) =>
+    if node.left === None {
+      Some(node)
+    } else {
+      node.left->peekMinNode
+    }
+  }
+let rec peekMinNode = node =>
+  switch node {
+  | None => None
+  | Some(node) =>
+    if node.left === None {
+      MyConstructor(
+        node,
+        nodeLongIdentifiiiiieeeeeeer1,
+        nodeLongIdentifiiiiieeeeeeer2,
+      )
+    } else {
+      node.left->peekMinNode
+    }
+  }
 
 "
 `;
@@ -176,6 +317,61 @@ exports[`extension.js 1`] = `
 
 exports[`field.js 1`] = `
 "let n = user.name
+(currentNode.parent->castNotOption).color
+(&myRef).color
+&myRef.intValue
+&myRef.intValue
+let x = -a.bar
+let x = true.x
+let x = 12.
+x
+let x = (12: int).x
+let x = list(1, 2, ...x).x
+let x = module(Foo: Bar).x
+let x = module(Foo).x
+let x = Rgb(1, 2, 3).x
+let x = [a, b, c].x
+let x = {x: 1, y: 3}.x
+let x = /1, 2, 3/.x
+let x = %extension.x
+let x = user.name.last
+let x = Array.get(streets, 0).house
+let x = apply(arg1, arg2).field
+let x = -1.x
+let x = (!true).x
+let x = (x => print(x)).x
+let x = (
+  switch x {
+  | Blue => ()
+  | Yello => ()
+  }
+).x
+let x = (
+  for i in 0 to 10 {
+    print_int(i)
+  }
+).x
+let x = (
+  if i < 10 {
+    print_int(i)
+  } else {
+    print_int(1000)
+  }
+).x
+let x = (
+  while i < 10 {
+    print_int(i)
+  }
+).x
+let x = (assert false).x
+let x = (lazy false).x
+let x = (
+  try sideEffect() catch {
+  | Exit => ()
+  }
+).x
+let x = (@attr expr).x
+let x = (a + b).x
 
 "
 `;
@@ -203,7 +399,17 @@ for i in 0 to 10 {
 exports[`fun.js 1`] = `
 "let f = (a, b) => ()
 let greet = (~person, ~from as hometown) => ()
-let greet = (~person=\\"Steve\\"=?, ~from as hometown=\\"Cupertino\\"=?) => ()
+let greet = (~person=\\"Steve\\", ~from as hometown=\\"Cupertino\\") => ()
+let onChangedVisible = (
+  ~anchor=None,
+  rbt,
+  ~oldNewVisible,
+  ~top as top_,
+  ~bottom as bottom_,
+  ~appear,
+  ~remained,
+  ~disappear,
+) => ()
 let greet = (~person, ~from as hometown) =>
   superLongIdentifiiiiiieeeeeeerExpression()
 let greet = (
@@ -349,6 +555,17 @@ let constrBuilder = (
   superLongIdentiiiiiiiifffffffiiiiieeeeeeeer,
 )
 let genName = () => \\"Steve\\"
+let make = (
+  ~onChange as onChange: option<(. {\\"testing\\": bool}, array<string>) => unit>=?,
+  children,
+) => {
+  let doSomething = () =>
+    switch onChange {
+    | None => ()
+    | Some(onChange) => onChange(. {\\"testing\\": true}, [\\"hey\\"])
+    }
+  input(~onChange=_ => doSomething(), ~children=list(), ())
+}
 
 "
 `;
@@ -395,6 +612,55 @@ let () = if true {
 
 exports[`lazy.js 1`] = `
 "let x = lazy sideEffect
+let x = lazy true
+let x = lazy 12
+let x = lazy (12: int)
+let x = lazy 12
+let x = lazy list(1, 2, ...x)
+let x = lazy module(Foo: Bar)
+let x = lazy module(Foo)
+let x = lazy Rgb(1, 2, 3)
+let x = lazy [a, b, c]
+let x = lazy {x: 1, y: 3}
+let x = lazy /1, 2, 3/
+let x = lazy %extension
+let x = lazy user.name
+let x = lazy Array.get(streets, 0)
+let x = lazy apply(arg1, arg2)
+let x = lazy -1
+let x = lazy !true
+let x = lazy (x => print(x))
+let x = lazy (
+  switch x {
+  | Blue => ()
+  | Yello => ()
+  }
+)
+let x = lazy (
+  for i in 0 to 10 {
+    print_int(i)
+  }
+)
+let x = lazy (
+  if i < 10 {
+    print_int(i)
+  } else {
+    print_int(1000)
+  }
+)
+let x = lazy (
+  while i < 10 {
+    print_int(i)
+  }
+)
+let x = lazy (assert false)
+let x = lazy (
+  try sideEffect() catch {
+  | Exit => ()
+  }
+)
+let x = lazy (@attr expr)
+let x = lazy (a + b)
 
 "
 `;
@@ -491,6 +757,10 @@ exports[`sequence.js 1`] = `
   foo()
   bar()
 }
+let () = {
+  (foo(): unit)
+  (bar(): unit)
+}
 
 "
 `;
@@ -536,6 +806,79 @@ let x = {
 "
 `;
 
+exports[`unary.js 1`] = `
+"let x = -a
+let x = -.a
+let x = !a
+let x = &a
+!(!a)
+!(!(!a))
+!(a |> f(b))
+-1->add
+-1->add
+-(1->add)
+(!foo)->print_bool
+(!foo)->print_bool
+!(foo->parseTruth)
+node.left->peekMinNode
+node.left->peekMinNode
+let x = -a.bar
+let x = -a.bar
+!(lazy x)
+lazy !x
+!(assert x)
+assert !x
+!(@attr expr)
+!(arg => doStuffWith(arg))
+let x = !(truth: bool)
+let x = (!truth: bool)
+let z = !(%extension)
+&(x.left = value)
+&(x.left = value)
+-[a, b, c]
+!module(Foo: Bar)
+!module(Foo)
+let x = -apply(arg)
+let x = -apply(. arg)
+let x = -Foo(a, b, c)
+let x = -{x: 1, y: 2}
+let x = -list(1, 2, 3)
+let x = -(
+  if true {
+    1
+  } else {
+    2
+  }
+)
+let x = -(
+  for i in 0 to 10 {
+    ()
+  }
+)
+let x = -(
+  switch x {
+  | Foo => 1
+  }
+)
+let x = -(
+  while i < 10 {
+    i.contents = 20
+  }
+)
+let x = -/1, 2, 3/
+let x = -{
+  let a = 1
+  let b = 2
+  a + b
+}
+let x = -{
+  sideEffect()
+  generateNumber()
+}
+
+"
+`;
+
 exports[`while.js 1`] = `
 "let () = while true {
   ()
@@ -544,6 +887,15 @@ while true {
   let a = 1
   let b = 2
   infiniteLoop()
+  ()
+}
+while (
+  continuePrefix.contents &&
+  aPrefixLen.contents <= aLen &&
+  bPrefixLen.contents <= bLen
+) {
+  let nextNonwhiteA = nextNonWhiteChar(aStr, 1, aPrefixLen.contents - 1)
+  let nextNonwhiteB = nextNonWhiteChar(bStr, 1, bPrefixLen.contents - 1)
   ()
 }
 

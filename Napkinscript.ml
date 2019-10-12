@@ -4097,7 +4097,9 @@ Solution: you need to pull out each field you want explicitly."
          * The newline indicates the difference between the two.
          * Branching here has a performance impact.
          * TODO: totally different tuple syntax *)
-        if token = Token.Forwardslash && p.startPos.pos_lnum > p.prevEndPos.pos_lnum then
+        if (token = Token.Forwardslash || token = Token.Minus) &&
+            p.startPos.pos_lnum > p.prevEndPos.pos_lnum
+        then
           -1
         else
           Token.precedence token
@@ -7169,6 +7171,11 @@ module ParsetreeViewer : sig
    * This function determines if `let ()` is written by the user or inserted by
    * the parser *)
   val isGhostUnitBinding: int -> Parsetree.value_binding -> bool
+
+  val operatorPrecedence: string -> int
+
+  val isUnaryExpression: Parsetree.expression -> bool
+  val isBinaryExpression: Parsetree.expression -> bool
 end = struct
   open Parsetree
 
@@ -7264,11 +7271,120 @@ end = struct
     | _ -> false
 
   let isGhostUnitBinding i vb = match vb.pvb_pat with
-  | {
-      ppat_loc=loc;
-      ppat_desc = Ppat_construct({txt = Longident.Lident "()"}, None)
-    } when loc.loc_ghost && i == 0 -> true
-  | _ -> false
+    | {
+        ppat_loc=loc;
+        ppat_desc = Ppat_construct({txt = Longident.Lident "()"}, None)
+      } when loc.loc_ghost && i == 0 -> true
+    | _ -> false
+
+  let operatorPrecedence operator = match operator with
+    | ":=" -> 1
+    | "||" -> 2
+    | "&&" -> 3
+    | "=" | "==" | "<" | ">" | "!=" | "!==" | "<=" | ">=" | "|>" -> 4
+    | "+" | "+." | "-" | "-." | "++" -> 5
+    | "*" | "*." | "/" | "/." -> 6
+    | "**" -> 7
+    | "#" | "##" | "|." -> 8
+    | _ -> 0
+
+  let isUnaryOperator operator = match operator with
+    | "~+" | "~+."
+    | "~-" | "~-."
+    | "not" | "!" -> true
+    | _ -> false
+
+  let isUnaryExpression expr = match expr.pexp_desc with
+    | Pexp_apply(
+        {pexp_desc = Pexp_ident {txt = Longident.Lident operator}},
+        [Nolabel, _arg]
+      ) when isUnaryOperator operator -> true
+    | _ -> false
+
+  let isBinaryOperator operator = match operator with
+    | ":="
+    | "||"
+    | "&&"
+    | "=" | "==" | "<" | ">" | "!=" | "!==" | "<=" | ">=" | "|>"
+    | "+" | "+." | "-" | "-." | "++" | "^"
+    | "*" | "*." | "/" | "/."
+    | "**"
+    | "#" | "##" | "|." | "<>" -> true
+    | _ -> false
+
+  let isBinaryExpression expr = match expr.pexp_desc with
+    | Pexp_apply(
+        {pexp_desc = Pexp_ident {txt = Longident.Lident operator}},
+        [(Nolabel, _operand1); (Nolabel, _operand2)]
+      ) when isBinaryOperator operator -> true
+    | _ -> false
+end
+
+module Parens: sig
+  val unaryExprOperand: Parsetree.expression -> bool
+
+  val binaryExprOperand: Parsetree.expression -> string -> bool
+end = struct
+  let unaryExprOperand expr = match expr with
+    | {Parsetree.pexp_attributes = attrs} when
+        let (uncurried, attrs) =
+          ParsetreeViewer.processUncurriedAttribute attrs
+        in
+        begin match attrs with
+        | _::_ -> true
+        | [] -> false
+        end
+        -> true
+    | expr when
+        ParsetreeViewer.isUnaryExpression expr ||
+        ParsetreeViewer.isBinaryExpression expr
+      -> true
+    | {pexp_desc = Pexp_constraint (
+        {pexp_desc = Pexp_pack _},
+        {ptyp_desc = Ptyp_package _}
+      )} -> false
+    | {pexp_desc =
+          Pexp_lazy _
+        | Pexp_assert _
+        | Pexp_fun _
+        | Pexp_newtype _
+        | Pexp_function _
+        | Pexp_constraint _
+        | Pexp_setfield _
+        | Pexp_extension _ (* readability? maybe remove *)
+        | Pexp_match _
+        | Pexp_try _
+        | Pexp_while _
+        | Pexp_for _
+        | Pexp_ifthenelse _
+      } -> true
+    | _ -> false
+
+  let binaryExprOperand expr parentOperator = match expr with
+    | {Parsetree.pexp_attributes = attrs} when
+        let (uncurried, attrs) =
+          ParsetreeViewer.processUncurriedAttribute attrs
+        in
+        begin match attrs with
+        | _::_ -> true
+        | [] -> false
+        end
+        -> true
+    | expr when ParsetreeViewer.isBinaryExpression expr -> true
+    | {pexp_desc = Pexp_constraint (
+        {pexp_desc = Pexp_pack _},
+        {ptyp_desc = Ptyp_package _}
+      )} -> false
+    | {pexp_desc =
+          Pexp_lazy _
+        | Pexp_assert _
+        | Pexp_fun _
+        | Pexp_function _
+        | Pexp_constraint _
+        | Pexp_setfield _
+        | Pexp_extension _ (* readability? maybe remove *)
+      } -> true
+    | _ -> false
 end
 
 module Printer = struct
@@ -7282,6 +7398,21 @@ module Printer = struct
       ) ->
       collectPatternsFromListConstruct (pat::acc) rest
     | _ -> List.rev acc, pattern
+
+  let addParens doc =
+    Doc.group (
+      Doc.concat [
+        Doc.lparen;
+        Doc.indent (
+          Doc.concat [
+            Doc.softLine;
+            doc
+          ]
+        );
+        Doc.softLine;
+        Doc.rparen;
+      ]
+    )
 
 
   let printLongident l = match l with
@@ -7843,8 +7974,7 @@ module Printer = struct
     | _ -> false
     in
     begin match typExpr.ptyp_attributes with
-    | [] -> renderedType
-    | attrs when not shouldPrintItsOwnAttributes ->
+    | _::_ as attrs when not shouldPrintItsOwnAttributes ->
       Doc.group (
         Doc.concat [
           printAttributes attrs;
@@ -7961,15 +8091,7 @@ module Printer = struct
       | Pexp_constraint _ -> true
       | _ -> false
       in
-      if needsParens then Doc.group (
-        Doc.concat [
-          Doc.lparen;
-          Doc.softLine;
-          exprDoc;
-          Doc.softLine;
-          Doc.rparen;
-        ]
-			) else exprDoc
+      if needsParens then addParens exprDoc else exprDoc
     in
 		if isGhost then
 			printedExpr
@@ -8262,7 +8384,7 @@ module Printer = struct
         ])
 
   and printExpression (e : Parsetree.expression) =
-    match e.pexp_desc with
+    let printedExpression = match e.pexp_desc with
     | Parsetree.Pexp_constant c -> printConstant c
     | Pexp_construct ({txt = Longident.Lident "()"}, _) -> Doc.text "()"
     | Pexp_construct ({txt = Longident.Lident "[]"}, _) -> Doc.text "list()"
@@ -8325,7 +8447,7 @@ module Printer = struct
           Doc.rparen;
         ]
       in
-      Doc.concat [constr; args]
+      Doc.group(Doc.concat [constr; args])
     | Pexp_ident(longidentLoc) ->
       printLongident longidentLoc.txt
     | Pexp_tuple exprs ->
@@ -8432,7 +8554,13 @@ module Printer = struct
       | extension ->
         printExtension extension
       end
-    | Pexp_apply (expr, args) -> printPexpApply expr args e.pexp_attributes
+    | Pexp_apply _ ->
+      if ParsetreeViewer.isUnaryExpression e then
+        printUnaryExpression e
+      else if ParsetreeViewer.isBinaryExpression e then
+        printBinaryExpression e
+      else
+        printPexpApply e
     | Pexp_unreachable -> Doc.dot
     | Pexp_field (expr, longidentLoc) ->
       Doc.concat [
@@ -8473,10 +8601,13 @@ module Printer = struct
         elseDoc;
       ]
     | Pexp_while (expr1, expr2) ->
+      let condition = printExpression expr1 in
       Doc.breakableGroup ~forceBreak:true (
         Doc.concat [
           Doc.text "while ";
-          printExpression expr1;
+          Doc.group (
+            Doc.ifBreaks (addParens condition) condition
+          );
           Doc.space;
           printExpressionBlock expr2;
         ]
@@ -8565,18 +8696,28 @@ module Printer = struct
         | Pexp_record _ -> true
         | _ -> false
         in
+        let shouldIndent = match returnExpr.pexp_desc with
+        | Pexp_sequence _ | Pexp_let _ | Pexp_letmodule _ | Pexp_letexception _ -> false
+        | _ -> true
+        in
         let returnDoc = printExpression returnExpr in
         if shouldInline then Doc.concat [
           Doc.space;
           returnDoc;
         ] else
           Doc.group (
-            Doc.indent (
+            if shouldIndent then
+              Doc.indent (
+                Doc.concat [
+                  Doc.line;
+                  returnDoc;
+                ]
+              )
+            else
               Doc.concat [
-                Doc.line;
-                returnDoc;
+                Doc.space;
+                returnDoc
               ]
-            )
           )
       in
       let attrs = match attrs with
@@ -8609,31 +8750,143 @@ module Printer = struct
         printCases cases;
       ]
     | _ -> failwith "expression not yet implemented in printer"
+    in
+    let shouldPrintItsOwnAttributes = match e.pexp_desc with
+    | Pexp_apply _ | Pexp_fun _ -> true
+    | _ -> false
+    in
+    begin match e.pexp_attributes with
+    | [] -> printedExpression
+    | attrs when not shouldPrintItsOwnAttributes ->
+      Doc.group (
+        Doc.concat [
+          printAttributes attrs;
+          printedExpression;
+        ]
+      )
+    | _ -> printedExpression
+    end
+
+  and printUnaryExpression expr =
+    let printUnaryOperator op = Doc.text (
+      match op with
+      | "~+" -> "+"
+      | "~+." -> "+."
+      | "~-" -> "-"
+      | "~-." ->  "-."
+      | "not" -> "!"
+      | "!" -> "&"
+      | _ -> assert false
+    ) in
+    match expr.pexp_desc with
+    | Pexp_apply (
+        {pexp_desc = Pexp_ident {txt = Longident.Lident operator}},
+        [Nolabel, operand]
+      ) ->
+      let printedOperand =
+        let doc = printExpression operand in
+        if Parens.unaryExprOperand operand then addParens doc else doc
+      in
+      Doc.concat [
+        printUnaryOperator operator;
+        printedOperand;
+      ]
+    | _ -> assert false
+
+  and printBinaryExpression (expr : Parsetree.expression) =
+    let printBinaryOperator operator =
+      let operatorTxt = match operator with
+      | "|." -> "->"
+      | "^" -> "++"
+      | "=" -> "=="
+      | "==" -> "==="
+      | "<>" -> "!="
+      | "!=" -> "!=="
+      | txt -> txt
+      in
+      let spacingBeforeOperator =
+        if operator = "|." then Doc.softLine
+        else if operator = "|>" then Doc.line
+        else if operator = "##" then Doc.nil
+        else Doc.space;
+      in
+      let spacingAfterOperator =
+        if operator = "|." || operator = "##" then Doc.nil
+        else if operator = "|>" then Doc.space
+        else Doc.line
+      in
+      Doc.concat [
+        spacingBeforeOperator;
+        Doc.text operatorTxt;
+        spacingAfterOperator;
+      ]
+    in
+    let printOperand expr parentOperator =
+      let rec flatten expr parentOperator =
+        if ParsetreeViewer.isBinaryExpression expr then
+          begin match expr.pexp_desc with
+          | Pexp_apply (
+              {pexp_desc = Pexp_ident {txt = Longident.Lident operator}},
+              [_, left; _, right]
+            ) ->
+            let precParent = ParsetreeViewer.operatorPrecedence parentOperator in
+            let precChild =  ParsetreeViewer.operatorPrecedence operator in
+            let samePrecedence = precParent == precChild in
+            if samePrecedence then
+              let leftPrinted = flatten left operator in
+              let needsParens = precParent > precChild in
+              let doc = Doc.concat [
+                leftPrinted;
+                printBinaryOperator operator;
+                printExpression right;
+              ] in
+              if needsParens then addParens doc else doc
+            else
+              let needsParens =
+                precParent > precChild ||
+                (* a && b || c, add parens to (a && b) for readability, who knows the difference by heart… *)
+                parentOperator = "||" && operator = "&&"
+              in
+              let doc = printExpression expr in
+              if needsParens then addParens doc else doc
+          | _ -> assert false
+          end
+        else
+          let printedExpr = printExpression expr in
+          if Parens.binaryExprOperand expr parentOperator then
+            addParens printedExpr
+          else printedExpr
+      in
+      flatten expr parentOperator
+    in
+    match expr.pexp_desc with
+    | Pexp_apply (
+        {pexp_desc = Pexp_ident {txt = Longident.Lident operator}},
+        [Nolabel, lhs; Nolabel, rhs]
+      ) ->
+      Doc.group (
+        Doc.concat [
+          printOperand lhs operator;
+          printBinaryOperator operator;
+          printOperand rhs operator;
+        ]
+      )
+    | _ -> assert false
 
   (* callExpr(arg1, arg2)*)
-  and printPexpApply
-    (callExpr : Parsetree.expression)
-    (args : (Asttypes.arg_label * Parsetree.expression) list)
-    (attrs: Parsetree.attributes)
-    =
-    let (uncurried, _attrs) = ParsetreeViewer.processUncurriedAttribute attrs in
-    match (callExpr.pexp_desc, args) with
-    | (
-        Pexp_ident {txt = Longident.Lident ":=" },
-        [(Nolabel, arg1); (Nolabel, arg2)]
-      ) ->
-      Doc.concat [
-        printExpression arg1;
-        Doc.text " := ";
-        printExpression arg2;
-      ]
-    | _ ->
-			let callExprDoc = printExpression callExpr in
-			let argsDoc = printArguments ~uncurried args in
-			Doc.concat [
-				callExprDoc;
-				argsDoc;
-			]
+  and printPexpApply expr =
+    match expr.pexp_desc with
+    | Pexp_apply (callExpr, args) ->
+      let (uncurried, _attrs) =
+        ParsetreeViewer.processUncurriedAttribute expr.pexp_attributes
+      in
+        let callExprDoc = printExpression callExpr in
+        let argsDoc = printArguments ~uncurried args in
+        Doc.concat [
+          callExprDoc;
+          argsDoc;
+        ]
+    | _ -> assert false
 
 	and printArguments ~uncurried (args : (Asttypes.arg_label * Parsetree.expression) list) =
 		match args with
@@ -8800,8 +9053,8 @@ module Printer = struct
         printPattern pattern;
       ]
     in
-    let optionalLabelSuffix = match lbl with
-    | Asttypes.Optional _ -> Doc.text "=?"
+    let optionalLabelSuffix = match (lbl, defaultExpr) with
+    | (Asttypes.Optional _, None) -> Doc.text "=?"
     | _ -> Doc.nil
     in
     Doc.concat [

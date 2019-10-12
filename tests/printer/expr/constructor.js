@@ -42,3 +42,27 @@ let user = JsUser({
   "name": "steve",
   "age":  32
 })
+
+let rec peekMinNode = node =>
+  switch node {
+  | None => None
+  | Some(node) =>
+    if node.left === None {
+      // this shouldn't break over multiple lines
+      Some(node)
+    } else {
+      node.left->peekMinNode
+    }
+  }
+
+let rec peekMinNode = node =>
+  switch node {
+  | None => None
+  | Some(node) =>
+    if node.left === None {
+      // this shouldn't break over multiple lines
+      MyConstructor(node, nodeLongIdentifiiiiieeeeeeer1, nodeLongIdentifiiiiieeeeeeer2)
+    } else {
+      node.left->peekMinNode
+    }
+  }

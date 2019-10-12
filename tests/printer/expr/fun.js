@@ -2,6 +2,17 @@ let f = (a, b) => ()
 let greet = (~person, ~from as hometown) => ()
 let greet = (~person="Steve", ~from as hometown="Cupertino") => ()
 
+let onChangedVisible = (
+  ~anchor=None,
+  rbt,
+  ~oldNewVisible,
+  ~top as top_,
+  ~bottom as bottom_,
+  ~appear,
+  ~remained,
+  ~disappear,
+) => () 
+
 let greet = (~person, ~from as hometown) => superLongIdentifiiiiiieeeeeeerExpression()
 
 let greet = (
@@ -156,3 +167,16 @@ let constrBuilder = (
 ) => Reducer(superLongIdentiiiiiiiifffffffiiiiieeeeeeeer, superLongIdentiiiiiiiifffffffiiiiieeeeeeeer, superLongIdentiiiiiiiifffffffiiiiieeeeeeeer)
 
 let genName = () => "Steve"
+
+@react.component
+let make = (
+      ~onChange: option<(. { "testing": bool}, array<string>) => unit>=?,
+      children,
+    ) => {
+  let doSomething = () =>
+    switch (onChange) {
+    | None => ()
+    | Some(onChange) => onChange(. {"testing": true}, ["hey"])
+    };
+  <input onChange={_ => doSomething()} />;
+};
