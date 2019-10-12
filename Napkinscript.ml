@@ -7325,7 +7325,7 @@ module Parens: sig
 
   val binaryExprOperand: Parsetree.expression -> string -> bool
 
-  val lazyExprRhs: Parsetree.expression -> bool
+  val lazyOrAssertExprRhs: Parsetree.expression -> bool
 end = struct
   let unaryExprOperand expr = match expr with
     | {Parsetree.pexp_attributes = attrs} when
@@ -7389,7 +7389,7 @@ end = struct
     | _ -> false
 
 
-  let lazyExprRhs expr =
+  let lazyOrAssertExprRhs expr =
     match expr with
     | {Parsetree.pexp_attributes = attrs} when
         let (uncurried, attrs) =
@@ -8690,14 +8690,18 @@ module Printer = struct
     | Pexp_letexception (extensionConstructor, expr) ->
       printExpressionBlock e
     | Pexp_assert expr ->
+      let rhs =
+        let doc = printExpression expr in
+        if Parens.lazyOrAssertExprRhs expr then addParens doc else doc
+      in
       Doc.concat [
         Doc.text "assert ";
-        printExpression expr;
+        rhs;
       ]
     | Pexp_lazy expr ->
       let rhs =
         let doc = printExpression expr in
-        if Parens.lazyExprRhs expr then addParens doc else doc
+        if Parens.lazyOrAssertExprRhs expr then addParens doc else doc
       in
       Doc.concat [
         Doc.text "lazy ";
