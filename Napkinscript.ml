@@ -7324,6 +7324,8 @@ module Parens: sig
   val unaryExprOperand: Parsetree.expression -> bool
 
   val binaryExprOperand: Parsetree.expression -> string -> bool
+
+  val lazyExprRhs: Parsetree.expression -> bool
 end = struct
   let unaryExprOperand expr = match expr with
     | {Parsetree.pexp_attributes = attrs} when
@@ -7383,6 +7385,39 @@ end = struct
         | Pexp_constraint _
         | Pexp_setfield _
         | Pexp_extension _ (* readability? maybe remove *)
+      } -> true
+    | _ -> false
+
+
+  let lazyExprRhs expr =
+    match expr with
+    | {Parsetree.pexp_attributes = attrs} when
+        let (uncurried, attrs) =
+          ParsetreeViewer.processUncurriedAttribute attrs
+        in
+        begin match attrs with
+        | _::_ -> true
+        | [] -> false
+        end
+        -> true
+    | expr when ParsetreeViewer.isBinaryExpression expr -> true
+    | {pexp_desc = Pexp_constraint (
+        {pexp_desc = Pexp_pack _},
+        {ptyp_desc = Ptyp_package _}
+      )} -> false
+    | {pexp_desc =
+          Pexp_lazy _
+        | Pexp_assert _
+        | Pexp_fun _
+        | Pexp_newtype _
+        | Pexp_function _
+        | Pexp_constraint _
+        | Pexp_setfield _
+        | Pexp_match _
+        | Pexp_try _
+        | Pexp_while _
+        | Pexp_for _
+        | Pexp_ifthenelse _
       } -> true
     | _ -> false
 end
@@ -8660,9 +8695,13 @@ module Printer = struct
         printExpression expr;
       ]
     | Pexp_lazy expr ->
+      let rhs =
+        let doc = printExpression expr in
+        if Parens.lazyExprRhs expr then addParens doc else doc
+      in
       Doc.concat [
         Doc.text "lazy ";
-        printExpression expr;
+        rhs;
       ]
     | Pexp_open (overrideFlag, longidentLoc, expr) ->
       printExpressionBlock e

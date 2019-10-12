@@ -16,6 +16,7 @@ let x = lazy %extension
 let x = lazy user.name
 let x = lazy streets[0]
 let x = lazy apply(arg1, arg2)
+let x = lazy apply(. arg1, arg2)
 let x = lazy -1
 let x = lazy !true
 let x = lazy (x => print(x))
