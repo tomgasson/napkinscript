@@ -7326,6 +7326,8 @@ module Parens: sig
   val binaryExprOperand: Parsetree.expression -> string -> bool
 
   val lazyOrAssertExprRhs: Parsetree.expression -> bool
+
+  val fieldExpr: Parsetree.expression -> bool
 end = struct
   let unaryExprOperand expr = match expr with
     | {Parsetree.pexp_attributes = attrs} when
@@ -7420,6 +7422,43 @@ end = struct
         | Pexp_ifthenelse _
       } -> true
     | _ -> false
+
+
+  let fieldExpr expr =
+    match expr with
+    | {Parsetree.pexp_attributes = attrs} when
+        let (uncurried, attrs) =
+          ParsetreeViewer.processUncurriedAttribute attrs
+        in
+        begin match attrs with
+        | _::_ -> true
+        | [] -> false
+        end
+        -> true
+    | expr when
+        ParsetreeViewer.isBinaryExpression expr ||
+        ParsetreeViewer.isUnaryExpression expr
+      -> true
+    | {pexp_desc = Pexp_constraint (
+        {pexp_desc = Pexp_pack _},
+        {ptyp_desc = Ptyp_package _}
+      )} -> false
+    | {pexp_desc =
+          Pexp_lazy _
+        | Pexp_assert _
+        | Pexp_fun _
+        | Pexp_newtype _
+        | Pexp_function _
+        | Pexp_constraint _
+        | Pexp_setfield _
+        | Pexp_match _
+        | Pexp_try _
+        | Pexp_while _
+        | Pexp_for _
+        | Pexp_ifthenelse _
+      } -> true
+    | _ -> false
+
 end
 
 module Printer = struct
@@ -8598,8 +8637,12 @@ module Printer = struct
         printPexpApply e
     | Pexp_unreachable -> Doc.dot
     | Pexp_field (expr, longidentLoc) ->
+      let lhs =
+        let doc = printExpression expr in
+        if Parens.fieldExpr expr then addParens doc else doc
+      in
       Doc.concat [
-        printExpression expr;
+        lhs;
         Doc.dot;
         printLongident longidentLoc.txt;
       ]
