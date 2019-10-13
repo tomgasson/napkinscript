@@ -7328,6 +7328,7 @@ module Parens: sig
   val lazyOrAssertExprRhs: Parsetree.expression -> bool
 
   val fieldExpr: Parsetree.expression -> bool
+  val blockExpr: Parsetree.expression -> bool
 end = struct
   let unaryExprOperand expr = match expr with
     | {Parsetree.pexp_attributes = attrs} when
@@ -7458,6 +7459,15 @@ end = struct
         | Pexp_ifthenelse _
       } -> true
     | _ -> false
+
+  let blockExpr expr =
+    match expr with
+    | {Parsetree.pexp_desc = Pexp_constraint (
+        {pexp_desc = Pexp_pack _},
+        {ptyp_desc = Ptyp_package _}
+      )} -> false
+    | {pexp_desc = Pexp_constraint _ } -> true
+    |  _ -> false
 
 end
 
@@ -9188,7 +9198,10 @@ module Printer = struct
       ] in
       collectRows (openDoc::acc) expr
     | Pexp_sequence (expr1, expr2) ->
-      let exprDoc = printExpression expr1 in
+      let exprDoc =
+        let doc = printExpression expr1 in
+        if Parens.blockExpr expr1 then addParens doc else doc
+      in
       collectRows (exprDoc::acc) expr2
     | Pexp_let (recFlag, valueBindings, expr) ->
 			let recFlag = match recFlag with
@@ -9200,7 +9213,10 @@ module Printer = struct
       ) in
       collectRows(letDoc::acc) expr
     | _ ->
-      let exprDoc = printExpression expr in
+      let exprDoc =
+        let doc = printExpression expr in
+        if Parens.blockExpr expr then addParens doc else doc
+      in
       List.rev (exprDoc::acc)
     in
     let docs = collectRows [] expr in
