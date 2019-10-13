@@ -38,4 +38,8 @@ let x = {x: 1, y: 2} + {x: 2, y :3}
 let x = user.firstName ++ user.lastName
 let x = x.left = value |> x.right = value
 let x = (x.left = value) |> x.right = value
-let x = x.left = (value |> process) |> x.right = value |> process
+let x = (x.left = value) |> (x.right = value)
+let () = (x.left = value) |> logMutation
+let () = x.left = value |> logMutation
+let () = x.left = (value |> process) |> x.right = value |> process
+let () = (x: int) |> (print_int: int => unit)

@@ -188,6 +188,13 @@ let x = (/a, b/) + (/b, c/)
 let x = Vec3(a, b, c) + Vec4(a, b, c, d)
 let x = {x: 1, y: 2} + {x: 2, y: 3}
 let x = user.firstName ++ user.lastName
+let x = x.left = value |> x.right = value
+let x = (x.left = value) |> x.right = value
+let x = (x.left = value) |> x.right = value
+let () = (x.left = value) |> logMutation
+let () = x.left = value |> logMutation
+let () = x.left = value |> process |> x.right = value |> process
+let () = (x: int) |> (print_int: int => unit)
 
 "
 `;
@@ -770,6 +777,11 @@ let () = {
 
 exports[`setfield.js 1`] = `
 "user.name = \\"steve\\"
+config.shouldSkip =
+  !filePath.includes(allMlSuffixesCategory) &&
+  !filePath.endsWith(allScriptDirectoriesCategory)
+let () = @attr user.name = \\"steve\\"
+let () = @attr user.name = \\"steve\\" |> @attr user.name = \\"steve\\"
 
 "
 `;
@@ -820,8 +832,8 @@ let x = &a
 -1->add
 -1->add
 -(1->add)
-(!foo)->print_bool
-(!foo)->print_bool
+!foo->print_bool
+!foo->print_bool
 !(foo->parseTruth)
 node.left->peekMinNode
 node.left->peekMinNode
