@@ -7176,6 +7176,10 @@ module ParsetreeViewer : sig
 
   val isUnaryExpression: Parsetree.expression -> bool
   val isBinaryExpression: Parsetree.expression -> bool
+
+  val isMultiplicativeOperator: string -> bool
+  val isEqualityOperator: string -> bool
+  val flattenableOperators: string -> string -> bool
 end = struct
   open Parsetree
 
@@ -7318,12 +7322,37 @@ end = struct
         [(Nolabel, _operand1); (Nolabel, _operand2)]
       ) when isBinaryOperator operator -> true
     | _ -> false
+
+  let isMultiplicativeOperator operator = match operator with
+    | "*" | "*." | "/" | "/." -> true
+    | _ -> false
+
+  let isEqualityOperator operator = match operator with
+    | "=" | "==" | "<>" | "!=" -> true
+    | _ -> false
+
+  let flattenableOperators parentOperator childOperator =
+    let precParent = operatorPrecedence parentOperator in
+    let precChild =  operatorPrecedence childOperator in
+    if precParent == precChild then
+      not (
+        isMultiplicativeOperator parentOperator &&
+        isMultiplicativeOperator childOperator &&
+        parentOperator <> childOperator
+      ) && not (
+        isEqualityOperator parentOperator &&
+        isEqualityOperator childOperator
+      )
+    else
+      false
+
 end
 
 module Parens: sig
   val unaryExprOperand: Parsetree.expression -> bool
 
   val binaryExprOperand: isLhs:bool -> Parsetree.expression -> string -> bool
+  val subBinaryExprOperand: string -> string -> bool
 
   val lazyOrAssertExprRhs: Parsetree.expression -> bool
 
@@ -7389,6 +7418,15 @@ end = struct
         | Pexp_assert _
       } when isLhs -> true
     | _ -> false
+
+  let subBinaryExprOperand parentOperator childOperator =
+    let precParent = ParsetreeViewer.operatorPrecedence parentOperator in
+    let precChild =  ParsetreeViewer.operatorPrecedence childOperator in
+    precParent > precChild ||
+    (precParent == precChild &&
+    not (ParsetreeViewer.flattenableOperators parentOperator childOperator)) ||
+    (* a && b || c, add parens to (a && b) for readability, who knows the difference by heart… *)
+    (parentOperator = "||" && childOperator = "&&")
 
 
   let lazyOrAssertExprRhs expr =
@@ -8682,9 +8720,12 @@ module Printer = struct
       let ifDocs = Doc.join ~sep:Doc.space (
         List.mapi (fun i (ifExpr, thenExpr) ->
           let ifTxt = if i > 0 then Doc.text "else if " else  Doc.text "if " in
+          let condition = printExpression ifExpr in
           Doc.concat [
             ifTxt;
-            printExpression ifExpr;
+            Doc.group (
+              Doc.ifBreaks (addParens condition) condition;
+            );
             Doc.space;
             printExpressionBlock thenExpr;
           ]
@@ -8961,31 +9002,24 @@ module Printer = struct
     let printOperand ~isLhs expr parentOperator =
       let rec flatten ~isLhs expr parentOperator =
         if ParsetreeViewer.isBinaryExpression expr then
-          begin match expr.pexp_desc with
-          | Pexp_apply (
+          begin match expr with
+          | {pexp_attributes = [];
+             pexp_desc = Pexp_apply (
               {pexp_desc = Pexp_ident {txt = Longident.Lident operator}},
               [_, left; _, right]
-            ) ->
-            let precParent = ParsetreeViewer.operatorPrecedence parentOperator in
-            let precChild =  ParsetreeViewer.operatorPrecedence operator in
-            let samePrecedence = precParent == precChild in
-            if samePrecedence then
+            )} ->
+            if ParsetreeViewer.flattenableOperators parentOperator operator then
               let leftPrinted = flatten ~isLhs:true left operator in
-              let needsParens = precParent > precChild in
-              let doc = Doc.concat [
+              Doc.concat [
                 leftPrinted;
                 printBinaryOperator operator;
                 printExpression right;
-              ] in
-              if needsParens then addParens doc else doc
+              ]
             else
-              let needsParens =
-                precParent > precChild ||
-                (* a && b || c, add parens to (a && b) for readability, who knows the difference by heart… *)
-                (parentOperator = "||" && operator = "&&")
-              in
               let doc = printExpression expr in
-              if needsParens then addParens doc else doc
+              if Parens.subBinaryExprOperand parentOperator operator then
+                Doc.concat [Doc.lparen; doc; Doc.rparen]
+              else doc
           | _ -> assert false
           end
         else
@@ -9007,11 +9041,37 @@ module Printer = struct
         {pexp_desc = Pexp_ident {txt = Longident.Lident operator}},
         [Nolabel, lhs; Nolabel, rhs]
       ) ->
+      let right =
+        let operatorWithRhs = Doc.concat [
+          printBinaryOperator operator;
+          printOperand ~isLhs:false rhs operator;
+        ] in
+        let shouldIndent = if ParsetreeViewer.isBinaryExpression lhs then
+         begin match lhs with
+         | {pexp_attributes = [];
+             pexp_desc = Pexp_apply (
+              {pexp_desc = Pexp_ident {txt = Longident.Lident childOperator}},
+              [_, left; _, right]
+            )} ->
+            if ParsetreeViewer.flattenableOperators operator childOperator then
+              false
+            else
+              operator = "&&" || operator = "||" || ParsetreeViewer.isEqualityOperator operator
+          | _ -> assert false
+        end
+        else
+          false
+        in
+
+        if shouldIndent then
+          Doc.group (Doc.indent operatorWithRhs)
+        else
+          operatorWithRhs
+      in
       Doc.group (
         Doc.concat [
           printOperand ~isLhs:true lhs operator;
-          printBinaryOperator operator;
-          printOperand ~isLhs:false rhs operator;
+          right
         ]
       )
     | _ -> assert false

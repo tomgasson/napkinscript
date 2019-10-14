@@ -195,6 +195,117 @@ let () = (x.left = value) |> logMutation
 let () = x.left = value |> logMutation
 let () = x.left = value |> process |> x.right = value |> process
 let () = (x: int) |> (print_int: int => unit)
+x + y / z
+x / y + z
+(100 * x) / total
+((2 / 3) * 10) / 2 + 2
+let rotateX =
+  ((range / rect.height) * refY - range / 2) * getXMultiplication(rect.width)
+let rotateY =
+  ((range / rect.width) * refX - range / 2) * getYMultiplication(rect.width)
+let x = longIdentifier + longIdentifier + longIdentifier
+let x =
+  longIdentifier +
+  longIdentifier +
+  longIdentifier +
+  longIdentifier -
+  longIdentifier +
+  longIdentifier
+let x =
+  longIdentifier +
+  longIdentifier * longIdentifier +
+  longIdentifier -
+  longIdentifier +
+  longIdentifier
+let x =
+  longIdentifier +
+  (longIdentifier * longIdentifier * longIdentifier) / longIdentifier +
+  longIdentifier
+let x =
+  longIdentifier &&
+  longIdentifier &&
+  longIdentifier &&
+  longIdentifier &&
+  longIdentifier &&
+  longIdentifier
+let x =
+  (longIdentifier && longIdentifier) ||
+  longIdentifier && longIdentifier ||
+  (longIdentifier && longIdentifier)
+if (
+  successorParent.color === Black &&
+    (sibling === None ||
+      (siblingNN.color === Black && siblingNN.left === None) ||
+      (siblingNN.left->castNotOption).color === Black &&
+        (siblingNN.right === None ||
+          (siblingNN.right->castNotOption).color === Black))
+) {
+  if sibling !== None {
+    siblingNN.color = Red
+  }
+  successorRef.contents = successorParent
+}
+let truth =
+  longEqualityExpression.someRecordField ==
+  wowThisDoesHaveToBePrettyLong.someRecordField &&
+    longEqualityExpression.someRecordField ==
+    wowThisDoesHaveToBePrettyLong.someRecordField
+while (
+  continuePrefix.contents &&
+  aPrefixLen.contents <= aLen &&
+  bPrefixLen.contents <= bLen
+) {
+  let nextNonwhiteA = nextNonWhiteChar(aStr, 1, aPrefixLen.contents - 1)
+  let nextNonwhiteB = nextNonWhiteChar(bStr, 1, bPrefixLen.contents - 1)
+  ()
+}
+let () = {
+  let () = sideEffect()
+  if (
+    (isLeft(successor) && sibling.right === None) ||
+      ((sibling.right->castNotOption).color === Black &&
+      sibling.left !== None &&
+      (sibling.left->castNotOption).color === Red)
+  ) {
+    sibling.color = Red
+    sibling.left->castNotOption.color = Black
+    rotateRight(rbt, sibling)
+  }
+  if sibling !== None && (sibling->castNotOption).color === Black {
+    let sibling = sibling->castNotOption
+    if (
+      (isLeft(successor) && sibling.right === None) ||
+        ((sibling.right->castNotOption).color === Black &&
+        sibling.left !== None &&
+        (sibling.left->castNotOption).color === Red)
+    ) {
+      sibling.color = Red
+      sibling.left->castNotOption.color = Black
+      rotateRight(rbt, sibling)
+    } else if (
+      (!isLeft(successor) && sibling.left === None) ||
+        ((sibling.left->castNotOption).color === Black &&
+        sibling.right !== None &&
+        (sibling.right->castNotOption).color === Red)
+    ) {
+      sibling.color = Red
+      sibling.right->castNotOption.color = Black
+      rotateLeft(rbt, sibling)
+    }
+    break.contents = true
+  } else {
+    let sibling = siblingOf(successor)
+    let sibling = sibling->castNotOption
+    sibling.color = successorParent.color
+    if isLeft(successor) {
+      sibling.right->castNotOption.color = Black
+      rotateRight(rbt, successorParent)
+    } else {
+      sibling.left->castNotOption.color = Black
+      rotateLeft(rbt, successorParent)
+    }
+  }
+}
 
 "
 `;
