@@ -2,13 +2,16 @@
 
 exports[`abstract.js 1`] = `
 "type t
+
 type t<'a, 'b>
+
 type t = string
 type t = @attr string
 type t = private string
 type t = private @attr string
 type t = Module.Long.With.Very.VeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeryLongName.t
 type t = private Module.Long.With.Very.VeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeryLongName.t
+
 type t<
   'superlongthing,
   'superlongthing,
@@ -23,6 +26,7 @@ type t<
   'superlongthing,
   'superlongthing,
 > = Module.Long.With.Very.VeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeryLongName.t
+
 type t<
   'superlongthing,
   'superlongthing,
@@ -31,6 +35,7 @@ type t<
   'superlongthing,
 > = Module.Long.With.Very.VeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeryLongName.t
   constraint 't = ('s, 'a) => 'sub
+
 type t = 't
   constraint 't = ('s, 'a) => 'sub
 
@@ -41,10 +46,12 @@ exports[`attributes.js 1`] = `
 "@attr type t = float
 @attr
 type t = float
+
 @attr @attr @attr @attr @attr @attr @attr @attr @attr @attr @attr @attr
 type t = int
 @attr @attr @attr @attr @attr @attr @attr @attr @attr @attr @attr @attr
 type t = int
+
 @attrWithSuperLongIdentifeirName
 @attrWithSuperLongIdentifeirName
 @attrWithSuperLongIdentifeirName
@@ -71,6 +78,7 @@ exports[`open.js 1`] = `
 type t = private ..
 type t<'a, 'b> = ..
 type t<'a, 'b> = private ..
+
 type t = ..
   constraint 't = ('s, 'a) => 'sub
 
@@ -88,6 +96,7 @@ type result<
   'success3,
   'failure3,
 > = {ok: 'success1, fail: 'failure2}
+
 type user = {
   name: string,
   age: int,
@@ -109,28 +118,34 @@ type user<
   more: string,
   fields: string,
 }
+
 type user = {
   name: string,
   age: int,
 }
+
 type result<'good, 'bad> = {good: 'good, bad: 'bad}
   constraint 'good = boolean constraint 'bad = float
+
 type user = {
   name: 't,
   age: int,
 }
   constraint 't = string
+
 type t = private {name: string, age: int}
 type t = private {
   name: string,
   age: int,
 }
+
 type t = User.t = private {name: string, age: int}
 type t = @attr User.t = private {name: string, age: int}
 type t = User.t = private {
   name: string,
   age: int,
 }
+
 type user = {
   @attr name: string,
   @attr age: int,
@@ -139,6 +154,7 @@ type user = {
   @attrAbove
   hairStyle: Hair.t,
 }
+
 type user = {
   @attr @attr @attr @attr @attr @attr @attr @attr @attr @attr @attr @attr
   name: string,
@@ -161,6 +177,7 @@ type user = {
 exports[`typeParams.js 1`] = `
 "type t<'a, 'b>
 type t<+'a, -'b>
+
 type t<
   'superlongthing,
   'superlongthing,
@@ -168,6 +185,7 @@ type t<
   'superlongthing,
   'superlongthing,
 >
+
 type t<
   +'superlongthing,
   -'superlongthing,
@@ -175,6 +193,7 @@ type t<
   -'superlongthing,
   +'superlongthing,
 >
+
 type t<
   +'superlongthing,
   -'superlongthing,
@@ -194,6 +213,7 @@ type color =
   | Blue
   | SuperLongColoooooooooourName
   | AnotherSuuuuuuuuuperLongName
+
 type color = private Red | Blue
 type color =
   private
@@ -206,6 +226,7 @@ type color =
   | Blue
   | SuperLongColoooooooooourName
   | AnotherSuuuuuuuuuperLongName
+
 type color = Colour.t = private Red | Blue
 type color = Colour.t =
   private
@@ -218,12 +239,14 @@ type color = Colour.t =
   | Blue
   | SuperLongColoooooooooourName
   | AnotherSuuuuuuuuuperLongName
+
 type color = Red: color | Blue: color
 type color =
   | Red: color
   | Blue: color
   | SuperLongColoooooooooourName: color
   | AnotherSuuuuuuuuuperLongName: color
+
 type color = Rgb(float, float, float) | Hex(int)
 type color =
   | Rgb(
@@ -238,6 +261,7 @@ type color =
       superLongTypeName,
       superLongTypeName,
     )
+
 type node<_, 'value> =
   | Root({
       mutable value: 'value,
@@ -250,6 +274,7 @@ type node<_, 'value> =
       updateF: 'value => 'value,
       mutable updatedTime: float,
     }): node<derived, 'value>
+
 type t<'a> =
   | AutoDisposing('a => unit, option<exn> => unit, ref<bool>)
   | Delegating(
@@ -259,6 +284,7 @@ type t<'a> =
       ('ctx, t<'b>, option<exn>) => unit,
       ref<bool>,
     ): t<'a>
+
 type t<'a> =
   | AutoDisposing('a => unit, option<exn> => unit, ref<bool>)
   | Delegating(
@@ -273,27 +299,34 @@ type t<'a> =
       'superLongTypeName,
       'superLongTypeName,
     >
+
 type jsx<'nature> =
   | Empty: jsx<empty>
   | Cons(elem</'s1, 'a1/, 'sub1>, jsx<'tl>): jsx</('a1, 's1) => 'sub1, 'tl/>
+
 type jsx<'nature> =
   | Empty: jsx<empty>
   | Cons(elem</'s1, 'a1/, 'sub1>, jsx<'tl>): jsxxxxxxxxxxxxxxxxx</
       ('a1, 's1) => 'sub1,
       'tl
     />
+
 type color = Red | Blue
   constraint 't = string
+
 type result<'good, 'bad> =
   | Good('good)
   | Bad('bad)
   constraint 'good = boolean constraint 'bad = float
+
 type color =
   | @attr Red
   | @attr Blue
+
 type gadtType<'x> =
   | Foo(int): @onFirstRow gadtType<int>
   | Bar(@onInt int): @onSecondRow gadtType<unit>
+
 type color<'value> =
   | Rgb(
       @attr superLongTypeName,

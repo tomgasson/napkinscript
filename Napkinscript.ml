@@ -7572,7 +7572,11 @@ module Printer = struct
     | Pconst_char c -> Doc.text ("'" ^ (Char.escaped c) ^ "'")
 
   let rec printStructure (s : Parsetree.structure) =
-    Doc.join ~sep:Doc.hardLine (List.map printStructureItem s)
+    Doc.breakableGroup ~forceBreak:true (
+      interleaveWhitespace  (
+        List.map (fun si -> (si.Parsetree.pstr_loc, printStructureItem si)) s
+      )
+    )
 
   and printStructureItem (si: Parsetree.structure_item) =
     match si.pstr_desc with

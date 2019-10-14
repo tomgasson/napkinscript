@@ -16,6 +16,7 @@ exports[`any.ns 1`] = `
 
 exports[`array.ns 1`] = `
 "let [a, b, c] = 1
+
 let [
   aaaaaaaaaaaaaaaaaaaaaaaaaa,
   bbbbbbbbbbbbbbbbbbbbbbbbbb,
@@ -35,10 +36,14 @@ let 3.14 = 1
 
 exports[`construct.ns 1`] = `
 "let () = 1
+
 let Constructor = 1
+
 let Foo() = 1
 let Foo() = 1
+
 let Rgb(r, g, b) = 1
+
 let Rgb(
   rrrrrrrrrrrrrrrrrrrrrrrrr,
   ggggggggggggggggggggggggg,
@@ -91,6 +96,7 @@ let list(1) = 1
 let list(1, 2) = 1
 let list(1, 2, 3) = 1
 let list(1, 2, ...tail) = 1
+
 let list(
   aaaaaaaaaaaaaaaaaaaaaaaaaa,
   bbbbbbbbbbbbbbbbbbbbbbbbbb,
@@ -153,6 +159,7 @@ let /
 
 exports[`var.ns 1`] = `
 "let foo = 1
+
 let superLongIdentifierLongSoooooooooooooLooooooooooooooooooooooooooooooooooooooong = 1
 
 "

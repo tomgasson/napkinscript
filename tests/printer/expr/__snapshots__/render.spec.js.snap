@@ -8,18 +8,21 @@ let rbt = make(~compare?)
 let rbt = make(~compare=intCompare)
 let rbt = make(~compare=?intCompare)
 let rbt = make(~compare=?intCompare: (int, int) => int)
+
 let () = applyFunctionToArguments(
   superLongIdentifierWooooooowThisIsSuchLong,
   superLongIdentifierWooooooowThisIsSuchLong,
   superLongIdentifierWooooooowThisIsSuchLong,
   superLongIdentifierWooooooowThisIsSuchLong,
 )
+
 let cmp = rbt.compare(. Js.Array2.unsafe_get(old, oldIter.contents), node.value)
 let cmp = rbt.compare2(.
   Js.Array2.unsafe_get(old, oldIter.contents),
   longerNode.longValue,
 )
 let uncurriedUnit = apply(.)
+
 let coordinate = make2dCoordinate({x: 1, y: 2})
 let coordinate = make3dCoordinate({
   ...base,
@@ -27,18 +30,21 @@ let coordinate = make3dCoordinate({
   field2: thisIsAPrettyLongNameHere,
   field3: thisIsAPrettyLongNameHere,
 })
+
 let coordinate = make2dCoordinateArray([x, y])
 let coordinate = make3dCoordinateArray([
   thisIsAPrettyLongNameHere,
   thisIsAPrettyLongNameHere,
   thisIsAPrettyLongNameHere,
 ])
+
 let coordinate = make2dCoordinateTuple(/x, y/)
 let coordinate = make3dCoordinateTuple(/
   thisIsAPrettyLongNameHere,
   thisIsAPrettyLongNameHere,
   thisIsAPrettyLongNameHere,
 /)
+
 let coordinate = make2dCoordinateList(list(x, y))
 let coordinate = make3dCoordinateList(list(
   thisIsAPrettyLongNameHere,
@@ -46,6 +52,7 @@ let coordinate = make3dCoordinateList(list(
   thisIsAPrettyLongNameHere,
   ...allCoords,
 ))
+
 let coordinate = makeJsCoordinate({\\"x\\": 1, \\"y\\": 1})
 let user = makeJsUser({
   \\"name\\": \\"steve\\",
@@ -69,7 +76,9 @@ let x = [
 
 exports[`assert.js 1`] = `
 "assert false
+
 assert truth
+
 let x = assert true
 let x = assert 12
 let x = assert (12: int)
@@ -95,11 +104,13 @@ let x = assert (
   | Yello => ()
   }
 )
+
 let x = assert (
   for i in 0 to 10 {
     print_int(i)
   }
 )
+
 let x = assert (
   if i < 10 {
     print_int(i)
@@ -107,18 +118,22 @@ let x = assert (
     print_int(1000)
   }
 )
+
 let x = assert (
   while i < 10 {
     print_int(i)
   }
 )
+
 let x = assert (lazy false)
 let x = assert (
   try sideEffect() catch {
   | Exit => ()
   }
 )
+
 let x = assert (@attr expr)
+
 let x = assert (a + b)
 
 "
@@ -128,7 +143,9 @@ exports[`binary.js 1`] = `
 "let x = a && b + c
 let x = (a && b) + c
 let x = (a && b) || c
+
 let x = (a && b) + (c && d)
+
 while (
   continuePrefix.contents &&
   aPrefixLen.contents &&
@@ -137,17 +154,21 @@ while (
 ) {
   ()
 }
+
 while (
   rbt.compare(. Js.Array2.unsafe_get(old, oldIter.contents), node.value) < 0
 ) {
   ()
 }
+
 let x =
   !filePath.includes(allMlSuffixesCategory) &&
   !filePath.endsWith(allScriptDirectoriesCategory)
+
 let x = foo ++ bar
 let x = foo != bar
 let x = foo !== bar
+
 let x = foo ++ bar
 let x = 1 + 1
 let x = (a => a + 1) + (b => b + 2)
@@ -184,6 +205,7 @@ let x =
   |> for i in 0 to 10 {
     ()
   }
+
 let x = (/a, b/) + (/b, c/)
 let x = Vec3(a, b, c) + Vec4(a, b, c, d)
 let x = {x: 1, y: 2} + {x: 2, y: 3}
@@ -195,6 +217,7 @@ let () = (x.left = value) |> logMutation
 let () = x.left = value |> logMutation
 let () = x.left = value |> process |> x.right = value |> process
 let () = (x: int) |> (print_int: int => unit)
+
 x + y / z
 x / y + z
 (100 * x) / total
@@ -203,6 +226,7 @@ let rotateX =
   ((range / rect.height) * refY - range / 2) * getXMultiplication(rect.width)
 let rotateY =
   ((range / rect.width) * refX - range / 2) * getYMultiplication(rect.width)
+
 let x = longIdentifier + longIdentifier + longIdentifier
 let x =
   longIdentifier +
@@ -221,6 +245,7 @@ let x =
   longIdentifier +
   (longIdentifier * longIdentifier * longIdentifier) / longIdentifier +
   longIdentifier
+
 let x =
   longIdentifier &&
   longIdentifier &&
@@ -232,6 +257,7 @@ let x =
   (longIdentifier && longIdentifier) ||
   longIdentifier && longIdentifier ||
   (longIdentifier && longIdentifier)
+
 if (
   successorParent.color === Black &&
     (sibling === None ||
@@ -245,11 +271,13 @@ if (
   }
   successorRef.contents = successorParent
 }
+
 let truth =
   longEqualityExpression.someRecordField ==
   wowThisDoesHaveToBePrettyLong.someRecordField &&
     longEqualityExpression.someRecordField ==
     wowThisDoesHaveToBePrettyLong.someRecordField
+
 while (
   continuePrefix.contents &&
   aPrefixLen.contents <= aLen &&
@@ -330,7 +358,9 @@ exports[`bsObj.js 1`] = `
   \\"name\\": \\"Steve\\",
   \\"age\\": 30,
 }
+
 let coord = {\\"x\\": 1, \\"y\\": 2}
+
 let person = {
   \\"name\\": {
     \\"first\\": \\"Bob\\",
@@ -344,7 +374,9 @@ let person = {
 
 exports[`constant.js 1`] = `
 "let x = 1
+
 let x = 3.14
+
 let x = \\"mystring\\"
 
 "
@@ -359,6 +391,7 @@ exports[`constraint.js 1`] = `
 exports[`constructor.js 1`] = `
 "let x = true
 let y = false
+
 let r = Reducer()
 let r = Reducer(state, nexState, sideEffect)
 let r = Reducer(
@@ -372,34 +405,42 @@ let r = Reducer([
   superLongIdentiiiiiiiifffffffiiiiieeeeeeeer,
   superLongIdentiiiiiiiifffffffiiiiieeeeeeeer,
 ])
+
 let r = Reducer({state: nextState, sideEffects: []})
+
 let c = Constr({
   firstField: superLongIdentiiiiiiiifffffffiiiiieeeeeeeer,
   secondField: superLongIdentiiiiiiiifffffffiiiiieeeeeeeer,
   thirdField: superLongIdentiiiiiiiifffffffiiiiieeeeeeeer,
 })
+
 let forceBreak = Cartesian({
   x: Omega.x,
   y: Theta.y,
 })
+
 let c = Constr(list(
   superLoooooooooooooooooooooooooooooongIiiiiiiiiideeeentifieeeeeeeeeeeeeeeeer,
   superLoooooooooooooooooooooooooooooongIiiiiiiiiideeeentifieeeeeeeeeeeeeeeeer,
   superLoooooooooooooooooooooooooooooongIiiiiiiiiideeeentifieeeeeeeeeeeeeeeeer,
   ...superLoooooooooooooooooooooooooooooongListHere,
 ))
+
 let c = Constr(list(
   superLoooooooooooooooooooooooooooooongIiiiiiiiiideeeentifieeeeeeeeeeeeeeeeer,
   superLoooooooooooooooooooooooooooooongIiiiiiiiiideeeentifieeeeeeeeeeeeeeeeer,
   superLoooooooooooooooooooooooooooooongIiiiiiiiiideeeentifieeeeeeeeeeeeeeeeer,
 ))
+
 let c = ConstructorWithASuuuuuuuuuuuuuuuperLoooooooooooooooooooooooooooooongIiiiiiiiiideeeentifieeeeeeeeeeeeeeeeer([])
 let c = ConstructorWithASuuuuuuuuuuuuuuuperLoooooooooooooooooooooooooooooongIiiiiiiiiideeeentifieeeeeeeeeeeeeeeeer(list())
+
 let coordinate = JsCoord({\\"x\\": 1, \\"y\\": 1})
 let user = JsUser({
   \\"name\\": \\"steve\\",
   \\"age\\": 32,
 })
+
 let rec peekMinNode = node =>
   switch node {
   | None => None
@@ -410,6 +451,7 @@ let rec peekMinNode = node =>
       node.left->peekMinNode
     }
   }
+
 let rec peekMinNode = node =>
   switch node {
   | None => None
@@ -436,11 +478,14 @@ exports[`extension.js 1`] = `
 
 exports[`field.js 1`] = `
 "let n = user.name
+
 (currentNode.parent->castNotOption).color
 (&myRef).color
 &myRef.intValue
 &myRef.intValue
+
 let x = -a.bar
+
 let x = true.x
 let x = 12.
 x
@@ -466,11 +511,13 @@ let x = (
   | Yello => ()
   }
 ).x
+
 let x = (
   for i in 0 to 10 {
     print_int(i)
   }
 ).x
+
 let x = (
   if i < 10 {
     print_int(i)
@@ -478,11 +525,13 @@ let x = (
     print_int(1000)
   }
 ).x
+
 let x = (
   while i < 10 {
     print_int(i)
   }
 ).x
+
 let x = (assert false).x
 let x = (lazy false).x
 let x = (
@@ -490,7 +539,9 @@ let x = (
   | Exit => ()
   }
 ).x
+
 let x = (@attr expr).x
+
 let x = (a + b).x
 
 "
@@ -507,6 +558,7 @@ exports[`for.js 1`] = `
 "let () = for i in 0 to 10 {
   ()
 }
+
 for i in 0 to 10 {
   let a = 1
   let b = 2
@@ -520,6 +572,7 @@ exports[`fun.js 1`] = `
 "let f = (a, b) => ()
 let greet = (~person, ~from as hometown) => ()
 let greet = (~person=\\"Steve\\", ~from as hometown=\\"Cupertino\\") => ()
+
 let onChangedVisible = (
   ~anchor=None,
   rbt,
@@ -530,14 +583,17 @@ let onChangedVisible = (
   ~remained,
   ~disappear,
 ) => ()
+
 let greet = (~person, ~from as hometown) =>
   superLongIdentifiiiiiieeeeeeerExpression()
+
 let greet = (
   ~person,
   ~superLongIdentifiiiiiieeeeeeer as pat,
   ~superLongIdentifiiiiiieeeeeeer2 as pat2,
   ~from as hometown,
 ) => superLongIdentifiiiiiieeeeeeerExpression()
+
 let greet = (
   ~person,
   ~superLongIdentifiiiiiieeeeeeer as pat,
@@ -545,12 +601,14 @@ let greet = (
   ~from as hometown,
 ) =>
   superLongIdentislkdjflksjdfljslkjdflksjdklfjlskdjfklffiiiiiieeeeeeerExpression()
+
 let greet = (
   ~person,
   ~superLongIdentifiiiiiieeeeeeer as pat,
   ~superLongIdentifiiiiiieeeeeeer2 as pat2,
   ~from as hometown,
 ) => superLongIdentier
+
 let greet = (
   ~person,
   ~superLongIdentifiiiiiieeeeeeer as pat,
@@ -558,12 +616,14 @@ let greet = (
   ~from as hometown,
 ) =>
   superLongIdentislkdjflksjdfljslkjdflksjdklfjlskdjfklffiiiiiieeeeeeerExpression
+
 let greet = (
   ~person,
   ~superLongIdentifiiiiiieeeeeeer as pat,
   ~superLongIdentifiiiiiieeeeeeer2 as pat2,
   ~from as hometown,
 ) => SuperLongConstructorrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr
+
 let greet = (
   ~person,
   ~superLongIdentifiiiiiieeeeeeer as pat,
@@ -571,19 +631,25 @@ let greet = (
   ~from as hometown,
 ) =>
   SuperLongConstructorrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr
+
 let f = () => ()
 let f = a => ()
 let f = _ => ()
+
 let f = (~a=?) => ()
 let f = (~from as hometown=?) => ()
+
 let f = (. a) => ()
 let f = (. a, b) => ()
 let f = (. ()) => ()
+
 let f = @attr (a, b) => @attr2 (c, d) => ()
 let f = @attr (@attrOnA a, @attrOnB b) => @attr2 (@attrOnC c, @attrOnD d) => ()
 let f = @attr (. a, b) => @attr2 (. c, d) => ()
+
 let f = (@attr ~a, @attr ~b) => ()
 let f = (. @attr ~a, . @attr ~b) => ()
+
 let f = (
   thisIsAVeryLongNaaaaaaaaaaaaaaaaaaameeeeeeeeeeeee,
   thisIsAVeryLongNaaaaaaaaaaaaaaaaaaameeeeeeeeeeeee,
@@ -591,6 +657,7 @@ let f = (
   thisIsAVeryLongNaaaaaaaaaaaaaaaaaaameeeeeeeeeeeee,
   thisIsAVeryLongNaaaaaaaaaaaaaaaaaaameeeeeeeeeeeee,
 ) => ()
+
 let coordBuilder = (
   thisIsAVeryLongNaaaaaaaaaaaaaaaaaaameeeeeeeeeeeee,
   thisIsAVeryLongNaaaaaaaaaaaaaaaaaaameeeeeeeeeeeee,
@@ -598,6 +665,7 @@ let coordBuilder = (
   thisIsAVeryLongNaaaaaaaaaaaaaaaaaaameeeeeeeeeeeee,
   thisIsAVeryLongNaaaaaaaaaaaaaaaaaaameeeeeeeeeeeee,
 ) => {x: 1, y: 2}
+
 let coordBuilder = (
   thisIsAVeryLongNaaaaaaaaaaaaaaaaaaameeeeeeeeeeeee,
   thisIsAVeryLongNaaaaaaaaaaaaaaaaaaameeeeeeeeeeeee,
@@ -605,6 +673,7 @@ let coordBuilder = (
   thisIsAVeryLongNaaaaaaaaaaaaaaaaaaameeeeeeeeeeeee,
   thisIsAVeryLongNaaaaaaaaaaaaaaaaaaameeeeeeeeeeeee,
 ) => {x: 1, y: 2}
+
 let recordBuilder = (
   thisIsAVeryLongNaaaaaaaaaaaaaaaaaaameeeeeeeeeeeee,
   thisIsAVeryLongNaaaaaaaaaaaaaaaaaaameeeeeeeeeeeee,
@@ -617,6 +686,7 @@ let recordBuilder = (
   secondField: superLongIdentiiiiiiiifffffffiiiiieeeeeeeer,
   thirdField: superLongIdentiiiiiiiifffffffiiiiieeeeeeeer,
 }
+
 let arrayBuilder = (
   thisIsAVeryLongNaaaaaaaaaaaaaaaaaaameeeeeeeeeeeee,
   thisIsAVeryLongNaaaaaaaaaaaaaaaaaaameeeeeeeeeeeee,
@@ -624,6 +694,7 @@ let arrayBuilder = (
   thisIsAVeryLongNaaaaaaaaaaaaaaaaaaameeeeeeeeeeeee,
   thisIsAVeryLongNaaaaaaaaaaaaaaaaaaameeeeeeeeeeeee,
 ) => [1, 2, 3, 4]
+
 let arrayBuilder = (
   thisIsAVeryLongNaaaaaaaaaaaaaaaaaaameeeeeeeeeeeee,
   thisIsAVeryLongNaaaaaaaaaaaaaaaaaaameeeeeeeeeeeee,
@@ -635,6 +706,7 @@ let arrayBuilder = (
   superLongIdentiiiiiiiifffffffiiiiieeeeeeeer,
   superLongIdentiiiiiiiifffffffiiiiieeeeeeeer,
 ]
+
 let tupleBuilder = (
   thisIsAVeryLongNaaaaaaaaaaaaaaaaaaameeeeeeeeeeeee,
   thisIsAVeryLongNaaaaaaaaaaaaaaaaaaameeeeeeeeeeeee,
@@ -642,6 +714,7 @@ let tupleBuilder = (
   thisIsAVeryLongNaaaaaaaaaaaaaaaaaaameeeeeeeeeeeee,
   thisIsAVeryLongNaaaaaaaaaaaaaaaaaaameeeeeeeeeeeee,
 ) => /1, 2, 3/
+
 let tupleBuilder = (
   thisIsAVeryLongNaaaaaaaaaaaaaaaaaaameeeeeeeeeeeee,
   thisIsAVeryLongNaaaaaaaaaaaaaaaaaaameeeeeeeeeeeee,
@@ -653,6 +726,7 @@ let tupleBuilder = (
   superLongIdentiiiiiiiifffffffiiiiieeeeeeeer,
   superLongIdentiiiiiiiifffffffiiiiieeeeeeeer,
 /
+
 let constrBuilder = (
   thisIsAVeryLongNaaaaaaaaaaaaaaaaaaameeeeeeeeeeeee,
   thisIsAVeryLongNaaaaaaaaaaaaaaaaaaameeeeeeeeeeeee,
@@ -663,6 +737,7 @@ let constrBuilder = (
   x: Omega.x,
   y: Theta.y,
 })
+
 let constrBuilder = (
   thisIsAVeryLongNaaaaaaaaaaaaaaaaaaameeeeeeeeeeeee,
   thisIsAVeryLongNaaaaaaaaaaaaaaaaaaameeeeeeeeeeeee,
@@ -674,7 +749,9 @@ let constrBuilder = (
   superLongIdentiiiiiiiifffffffiiiiieeeeeeeer,
   superLongIdentiiiiiiiifffffffiiiiieeeeeeeer,
 )
+
 let genName = () => \\"Steve\\"
+
 let make = (
   ~onChange as onChange: option<(. {\\"testing\\": bool}, array<string>) => unit>=?,
   children,
@@ -692,6 +769,7 @@ let make = (
 
 exports[`ident.js 1`] = `
 "let x = a
+
 let c = Configuration.config
 
 "
@@ -701,11 +779,13 @@ exports[`if.js 1`] = `
 "let name = if true {
   user.name
 }
+
 let name = if true {
   user.name
 } else {
   \\"steve\\"
 }
+
 let name = if true {
   user.name
 } else if false {
@@ -713,6 +793,7 @@ let name = if true {
 } else {
   defaultName
 }
+
 let () = if true {
   let a = 1
   let b = 2
@@ -732,6 +813,7 @@ let () = if true {
 
 exports[`lazy.js 1`] = `
 "let x = lazy sideEffect
+
 let x = lazy true
 let x = lazy 12
 let x = lazy (12: int)
@@ -757,11 +839,13 @@ let x = lazy (
   | Yello => ()
   }
 )
+
 let x = lazy (
   for i in 0 to 10 {
     print_int(i)
   }
 )
+
 let x = lazy (
   if i < 10 {
     print_int(i)
@@ -769,18 +853,22 @@ let x = lazy (
     print_int(1000)
   }
 )
+
 let x = lazy (
   while i < 10 {
     print_int(i)
   }
 )
+
 let x = lazy (assert false)
 let x = lazy (
   try sideEffect() catch {
   | Exit => ()
   }
 )
+
 let x = lazy (@attr expr)
+
 let x = lazy (a + b)
 
 "
@@ -818,12 +906,15 @@ exports[`list.js 1`] = `
 let x = list(1)
 let x = list(1, 2)
 let x = list(1, 2, 3)
+
 let x = list(
   superLoooooooooooooooooooooooooooooongIiiiiiiiiideeeentifieeeeeeeeeeeeeeeeer,
   superLoooooooooooooooooooooooooooooongIiiiiiiiiideeeentifieeeeeeeeeeeeeeeeer,
   superLoooooooooooooooooooooooooooooongIiiiiiiiiideeeentifieeeeeeeeeeeeeeeeer,
 )
+
 let x = list(1, ...otherList)
+
 let x = list(
   superLoooooooooooooooooooooooooooooongIiiiiiiiiideeeentifieeeeeeeeeeeeeeeeer,
   superLoooooooooooooooooooooooooooooongIiiiiiiiiideeeentifieeeeeeeeeeeeeeeeer,
@@ -839,6 +930,7 @@ exports[`open.js 1`] = `
   open React
   element
 }
+
 let element = {
   open! React
   element
@@ -854,15 +946,18 @@ let record = {
   secondField: superLongIdentiiiiiiiifffffffiiiiieeeeeeeer,
   thirdField: superLongIdentiiiiiiiifffffffiiiiieeeeeeeer,
 }
+
 let forceBreak = {
   x: Omega.x,
   y: Theta.y,
 }
+
 let withSpread = {...initialState, time: nextTime}
 let withSpreadAndForceBreak = {
   ...initialState,
   time: nextTime,
 }
+
 let withSpreadAndNaturalBreak = {
   ...fields,
   firstField: superLongIdentiiiiiiiifffffffiiiiieeeeeeeer,
@@ -878,6 +973,7 @@ exports[`sequence.js 1`] = `
   foo()
   bar()
 }
+
 let () = {
   (foo(): unit)
   (bar(): unit)
@@ -891,7 +987,9 @@ exports[`setfield.js 1`] = `
 config.shouldSkip =
   !filePath.includes(allMlSuffixesCategory) &&
   !filePath.endsWith(allScriptDirectoriesCategory)
+
 let () = @attr user.name = \\"steve\\"
+
 let () = @attr user.name = \\"steve\\" |> @attr user.name = \\"steve\\"
 
 "
@@ -902,6 +1000,7 @@ exports[`switch.js 1`] = `
 | A => ()
 | B => ()
 }
+
 switch /a, b/ {
 | /Some(a), Some(b)/ => 42
 | _ => 3
@@ -919,9 +1018,11 @@ exports[`try.js 1`] = `
 | Foo => Js.log()
 | Exit => Js.log()
 }
+
 try myDangerousFn() catch {
 | Foo => Js.log()
 }
+
 let x = {
   let y = 1
   try apply() catch {
@@ -937,19 +1038,26 @@ exports[`unary.js 1`] = `
 let x = -.a
 let x = !a
 let x = &a
+
 !(!a)
 !(!(!a))
 !(a |> f(b))
+
 -1->add
 -1->add
 -(1->add)
 !foo->print_bool
 !foo->print_bool
 !(foo->parseTruth)
+
 node.left->peekMinNode
+
 node.left->peekMinNode
+
 let x = -a.bar
+
 let x = -a.bar
+
 !(lazy x)
 lazy !x
 !(assert x)
@@ -958,9 +1066,11 @@ assert !x
 !(arg => doStuffWith(arg))
 let x = !(truth: bool)
 let x = (!truth: bool)
+
 let z = !(%extension)
 &(x.left = value)
 &(x.left = value)
+
 -[a, b, c]
 !module(Foo: Bar)
 !module(Foo)
@@ -1009,12 +1119,14 @@ exports[`while.js 1`] = `
 "let () = while true {
   ()
 }
+
 while true {
   let a = 1
   let b = 2
   infiniteLoop()
   ()
 }
+
 while (
   continuePrefix.contents &&
   aPrefixLen.contents <= aLen &&
@@ -1035,6 +1147,7 @@ exports[`whitespace.js 1`] = `
   sideEffect()
   sideEffect2()
 }
+
 let x = {
   let a = 1
   
@@ -1042,6 +1155,7 @@ let x = {
   
   a + b
 }
+
 let x = {
   exception Exit
   
@@ -1055,6 +1169,7 @@ let x = {
   
   sideEffect2()
 }
+
 let x = {
   exception Exit
   exception Terminate

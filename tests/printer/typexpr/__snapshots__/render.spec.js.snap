@@ -12,14 +12,19 @@ type t = (string, float) => (unit as 'x)
 exports[`any.js 1`] = `
 "type t = _
 type t = node<_>
+
 type t = {name: _}
 type t = {name: @attr _}
+
 type t = Plant(_)
 type t = Plant(@attr _)
+
 type t = (_, _) => unit
 type t = (@attr _, @attr _) => unit
+
 let x: _ = ()
 let x: @attr _ = ()
+
 external foo: _ = \\"foo_c_binding\\"
 external foo: @attr _ = \\"foo_c_binding\\"
 
@@ -30,6 +35,7 @@ exports[`arrow.js 1`] = `
 "type t = (string, string) => string
 type t = (~firstName: string, ~lastName: string) => string
 type t = (~firstName: string=?, ~lastName: string=?) => string
+
 type t = (
   string,
   string,
@@ -37,6 +43,7 @@ type t = (
   superLongIdentifierHere,
   superLongIdentifierHere,
 ) => okok
+
 type t = (
   ~firstName: string,
   ~lastName: string,
@@ -44,6 +51,7 @@ type t = (
   ~long2: superLongIdentifierHere=?,
   ~long3: superLongIdentifierHere=?,
 ) => string
+
 type t = (
   _,
   typeConstr<'a, state, 'foo>,
@@ -51,6 +59,7 @@ type t = (
   module(S),
   %extension,
 ) => string
+
 external c_binding: (
   string,
   string,
@@ -58,6 +67,7 @@ external c_binding: (
   superLongIdentifierHere,
   superLongIdentifierHere,
 ) => okok = \\"c_binding_external_primitive\\"
+
 external c_binding: (
   ~any: _,
   string,
@@ -94,6 +104,7 @@ external c_binding: (
     \\"woooooooooooooo\\": excitingTypeHereBecauseItWillBreakthatLine,
   }=?,
 ) => okok = \\"c_binding_external_primitive\\"
+
 type t = (
   ~firstName: string,
   ~lastName: string,
@@ -105,6 +116,7 @@ type t = (
   \\"moreProps3\\": superLongIdentifierHere3,
   \\"moreProps4\\": superLongIdentifierHere4,
 }
+
 type t = (
   ~firstName: string,
   ~lastName: string,
@@ -122,6 +134,7 @@ type t = (
   moreProps4,
   superLongIdentifierHere4
 /
+
 type t = (
   ~firstName: string,
   ~lastName: string,
@@ -139,6 +152,7 @@ type t = (
   moreProps4,
   superLongIdentifierHere4,
 >
+
 type t = (
   ~firstName: string,
   ~lastName: string,
@@ -147,15 +161,19 @@ type t = (
   and type value = int
   and type superLongThingHere = definitelyLineBreak
 )
+
 type t = (@attr string, @attr float) => unit
 type t = (@attr @attr2 string, @attr @attr2 float, @attr3 int) => unit
+
 type t = @attr (string => unit)
 type t = @attr (foo, bar, baz) => unit
 type t = @attr (foo, @attr2 ~f: bar, @attr3 ~f: baz) => unit
+
 type t = @attr (string => @attr (int => unit))
 type t = @attr (string, int) => @attr (int, float) => unit
 type t = @attr (int => @attr (int, float) => @attr (unit, unit) => unit)
 type t = (@attr @attr2 ~f: int, @attr3 ~g: float) => unit
+
 type f = (
   @attr @attr @attr @attr @attr @attr @attr @attr @attr ~f: superLong,
   @attr2
@@ -165,6 +183,7 @@ type f = (
   ~g: wowwwThisisLonggggg,
   @attr3 ~h: ccccrazysldkfjslkdjflksdjkf=?,
 ) => unit
+
 type t = @attr (
   stringWithSuperLongIdentifierNameLoooooooooooooooooooooooooooooooooooooooooooooong => @attr2 (
     floatWithSuperLongIdentifierNameLoooooooooooooooooooooooooooooooooooooooooooooong => @attr3 (
@@ -172,6 +191,7 @@ type t = @attr (
     )
   )
 )
+
 type t = @attr (
   fooWithSuperLongIdentifierNameLoooooooooooooooooooooooooooooooooooooooooooooong,
   barWithSuperLongIdentifierNameLoooooooooooooooooooooooooooooooooooooooooooooong,
@@ -180,6 +200,7 @@ type t = @attr (
   stringWithSuperLongIdentifierNameLoooooooooooooooooooooooooooooooooooooooooooooong,
   floatWithSuperLongIdentifierNameLoooooooooooooooooooooooooooooooooooooooooooooong,
 ) => unit
+
 type t = @attr
 @attrWithSuperLongIdentifierNameLoooooooooooooooooooooooooooooooooooooooooooooong
 @attrWithSuperLongIdentifierNameLoooooooooooooooooooooooooooooooooooooooooooooong (
@@ -192,20 +213,26 @@ type t = @attr
   stringWithSuperLongIdentifierNameLoooooooooooooooooooooooooooooooooooooooooooooong,
   floatWithSuperLongIdentifierNameLoooooooooooooooooooooooooooooooooooooooooooooong,
 ) => unit
+
 external debounce: (int, @bs.meth unit) => unit = \\"debounce\\"
+
 external debounce: int => @bs.meth (unit => unit) = \\"debounce\\"
+
 external debounce: (int, @bs.meth (unit => unit)) => @bs.meth (unit => unit) =
   \\"debounce\\"
+
 external debounce: (
   int,
   @bs.meth (unit => unit),
   @bs.meth (unit => unit),
 ) => @bs.meth (unit => unit) = \\"debounce\\"
+
 external debounce: (
   int,
   @bs.meth (unit => unit),
   @bs.meth (unit => @bs.meth (unit => unit)),
 ) => @bs.meth (unit => unit) = \\"debounce\\"
+
 type returnTyp = (int, int) => @magic float
 type returnTyp = (
   intWithSuperLongIdentifierNameLoooooooooooooooooooooooooooooooooooooooooooooong,
@@ -218,10 +245,12 @@ type returnTyp = (
 @magicWithSuperLongIdentiefierNameLoooooooooooooooooooooooong
 @magicWithSuperLongIdentiefierNameLoooooooooooooooooooooooong
 float
+
 type t = (. int) => int
 type t = (. int, int) => int
 type t = (. int, . int) => int
 type t = (. int, int, . int, int) => int
+
 type t = (. @attr int) => unit
 type t = (. @attr int, . @attr2 int) => unit
 type t = (
@@ -245,6 +274,7 @@ type user = {
   \\"superLongNameThat\\": whyDoesATypeWithThisAmountOfCharactersMakeItIntoThisFile,
   \\"because\\": testingLineBreaks,
 }
+
 type magic = {..}
 type t = {..\\"age\\": int}
 type magicallyLong = {..
@@ -254,6 +284,7 @@ type magicallyLong = {..
   \\"superLongNameThat\\": whyDoesATypeWithThisAmountOfCharactersMakeItIntoThisFile,
   \\"because\\": testingLineBreaks,
 }
+
 external test: (
   foo,
   bar,
@@ -265,9 +296,11 @@ external test: (
   \\"superLongNameThat\\": whyDoesATypeWithThisAmountOfCharactersMakeItIntoThisFile,
   \\"because\\": testingLineBreaks,
 } = \\"primitive\\"
+
 type user = @attr {\\"age\\": @attr int}
 type magic = @attr {..}
 type t = @attr {..\\"age\\": int}
+
 external test: (
   foo,
   bar,
@@ -286,8 +319,10 @@ external test: (
 exports[`extension.js 1`] = `
 "type t = %extension
 type t = @attr %extension
+
 external foo: %extension = \\"primitive\\"
 external foo: @attr %extension = \\"primitive\\"
+
 let x: %extension = z
 let x: @attr %extension = z
 
@@ -303,20 +338,27 @@ type t = module(Hashmap with
   and type value = int
   and type superLongThingHere = definitelyLineBreak
 )
+
 type t = constr<module(S)>
+
 external foo: module(S) = \\"primitive\\"
+
 let x: module(S) = y
+
 let x: module(Hashmap with
   type key = string
   and type value = int
   and type superLongThingHere = definitelyLineBreak
 ) = y
+
 type toValueLikeInstance = t<'a> => module(RxValueLikeInstance.S with
   type a = 'a
 )
 type t<'a> = module(Test with type a = 'a)
 type t = ref<module(Console)>
+
 let devices: Hastbl.t<string, module(DEVICE)> = xyz
+
 type t = @attr module(S)
 external foo: @attr module(S) = \\"primitive\\"
 let devices: @attr Hastbl.t<string, module(DEVICE)> = xyz
@@ -330,6 +372,7 @@ exports[`polyTyp.js 1`] = `
   \\"log2\\": 'a. int => int,
   \\"log3\\": 'a 'b. ('a, 'b) => int,
 } = \\"./src/logger.mock.js\\"
+
 type reducer<'state> = {
   state: @attr 'state,
   send: 'action. @attr ('state, 'action) => 'action,
@@ -340,6 +383,7 @@ type reducer<'state> = {
 
 exports[`tuple.js 1`] = `
 "type t = /string, int, float/
+
 type t = /
   superLongTypeNameThatWillBreak,
   superLongTypeNameThatWillBreak,
@@ -348,7 +392,9 @@ type t = /
   superLongTypeNameThatWillBreak,
   superLongTypeNameThatWillBreak
 /
+
 type t = constr</string, int, float/>
+
 type t = constr</
   superLongTypeNameThatWillBreak,
   superLongTypeNameThatWillBreak,
@@ -357,7 +403,9 @@ type t = constr</
   superLongTypeNameThatWillBreak,
   superLongTypeNameThatWillBreak
 />
+
 external foo: /string, int, float/ = \\"external_binding\\"
+
 external foo: /
   superLongTypeNameThatWillBreak,
   superLongTypeNameThatWillBreak,
@@ -366,7 +414,9 @@ external foo: /
   superLongTypeNameThatWillBreak,
   superLongTypeNameThatWillBreak
 / = \\"external_binding\\"
+
 let x: /int, int/ = /1, 2/
+
 let x: /
   superLongTypeNameThatWillBreak,
   superLongTypeNameThatWillBreak,
@@ -375,6 +425,7 @@ let x: /
   superLongTypeNameThatWillBreak,
   superLongTypeNameThatWillBreak
 / = /1, 2/
+
 type t = @attr /@attr string, @attr int, @attr float/
 
 "
@@ -393,6 +444,7 @@ type t = Mod.Sub.t<
   b,
   c,
 >
+
 type t = Mod.Sub.t<
   Mod.Sub.t<soooooLoooooong, soooooLoooooong, soooooLoooooong>,
   soooooLoooooong,
@@ -415,7 +467,9 @@ type t = Mod.Sub.t<
   b,
   c,
 >
+
 let t: list<{\\"age\\": int}> = x
+
 let t: list<{
   \\"age\\": int,
   \\"name\\": string,
@@ -423,11 +477,13 @@ let t: list<{
   \\"superLongNameThat\\": whyDoesATypeWithThisAmountOfCharactersMakeItIntoThisFile,
   \\"because\\": testingLineBreaks,
 }> = x
+
 let t: list<
   {\\"age\\": int, \\"name\\": string},
   {\\"name\\": string, \\"age\\": int},
   {\\"name\\": string, \\"age\\": int},
 > = x
+
 type t = Option.t</tupleTyp1, tupleTyp2, tupleTyp3/>
 type t = Option.t</
   tupleTyp1,
@@ -455,8 +511,11 @@ let t: Option.t</
   tupleTyp3,
   tupleTyp3
 /> = x
+
 type t = @attrs Option.t<string>
+
 let t: @attrs list<{\\"age\\": int}> = x
+
 external color: @attr colour<'t> = \\"c_color\\"
 
 "
@@ -465,9 +524,12 @@ external color: @attr colour<'t> = \\"c_color\\"
 exports[`var.js 1`] = `
 "type t = 'a
 type t = @attr 'a
+
 type t = constr<'a>
+
 external foo: 'foo = \\"primitive\\"
 external foo: @attr 'foo = \\"primitive\\"
+
 let x: 'a = y
 let x: @attr 'a = y
 
