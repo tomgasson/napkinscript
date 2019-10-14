@@ -7543,6 +7543,20 @@ module Printer = struct
       ]
     )
 
+  let interleaveWhitespace (rows: (Location.t * Doc.t) list) =
+    let rec loop prevLoc acc rows =
+      match rows with
+      | [] -> Doc.concat (List.rev acc)
+      | (loc, doc)::rest ->
+        if loc.Location.loc_start.pos_lnum - prevLoc.Location.loc_end.pos_lnum > 1 then
+          loop loc (doc::Doc.line::Doc.line::acc) rest
+        else
+          loop loc (doc::Doc.line::acc) rest
+    in
+    match rows with
+    | [] -> Doc.nil
+    | (firstLoc, firstDoc)::rest ->
+      loop firstLoc [firstDoc] rest
 
   let printLongident l = match l with
     | Longident.Lident lident -> Doc.text lident
@@ -9282,20 +9296,22 @@ module Printer = struct
    *)
   and printExpressionBlock expr =
     let rec collectRows acc expr = match expr.Parsetree.pexp_desc with
-    | Parsetree.Pexp_letmodule ({txt = modName}, modExpr, expr) ->
+    | Parsetree.Pexp_letmodule ({txt = modName; loc = modLoc}, modExpr, expr) ->
       let letModuleDoc = Doc.concat [
         Doc.text "module ";
         Doc.text modName;
         Doc.text " = ";
         printModExpr modExpr;
       ] in
-      collectRows (letModuleDoc::acc) expr
+      let loc = {modLoc with loc_end = modExpr.pmod_loc.loc_end} in
+      collectRows ((loc, letModuleDoc)::acc) expr
     | Pexp_letexception (extensionConstructor, expr) ->
       let letExceptionDoc = Doc.concat [
         Doc.text "exception ";
         printExtensionConstructor extensionConstructor;
       ] in
-      collectRows (letExceptionDoc::acc) expr
+      let loc = extensionConstructor.pext_loc in
+      collectRows ((loc, letExceptionDoc)::acc) expr
     | Pexp_open (overrideFlag, longidentLoc, expr) ->
       let openDoc = Doc.concat [
         Doc.text "open";
@@ -9303,13 +9319,15 @@ module Printer = struct
         Doc.space;
         printLongident longidentLoc.txt;
       ] in
-      collectRows (openDoc::acc) expr
+      let loc = longidentLoc.loc in
+      collectRows ((loc, openDoc)::acc) expr
     | Pexp_sequence (expr1, expr2) ->
       let exprDoc =
         let doc = printExpression expr1 in
         if Parens.blockExpr expr1 then addParens doc else doc
       in
-      collectRows (exprDoc::acc) expr2
+      let loc = expr1.pexp_loc in
+      collectRows ((loc, exprDoc)::acc) expr2
     | Pexp_let (recFlag, valueBindings, expr) ->
 			let recFlag = match recFlag with
 			| Asttypes.Nonrecursive -> Doc.nil
@@ -9318,29 +9336,34 @@ module Printer = struct
       let letDoc = Doc.group (
 				printValueBinding ~recFlag 0 (List.hd valueBindings);
       ) in
-      collectRows(letDoc::acc) expr
+      let loc = match (valueBindings, List.rev valueBindings) with
+      | ({pvb_loc = firstLoc}::_,{pvb_loc = lastLoc}::_) ->
+          {firstLoc with loc_end = lastLoc.loc_end}
+      | _ -> Location.none
+      in
+      collectRows((loc, letDoc)::acc) expr
     | _ ->
       let exprDoc =
         let doc = printExpression expr in
         if Parens.blockExpr expr then addParens doc else doc
       in
-      List.rev (exprDoc::acc)
+      List.rev ((expr.pexp_loc, exprDoc)::acc)
     in
-    let docs = collectRows [] expr in
+    let rows = collectRows [] expr in
+    (* let docs = List.map snd docs in *)
     Doc.breakableGroup ~forceBreak:true (
       Doc.concat [
         Doc.lbrace;
         Doc.indent (
           Doc.concat [
             Doc.line;
-            Doc.join ~sep:Doc.line docs;
+            interleaveWhitespace rows;
           ]
         );
         Doc.line;
         Doc.rbrace;
       ]
     )
-
 
   and printOverrideFlag overrideFlag = match overrideFlag with
     | Asttypes.Override -> Doc.text "!"
