@@ -8332,7 +8332,23 @@ module Printer = struct
     ]
 
   and printExtension (stringLoc, payload) =
-    Doc.text ("%" ^ stringLoc.Location.txt)
+    let extName = Doc.text ("%" ^ stringLoc.Location.txt) in
+    match payload with
+    | PStr [{pstr_desc = Pstr_eval (expr, attrs)}] ->
+      let exprDoc = printExpression expr in
+      let needsParens = match attrs with | [] -> false | _ -> true in
+      Doc.group (
+        Doc.concat [
+          extName;
+          addParens (
+            Doc.concat [
+              printAttributes attrs;
+              if needsParens then addParens exprDoc else exprDoc;
+            ]
+          )
+        ]
+      )
+    | _ -> extName
 
   and printPattern (p : Parsetree.pattern) =
     let patternWithoutAttributes = match p.ppat_desc with
