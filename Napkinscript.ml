@@ -7543,6 +7543,7 @@ module Printer = struct
       ]
     )
 
+  (* This could be done in one pass by collecting locations as we go? *)
   let interleaveWhitespace (rows: (Location.t * Doc.t) list) =
     let rec loop prevLoc acc rows =
       match rows with
@@ -7556,7 +7557,15 @@ module Printer = struct
     match rows with
     | [] -> Doc.nil
     | (firstLoc, firstDoc)::rest ->
-      loop firstLoc [firstDoc] rest
+      (* TODO: perf, reversing the list twice! *)
+      let forceBreak = match List.rev rest with
+      | (lastLoc, _)::_ ->
+        firstLoc.loc_start.pos_lnum != lastLoc.loc_end.pos_lnum
+      | _ -> false
+      in
+      Doc.breakableGroup ~forceBreak (
+        loop firstLoc [firstDoc] rest
+      )
 
   let printLongident l = match l with
     | Longident.Lident lident -> Doc.text lident
@@ -7572,10 +7581,8 @@ module Printer = struct
     | Pconst_char c -> Doc.text ("'" ^ (Char.escaped c) ^ "'")
 
   let rec printStructure (s : Parsetree.structure) =
-    Doc.breakableGroup ~forceBreak:true (
-      interleaveWhitespace  (
-        List.map (fun si -> (si.Parsetree.pstr_loc, printStructureItem si)) s
-      )
+    interleaveWhitespace  (
+      List.map (fun si -> (si.Parsetree.pstr_loc, printStructureItem si)) s
     )
 
   and printStructureItem (si: Parsetree.structure_item) =
@@ -7585,22 +7592,27 @@ module Printer = struct
 			| Asttypes.Nonrecursive -> Doc.nil
 			| Asttypes.Recursive -> Doc.text "rec "
 			in
-      Doc.group (
-				printValueBinding ~recFlag 0 (List.hd valueBindings);
-      )
+      printValueBindings ~recFlag valueBindings
     | Pstr_type(recFlag, typeDeclarations) ->
       let recFlag = match recFlag with
       | Asttypes.Nonrecursive -> Doc.nil
       | Asttypes.Recursive -> Doc.text "rec "
       in
-      Doc.join Doc.line (
-        List.mapi (printTypeDeclaration ~recFlag) typeDeclarations
-      )
+      printTypeDeclarations ~recFlag typeDeclarations
     | Pstr_primitive valueDescription ->
       printValueDescription valueDescription
     | Pstr_eval (expr, _attrs) ->
       printExpression expr
     | _ -> failwith "unsupported"
+
+
+  and printValueBindings ~recFlag (vbs: Parsetree.value_binding list) =
+    let rows = List.mapi (fun i vb ->
+      let doc = printValueBinding ~recFlag i vb in
+      (vb.Parsetree.pvb_loc, doc)
+    ) vbs
+    in
+    interleaveWhitespace rows
 
   (*
    * type value_description = {
@@ -7638,6 +7650,13 @@ module Printer = struct
         )
       ]
     )
+
+  and printTypeDeclarations ~recFlag typeDeclarations =
+    let rows = List.mapi (fun i td ->
+      let doc = printTypeDeclaration ~recFlag i td in
+      (td.Parsetree.ptype_loc, doc)
+    ) typeDeclarations in
+    interleaveWhitespace rows
 
   (*
    * type_declaration = {
@@ -8213,6 +8232,7 @@ module Printer = struct
         optionalIndicator;
       ]
     )
+
 
   (*
    * {
@@ -9337,9 +9357,7 @@ module Printer = struct
 			| Asttypes.Nonrecursive -> Doc.nil
 			| Asttypes.Recursive -> Doc.text "rec "
 			in
-      let letDoc = Doc.group (
-				printValueBinding ~recFlag 0 (List.hd valueBindings);
-      ) in
+      let letDoc = printValueBindings ~recFlag valueBindings in
       let loc = match (valueBindings, List.rev valueBindings) with
       | ({pvb_loc = firstLoc}::_,{pvb_loc = lastLoc}::_) ->
           {firstLoc with loc_end = lastLoc.loc_end}

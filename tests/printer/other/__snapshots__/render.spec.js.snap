@@ -1,0 +1,46 @@
+// Jest Snapshot v1, https://goo.gl/fbAQLP
+
+exports[`StaticReactTypes.js 1`] = `
+"type empty = Empty_
+
+type elem<'t> =
+  | Empty: elem<empty>
+  | Element(renderable<('s, 'a) => 'sub>): elem<('s, 'a) => 'sub>
+  | TwoElements(elem<'t1>, elem<'t2>): elem</'t1, 't2/>
+  | ElementMap(list<elem<'t>>): elem<list<'t>>
+
+and subtree<'t> =
+  | EmptyInstance: subtree<empty>
+  | Instance(inst<('s, 'a) => 'sub>): subtree<('s, 'a) => 'sub>
+  | TwoInstances(subtree<'t1>, subtree<'t2>): subtree</'t1, 't2/>
+  | InstanceMap(list<subtree<'t>>): subtree<list<'t>>
+and reducer<'t> = (inst<'t>, 'a) => 's
+  constraint 't = ('s, 'a) => 'sub
+
+and componentSpec<'t> = Reducer('s, elem<'sub>, reducer<'t>)
+  constraint 't = ('s, 'a) => 'sub
+and self<'t> = {
+  reduceEvent: 'e. ('e => 'a, 'e) => unit,
+  send: 'a => unit,
+}
+  constraint 't = ('s, 'a) => 'sub
+
+and renderable<'t> = (~state: 's=?, self<'t>) => componentSpec<'t>
+  constraint 't = ('s, 'a) => 'sub
+
+and inst<'t> = {
+  replacer: replacer<'t>,
+  subreplacer: subreplacer<'sub>,
+  self: self<'t>,
+  renderable: renderable<'t>,
+  spec: componentSpec<'t>,
+  subtree: subtree<'sub>,
+}
+  constraint 't = ('s, 'a) => 'sub
+
+and replacer<'t> = inst<'t> => inst<'t> => unit
+  constraint 't = ('s, 'a) => 'sub
+and subreplacer<'sub> = subtree<'sub> => subtree<'sub> => unit
+
+"
+`;
