@@ -5,3 +5,16 @@ let x = [
   superLongIdentiiiiiiiifffffffiiiiieeeeeeeer,
   superLongIdentiiiiiiiifffffffiiiiieeeeeeeer,
 ]
+
+let x = @attr [a, b, c]
+let x = @attr [@attr a, @attr b, @attr c]
+
+let x = @attr [
+  @attr superLongIdentiiiiiiiifffffffiiiiieeeeeeeer,
+  @attr superLongIdentiiiiiiiifffffffiiiiieeeeeeeer,
+  @attr superLongIdentiiiiiiiifffffffiiiiieeeeeeeer,
+  @attr superLongIdentiiiiiiiifffffffiiiiieeeeeeeer,
+  @attr superLongIdentiiiiiiiifffffffiiiiieeeeeeeer,
+  @attr superLongIdentiiiiiiiifffffffiiiiieeeeeeeer,
+  @attr superLongIdentiiiiiiiifffffffiiiiieeeeeeeer,
+]

@@ -52,3 +52,6 @@ let x = (try sideEffect() catch {| Exit => ()}).x
 let x = (@attr expr).x
 
 let x = (a + b).x
+
+let x = @attr user.name
+

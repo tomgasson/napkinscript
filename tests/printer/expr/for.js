@@ -7,3 +7,5 @@ for i in 0 to 10 {
   let b = 2
   sideEffect()
 }
+
+let x = @attr for i in 0 to 10 { () }

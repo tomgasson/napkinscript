@@ -13,3 +13,8 @@ let withSpreadAndForceBreak = {
 }
 
 let withSpreadAndNaturalBreak = {...fields, firstField: superLongIdentiiiiiiiifffffffiiiiieeeeeeeer, secondField: superLongIdentiiiiiiiifffffffiiiiieeeeeeeer, thirdField: superLongIdentiiiiiiiifffffffiiiiieeeeeeeer}
+
+
+let x = @attr {x: 1, y: 2}
+let x = @attr {...initialState, superLongName: 1, superLongName: 2, superLongName: 5}
+let x = @attr {...initialState, superLongName: 1, superLongName: 2, superLongName: 5, superLongName: 20}

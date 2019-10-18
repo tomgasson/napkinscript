@@ -15,3 +15,7 @@ let rec updateSum = (node, ~delta) =>
     node.sum = node.sum +. delta
     node.parent->updateSum(~delta)
   }
+
+let x = @attr switch x {
+| Universe => ()
+}

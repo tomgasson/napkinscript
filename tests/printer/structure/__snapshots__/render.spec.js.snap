@@ -1,5 +1,34 @@
 // Jest Snapshot v1, https://goo.gl/fbAQLP
 
+exports[`expr.js 1`] = `
+"@attrOnStructure
+expr
+
+@attrOnStructure
+(@attrOnExpr expr)
+
+@attrOnStructure @attrOnStructure2 @attrOnStructurer3 @attrOnStructure4
+(@attrOnExpr @attrOnExpr @attrOnExpr @attrOnExpr @attrOnExpr expr)
+
+@attrOnStructure
+@attrOnStructure2
+@attrOnStructurer3
+@attrOnStructure4
+@attrOnStructure5
+(
+  @attrOnExpr
+  @attrOnExpr
+  @attrOnExpr
+  @attrOnExpr
+  @attrOnExpr
+  @attrOnExpr
+  @attrOnExpr
+  expr
+)
+
+"
+`;
+
 exports[`external.js 1`] = `
 "external null: reactElement = \\"null\\"
 

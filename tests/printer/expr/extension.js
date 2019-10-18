@@ -22,3 +22,5 @@ switch %external(__DEV__) {
 | Some(_) => Js.log("dev mode")
 | None => Js.log("production mode")
 }
+
+let node = @attr %bs.raw("0")

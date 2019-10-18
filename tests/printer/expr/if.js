@@ -29,3 +29,7 @@ let () = if true {
   render()
   ()
 }
+
+let x = @attr if truth {
+  sideEffect()
+}

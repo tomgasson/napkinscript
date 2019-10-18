@@ -59,6 +59,11 @@ let user = makeJsUser({
   \\"age\\": 32,
 })
 
+let x = @attr callFunction()
+let x =
+  @attrWithLongName @attrWithLongName @attrWithLongName @attrWithLongName
+  callFunction()
+
 "
 `;
 
@@ -70,6 +75,21 @@ let x = [
   superLongIdentiiiiiiiifffffffiiiiieeeeeeeer,
   superLongIdentiiiiiiiifffffffiiiiieeeeeeeer,
 ]
+
+let x = @attr [a, b, c]
+let x = @attr [@attr a, @attr b, @attr c]
+
+let x =
+  @attr
+  [
+    @attr superLongIdentiiiiiiiifffffffiiiiieeeeeeeer,
+    @attr superLongIdentiiiiiiiifffffffiiiiieeeeeeeer,
+    @attr superLongIdentiiiiiiiifffffffiiiiieeeeeeeer,
+    @attr superLongIdentiiiiiiiifffffffiiiiieeeeeeeer,
+    @attr superLongIdentiiiiiiiifffffffiiiiieeeeeeeer,
+    @attr superLongIdentiiiiiiiifffffffiiiiieeeeeeeer,
+    @attr superLongIdentiiiiiiiifffffffiiiiieeeeeeeer,
+  ]
 
 "
 `;
@@ -136,11 +156,16 @@ let x = assert (@attr expr)
 
 let x = assert (a + b)
 
+let x = @attr assert false
+
 "
 `;
 
 exports[`binary.js 1`] = `
-"let x = a && b + c
+"let x = a + b
+let x = @attr (a + b)
+let x = @attr (@attr a + @attr b)
+let x = a && b + c
 let x = (a && b) + c
 let x = (a && b) || c
 
@@ -335,6 +360,242 @@ let () = {
   }
 }
 
+let x = a && (b || c)
+let x = a && (b || c) && d
+let x = a && b + c
+let x = a && b + c && d
+
+let x = a && @attr b && c
+let x = @attr a && @attr b && @attr c
+let x = a && @attr (b && c)
+let x = a && @attr (b && c) && @attr (d && e)
+
+let x = a && @attr (x |> f(g))
+let x = a && @attr (x |> f(g)) && @attr (y |> f(h))
+
+let x = a && a.b
+let x = a && x.y && g.h
+let x = a && true
+let x = a && true && true
+let x =
+  a &&
+  {
+    let a = true
+    let b = true
+    a || b
+  }
+let x =
+  a &&
+  {
+    let a = true
+    let b = true
+    a || b
+  } &&
+  {
+    let a = true
+    let b = true
+    a || b
+  }
+
+let x = a && (x => x->Js.log)
+let x = a && (x => x->Js.log) && (x => x->Js.log)
+
+let x = a && !b
+let x = a && !b && !c
+
+let x = a && f(b)
+let x = a && f(b) && f(c)
+
+let x = a && f(. b)
+let x = a && f(. b) && f(. c)
+
+let x = a && x |> f(g)
+let x = a && x |> f(g) && y |> f(h)
+
+let x =
+  a &&
+  switch color {
+  | Blue => \\"blue\\"
+  | Red => \\"red\\"
+  }
+let x =
+  a &&
+  switch color {
+  | Blue => \\"blue\\"
+  | Red => \\"red\\"
+  } &&
+  switch color {
+  | Blue => \\"blue\\"
+  | Red => \\"red\\"
+  }
+
+let x =
+  a &&
+  try unsafe() catch {
+  | Error => ()
+  }
+
+let x =
+  a &&
+  try unsafe() catch {
+  | Error => ()
+  } &&
+  try unsafe() catch {
+  | Error => ()
+  }
+
+let x = a && (/a, b/)
+let x = a && (/a, b/) && (/c, d/)
+
+let x = a && Foo(x, y)
+let x = a && Foo(x, y) && Foo(x, y, z)
+
+let x = a && {x: 1, y: 2}
+let x = a && {x: 1, y: 2} && {x: 3, y: 3}
+
+let x = a && b.c
+let x = a && b.c && d.e
+
+let x = a && row.id = 1
+let x = a && (row.id = 1) && row2.id = 3
+
+let x = a && [a, b]
+let x = a && [a, b] && [c, d]
+
+let x =
+  a &&
+  if true {
+    true
+  } else {
+    false
+  }
+let x =
+  a &&
+  if true {
+    true
+  } else {
+    false
+  } &&
+  if false {
+    false
+  } else {
+    true
+  }
+
+let x =
+  a &&
+  {
+    sideEffect()
+    do()
+  }
+let x =
+  a &&
+  {
+    sideEffect()
+    do()
+  } &&
+  {
+    sideEffect()
+    do()
+  }
+
+let x =
+  a &&
+  while true {
+    do()
+  }
+let x =
+  a &&
+  while true {
+    do()
+  } &&
+  while true {
+    do()
+  }
+
+let x =
+  a &&
+  for i in 0 to 10 {
+    true
+  }
+let x =
+  a &&
+  for i in 0 to 10 {
+    true
+  } &&
+  for i in 0 to 10 {
+    false
+  }
+
+let x = a && (truth: bool)
+let x = a && (truth: bool) && (otherTruth: bool)
+
+let x =
+  a &&
+  {
+    module L = Log
+    L.log()
+  }
+let x =
+  a &&
+  {
+    module L = Log
+    L.log()
+  } &&
+  {
+    module L = Log
+    L.log()
+  }
+
+let x =
+  a &&
+  {
+    exception Exit
+    raise(Exit)
+  }
+let x =
+  a &&
+  {
+    exception Exit
+    raise(Exit)
+  } &&
+  {
+    exception Exit
+    raise(Exit)
+  }
+
+let x = a && assert false
+let x = a && assert false && assert true
+
+let x = a && lazy false
+let x = a && lazy false && lazy true
+
+let x =
+  a &&
+  {
+    open React
+    killPerform()
+  }
+let x =
+  a &&
+  {
+    open React
+    killPerform()
+  } &&
+  {
+    open Dom
+    regainPerform()
+  }
+
+let x = a && %bs.raw(\\"true\\")
+let x = a && %bs.raw(\\"true\\") && %bs.raw(\\"false\\")
+
+let x = a && module(Foo)
+let x = a && module(Foo) && module(Bar)
+
+let x = a && module(Foo: Bool)
+let x = a && module(Foo: Bool) && module(Bar: Bool)
+
 "
 `;
 
@@ -379,11 +640,18 @@ let x = 3.14
 
 let x = \\"mystring\\"
 
+let x = @attr 1
+let x = @attr 3.14
+let x = @attr \\"mystring\\"
+
 "
 `;
 
 exports[`constraint.js 1`] = `
 "let x = (Numbers.ten: int)
+
+let x = (@attr 10: int)
+let x = (@attr 10: int)
 
 "
 `;
@@ -467,6 +735,8 @@ let rec peekMinNode = node =>
     }
   }
 
+let constructor = @attr Blue
+
 "
 `;
 
@@ -498,6 +768,8 @@ switch %external(__DEV__) {
 | Some(_) => Js.log(\\"dev mode\\")
 | None => Js.log(\\"production mode\\")
 }
+
+let node = @attr %bs.raw(\\"0\\")
 
 "
 `;
@@ -570,12 +842,17 @@ let x = (@attr expr).x
 
 let x = (a + b).x
 
+let x = @attr user.name
+
 "
 `;
 
 exports[`firstClassModule.js 1`] = `
 "let three = module(Three: X_int)
 let three = module(Three)
+
+let x = @attr module(Foo)
+let x = @attr module(Foo: FirstClass)
 
 "
 `;
@@ -590,6 +867,12 @@ for i in 0 to 10 {
   let b = 2
   sideEffect()
 }
+
+let x =
+  @attr
+  for i in 0 to 10 {
+    ()
+  }
 
 "
 `;
@@ -787,6 +1070,7 @@ let make = (
     | None => ()
     | Some(onChange) => onChange(. {\\"testing\\": true}, [\\"hey\\"])
     }
+  @JSX
   input(~onChange=_ => doSomething(), ~children=list(), ())
 }
 
@@ -797,6 +1081,12 @@ exports[`ident.js 1`] = `
 "let x = a
 
 let c = Configuration.config
+
+let x = @attr identifier
+
+let x =
+  @attributeVeryLong @attributeVeryLong @attributeVeryLong @attributeVeryLong
+  identifier
 
 "
 `;
@@ -833,6 +1123,12 @@ let () = if true {
   render()
   ()
 }
+
+let x =
+  @attr
+  if truth {
+    sideEffect()
+  }
 
 "
 `;
@@ -897,6 +1193,8 @@ let x = lazy (@attr expr)
 
 let x = lazy (a + b)
 
+let x = @attr lazy x
+
 "
 `;
 
@@ -920,6 +1218,12 @@ let x = {
   and z = 3
   
   x + y + z
+}
+
+let x = {
+  let a = true
+  let b = false
+  a || b
 }
 
 "
@@ -1007,6 +1311,19 @@ let withSpreadAndNaturalBreak = {
   thirdField: superLongIdentiiiiiiiifffffffiiiiieeeeeeeer,
 }
 
+let x = @attr {x: 1, y: 2}
+let x =
+  @attr {...initialState, superLongName: 1, superLongName: 2, superLongName: 5}
+let x =
+  @attr
+  {
+    ...initialState,
+    superLongName: 1,
+    superLongName: 2,
+    superLongName: 5,
+    superLongName: 20,
+  }
+
 "
 `;
 
@@ -1056,6 +1373,12 @@ let rec updateSum = (node, ~delta) =>
     node.parent->updateSum(~delta)
   }
 
+let x =
+  @attr
+  switch x {
+  | Universe => ()
+  }
+
 "
 `;
 
@@ -1079,6 +1402,43 @@ let x = {
   | _ => 2
   }
 }
+
+@attr @attr2
+try myDangerousFn() catch {
+| Foo => Js.log()
+}
+
+let () =
+  @attr @attr2
+  try myDangerousFn() catch {
+  | Foo => Js.log()
+  }
+
+"
+`;
+
+exports[`tuple.js 1`] = `
+"let x = /1, 2, 3/
+
+let x = /
+  superLongNameThatWillBreak,
+  superLongNameThatWillBreak,
+  superLongNameThatWillBreak,
+  superLongNameThatWillBreak,
+  superLongNameThatWillBreak,
+  superLongNameThatWillBreak,
+/
+
+let x =
+  @attr
+  /
+    superLongNameThatWillBreak,
+    superLongNameThatWillBreak,
+    superLongNameThatWillBreak,
+    superLongNameThatWillBreak,
+    superLongNameThatWillBreak,
+    superLongNameThatWillBreak,
+  /
 
 "
 `;
@@ -1186,6 +1546,12 @@ while (
   let nextNonwhiteB = nextNonWhiteChar(bStr, 1, bPrefixLen.contents - 1)
   ()
 }
+
+let x =
+  @attr
+  while true {
+    break()
+  }
 
 "
 `;

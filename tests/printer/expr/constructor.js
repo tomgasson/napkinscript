@@ -66,3 +66,6 @@ let rec peekMinNode = node =>
       node.left->peekMinNode
     }
   }
+
+let constructor =
+  @attr Blue

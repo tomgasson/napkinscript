@@ -34,3 +34,6 @@ let user = makeJsUser({
   "name": "steve",
   "age":  32
 })
+
+let x = @attr callFunction()
+let x = @attrWithLongName @attrWithLongName @attrWithLongName @attrWithLongName callFunction()

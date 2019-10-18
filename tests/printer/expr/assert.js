@@ -46,3 +46,5 @@ let x = assert (try sideEffect() catch {| Exit => ()})
 let x = assert (@attr expr)
 
 let x = assert (a + b)
+
+let x = @attr assert false

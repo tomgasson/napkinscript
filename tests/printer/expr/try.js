@@ -19,3 +19,15 @@ let x = {
   | _ => 2
   }
 }
+
+@attr @attr2
+try myDangerousFn() catch {
+| Foo => Js.log()
+}
+
+
+let () =
+  @attr @attr2
+  try myDangerousFn() catch {
+  | Foo => Js.log()
+  }

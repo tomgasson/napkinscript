@@ -19,3 +19,7 @@ while (
   let nextNonwhiteB = nextNonWhiteChar(bStr, 1, bPrefixLen.contents - 1)
   ()
 }
+
+let x = @attr while true {
+ break()
+}

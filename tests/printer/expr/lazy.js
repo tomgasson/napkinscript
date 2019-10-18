@@ -45,3 +45,5 @@ let x = lazy (try sideEffect() catch {| Exit => ()})
 let x = lazy (@attr expr)
 
 let x = lazy (a + b)
+
+let x = @attr lazy x

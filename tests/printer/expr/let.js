@@ -19,3 +19,5 @@ let x = {
 
   x + y + z
 }
+
+let x = {let a = true; let b = false; a || b}

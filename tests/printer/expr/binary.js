@@ -1,3 +1,6 @@
+let x = a + b
+let x = @attr (a + b)
+let x = @attr (@attr a + @attr b)
 let x = a && b + c
 let x = (a && b) + c
 let x = a && b || c 
@@ -140,3 +143,117 @@ let () = {
     }
   }
 }
+
+let x = a && (b || c)
+let x = a && (b || c) && d
+let x = a && b + c
+let x = a && b + c && d
+
+let x = a && @attr b && c
+let x = @attr a && @attr b && @attr c
+let x = a && @attr (b && c)
+let x = a && @attr (b && c) && @attr (d && e)
+
+let x = a && @attr (x |> f(g))
+let x = a && @attr (x |> f(g)) && @attr (y |> f(h))
+
+let x = a && a.b
+let x = a && x.y && g.h
+let x = a && true
+let x = a && true && true
+let x = a && {let a = true; let b = true; a || b}
+let x = a && {let a = true; let b = true; a || b} && {let a = true; let b = true; a || b}
+
+let x = a && x => x->Js.log
+let x = a && (x => x->Js.log) && x => x->Js.log
+
+let x = a && !b
+let x = a && !b && !c
+
+let x = a && f(b)
+let x = a && f(b) && f(c)
+
+let x = a && f(. b)
+let x = a && f(. b) && f(. c)
+
+let x = a && x |> f(g)
+let x = a && x |> f(g) && y |> f(h)
+
+let x = a && switch color {
+  | Blue => "blue"
+  | Red => "red"
+}
+let x = a && switch color {
+  | Blue => "blue"
+  | Red => "red"
+} && switch color {
+  | Blue => "blue"
+  | Red => "red"
+}
+
+let x = a && try unsafe() catch {
+  | Error => ()
+}
+
+let x = a && try unsafe() catch {
+  | Error => ()
+} && try unsafe() catch {
+  | Error => ()
+}
+
+let x = a && /a, b/
+let x = a && /a, b/ && /c, d/
+
+let x = a && Foo(x, y)
+let x = a && Foo(x, y) && Foo(x, y, z)
+
+let x = a && {x: 1, y: 2}
+let x = a && {x: 1, y: 2} && {x: 3, y: 3}
+
+let x = a && b.c
+let x = a && b.c && d.e
+
+let x = a && row.id = 1
+let x = a && (row.id = 1) && row2.id = 3
+
+let x = a && [a, b]
+let x = a && [a, b] && [c, d]
+
+let x = a && if true { true } else { false }
+let x = a && if true { true } else { false } && if false { false } else { true}
+
+let x = a && {sideEffect(); do()}
+let x = a && {sideEffect(); do()} && {sideEffect(); do()}
+
+let x = a && while true { do() }
+let x = a && while true { do() } && while true { do() }
+
+let x = a && for i in 0 to 10 { true }
+let x = a && for i in 0 to 10 { true } && for i in 0 to 10 { false }
+
+let x = a && (truth: bool)
+let x = a && (truth: bool) && (otherTruth: bool)
+
+let x = a && {module L = Log; L.log()}
+let x = a && {module L = Log; L.log()} && {module L = Log; L.log()}
+
+let x = a && {exception Exit; raise(Exit)}
+let x = a && {exception Exit; raise(Exit)} && {exception Exit; raise(Exit)}
+
+let x = a && assert false
+let x = a && assert false && assert true
+
+let x = a && lazy false
+let x = a && lazy false && lazy true
+
+let x = a && {open React; killPerform()}
+let x = a && {open React; killPerform()} && {open Dom; regainPerform()}
+
+let x = a && %bs.raw("true")
+let x = a && %bs.raw("true") && %bs.raw("false")
+
+let x = a && module(Foo)
+let x = a && module(Foo) && module(Bar)
+
+let x = a && module(Foo: Bool)
+let x = a && module(Foo: Bool) && module(Bar: Bool)
