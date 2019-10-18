@@ -8765,7 +8765,7 @@ module Printer = struct
               Doc.ifBreaks (addParens condition) condition;
             );
             Doc.space;
-            printExpressionBlock thenExpr;
+            printExpressionBlock ~braces:true thenExpr;
           ]
         ) ifs
       ) in
@@ -8773,7 +8773,7 @@ module Printer = struct
       | None -> Doc.nil
       | Some expr -> Doc.concat [
           Doc.text " else ";
-          printExpressionBlock expr;
+          printExpressionBlock ~braces:true expr;
         ]
       in
       Doc.concat [
@@ -8789,7 +8789,7 @@ module Printer = struct
             Doc.ifBreaks (addParens condition) condition
           );
           Doc.space;
-          printExpressionBlock expr2;
+          printExpressionBlock ~braces:true expr2;
         ]
       )
     | Pexp_for (pattern, fromExpr, toExpr, directionFlag, body) ->
@@ -8802,7 +8802,7 @@ module Printer = struct
           printDirectionFlag directionFlag;
           printExpression toExpr;
           Doc.space;
-          printExpressionBlock body;
+          printExpressionBlock ~braces:true body;
         ]
       )
     | Pexp_constraint(
@@ -8830,10 +8830,10 @@ module Printer = struct
         printTypExpr typ;
       ]
     | Pexp_letmodule ({txt = modName}, modExpr, expr) ->
-      printExpressionBlock e
+      printExpressionBlock ~braces:true e
 
     | Pexp_letexception (extensionConstructor, expr) ->
-      printExpressionBlock e
+      printExpressionBlock ~braces:true e
     | Pexp_assert expr ->
       let rhs =
         let doc = printExpression expr in
@@ -8853,7 +8853,7 @@ module Printer = struct
         rhs;
       ]
     | Pexp_open (overrideFlag, longidentLoc, expr) ->
-      printExpressionBlock e
+      printExpressionBlock ~braces:true e
     | Pexp_pack (modExpr) ->
       Doc.concat [
         Doc.text "module(";
@@ -8867,9 +8867,9 @@ module Printer = struct
         Doc.rparen;
       ]
     | Pexp_sequence _ ->
-      printExpressionBlock e
+      printExpressionBlock ~braces:true e
     | Pexp_let _ ->
-      printExpressionBlock e
+      printExpressionBlock ~braces:true e
     | Pexp_fun _ ->
       let (attrsOnArrow, parameters, returnExpr) = ParsetreeViewer.funExpr e in
       let (uncurried, attrs) =
@@ -9213,6 +9213,15 @@ module Printer = struct
 
   (* TODO: guards *)
   and printCase (case: Parsetree.case) =
+    let rhs = match case.pc_rhs.pexp_desc with
+    | Pexp_let _
+    | Pexp_letmodule _
+    | Pexp_letexception _
+    | Pexp_open _
+    | Pexp_sequence _ ->
+      printExpressionBlock ~braces:false case.pc_rhs
+    | _ -> printExpression case.pc_rhs
+    in
     Doc.group (
       Doc.concat [
         Doc.text "| ";
@@ -9221,7 +9230,7 @@ module Printer = struct
         Doc.indent (
           Doc.concat [
             Doc.line;
-            printExpression case.pc_rhs;
+            rhs;
           ]
         )
       ]
@@ -9318,7 +9327,7 @@ module Printer = struct
    * }
    * What is an expr-block ? Everything between { ... }
    *)
-  and printExpressionBlock expr =
+  and printExpressionBlock ~braces expr =
     let rec collectRows acc expr = match expr.Parsetree.pexp_desc with
     | Parsetree.Pexp_letmodule ({txt = modName; loc = modLoc}, modExpr, expr) ->
       let letModuleDoc = Doc.concat [
@@ -9371,20 +9380,21 @@ module Printer = struct
       in
       List.rev ((expr.pexp_loc, exprDoc)::acc)
     in
-    let rows = collectRows [] expr in
-    (* let docs = List.map snd docs in *)
+    let block = collectRows [] expr |> interleaveWhitespace in
     Doc.breakableGroup ~forceBreak:true (
-      Doc.concat [
-        Doc.lbrace;
-        Doc.indent (
-          Doc.concat [
-            Doc.line;
-            interleaveWhitespace rows;
-          ]
-        );
-        Doc.line;
-        Doc.rbrace;
-      ]
+      if braces then
+        Doc.concat [
+          Doc.lbrace;
+          Doc.indent (
+            Doc.concat [
+              Doc.line;
+              block;
+            ]
+          );
+          Doc.line;
+          Doc.rbrace;
+        ]
+      else block
     )
 
   and printOverrideFlag overrideFlag = match overrideFlag with
