@@ -22,6 +22,8 @@ while (
 let x = !filePath.includes(allMlSuffixesCategory) &&
   !filePath.endsWith(allScriptDirectoriesCategory)
 
+let name = names[0] ++ names[1]
+
 let x = foo ++ bar
 let x = foo != bar
 let x = foo !== bar
@@ -257,3 +259,6 @@ let x = a && module(Foo) && module(Bar)
 
 let x = a && module(Foo: Bool)
 let x = a && module(Foo: Bool) && module(Bar: Bool)
+
+let x = a && truths[0]
+let x = a && truths[0] && truths[1]

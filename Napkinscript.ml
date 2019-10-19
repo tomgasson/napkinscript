@@ -7182,6 +7182,8 @@ module ParsetreeViewer : sig
   val flattenableOperators: string -> string -> bool
 
   val hasAttributes: Parsetree.attributes -> bool
+
+  val isArrayAccess: Parsetree.expression -> bool
 end = struct
   open Parsetree
 
@@ -7353,6 +7355,13 @@ end = struct
     | []
     | [({Location.txt = "bs"}, _)] -> false
     | _ -> true
+
+  let isArrayAccess expr = match expr.pexp_desc with
+    | Pexp_apply (
+        {pexp_desc = Pexp_ident {txt = Longident.Ldot (Lident "Array", "get")}},
+        [Nolabel, parentExpr; Nolabel, memberExpr]
+      ) -> true
+    | _ -> false
 end
 
 module Parens: sig
@@ -8297,7 +8306,8 @@ module Printer = struct
 		else
       let shouldIndent =
         ParsetreeViewer.isBinaryExpression vb.pvb_expr ||
-        ParsetreeViewer.hasAttributes vb.pvb_expr.pexp_attributes
+        ParsetreeViewer.hasAttributes vb.pvb_expr.pexp_attributes ||
+        ParsetreeViewer.isArrayAccess vb.pvb_expr
       in
 			Doc.concat [
 				header;
@@ -9216,6 +9226,35 @@ module Printer = struct
   (* callExpr(arg1, arg2)*)
   and printPexpApply expr =
     match expr.pexp_desc with
+    | Pexp_apply (
+        {pexp_desc = Pexp_ident {txt = Longident.Ldot (Lident "Array", "get")}},
+        [Nolabel, parentExpr; Nolabel, memberExpr]
+      ) ->
+        let member =
+          let memberDoc = printExpression memberExpr in
+          let shouldInline = match memberExpr.pexp_desc with
+          | Pexp_constant _ | Pexp_ident _ -> true
+          | _ -> false
+          in
+          if shouldInline then memberDoc else (
+            Doc.concat [
+              Doc.indent (
+                Doc.concat [
+                  Doc.softLine;
+                  memberDoc;
+                ]
+              );
+              Doc.softLine
+            ]
+          )
+        in
+        Doc.group (Doc.concat [
+          printAttributes expr.pexp_attributes;
+          printExpression parentExpr;
+          Doc.lbracket;
+          member;
+          Doc.rbracket;
+        ])
     | Pexp_apply (callExpr, args) ->
       let (uncurried, attrs) =
         ParsetreeViewer.processUncurriedAttribute expr.pexp_attributes
