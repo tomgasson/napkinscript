@@ -177,6 +177,9 @@ let x = assert (a + b)
 
 let x = @attr assert false
 
+assert invariant[\\"fatal\\"]
+assert invariants[0]
+
 "
 `;
 
@@ -210,6 +213,7 @@ let x =
   !filePath.endsWith(allScriptDirectoriesCategory)
 
 let name = names[0] ++ names[1]
+let name = user[\\"firstName\\"] ++ user[\\"lastName\\"]
 
 let x = foo ++ bar
 let x = foo != bar
@@ -676,6 +680,9 @@ exports[`constraint.js 1`] = `
 
 let x = (@attr 10: int)
 let x = (@attr 10: int)
+
+let x = (street[\\"number\\"]: int)
+let x = (streets[0]: int)
 
 "
 `;
@@ -1157,6 +1164,19 @@ let x =
 "
 `;
 
+exports[`jsObjectAccess.js 1`] = `
+"let x = address[\\"street\\"]
+let x = address[\\"street\\"][\\"number\\"]
+let x = @attr address[\\"street\\"]
+
+longEqualityExpression[\\"someRecordField\\"] ==
+wowThisDoesHaveToBePrettyLong[\\"someRecordField\\"] &&
+  longEqualityExpression[\\"someRecordField\\"] ==
+  wowThisDoesHaveToBePrettyLong[\\"someRecordField\\"]
+
+"
+`;
+
 exports[`lazy.js 1`] = `
 "let x = lazy sideEffect
 
@@ -1218,6 +1238,9 @@ let x = lazy (@attr expr)
 let x = lazy (a + b)
 
 let x = @attr lazy x
+
+let x = lazy street[\\"number\\"]
+let x = lazy streets[0]
 
 "
 `;
@@ -1375,6 +1398,9 @@ let () = @attr user.name = \\"steve\\"
 
 let () = @attr user.name = \\"steve\\" |> @attr user.name = \\"steve\\"
 
+user.name = steve[\\"name\\"]
+user.address = addresses[2]
+
 "
 `;
 
@@ -1472,6 +1498,9 @@ exports[`unary.js 1`] = `
 let x = -.a
 let x = !a
 let x = &a
+
+let isMale = !user[\\"female\\"]
+let stuff = &addressRefs[0]
 
 !(!a)
 !(!(!a))

@@ -23,6 +23,7 @@ let x = !filePath.includes(allMlSuffixesCategory) &&
   !filePath.endsWith(allScriptDirectoriesCategory)
 
 let name = names[0] ++ names[1]
+let name = user["firstName"] ++ user["lastName"]
 
 let x = foo ++ bar
 let x = foo != bar

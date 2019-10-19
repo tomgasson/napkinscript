@@ -47,3 +47,6 @@ let x = lazy (@attr expr)
 let x = lazy (a + b)
 
 let x = @attr lazy x
+
+let x = lazy street["number"]
+let x = lazy streets[0]

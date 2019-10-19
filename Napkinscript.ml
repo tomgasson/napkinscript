@@ -7317,7 +7317,7 @@ end = struct
     | "+" | "+." | "-" | "-." | "++" | "^"
     | "*" | "*." | "/" | "/."
     | "**"
-    | "#" | "##" | "|." | "<>" -> true
+    | "|." | "<>" -> true
     | _ -> false
 
   let isBinaryExpression expr = match expr.pexp_desc with
@@ -9088,11 +9088,10 @@ module Printer = struct
       let spacingBeforeOperator =
         if operator = "|." then Doc.softLine
         else if operator = "|>" then Doc.line
-        else if operator = "##" then Doc.nil
         else Doc.space;
       in
       let spacingAfterOperator =
-        if operator = "|." || operator = "##" then Doc.nil
+        if operator = "|." then Doc.nil
         else if operator = "|>" then Doc.space
         else Doc.line
       in
@@ -9226,6 +9225,22 @@ module Printer = struct
   (* callExpr(arg1, arg2)*)
   and printPexpApply expr =
     match expr.pexp_desc with
+    | Pexp_apply (
+        {pexp_desc = Pexp_ident {txt = Longident.Lident "##"}},
+        [Nolabel, parentExpr; Nolabel, memberExpr]
+      ) ->
+        let member =
+          let memberDoc = printExpression memberExpr in
+          Doc.concat [Doc.text "\""; memberDoc; Doc.text "\""]
+        in
+        Doc.group (Doc.concat [
+          printAttributes expr.pexp_attributes;
+          printExpression parentExpr;
+          Doc.lbracket;
+          member;
+          Doc.rbracket;
+        ])
+
     | Pexp_apply (
         {pexp_desc = Pexp_ident {txt = Longident.Ldot (Lident "Array", "get")}},
         [Nolabel, parentExpr; Nolabel, memberExpr]

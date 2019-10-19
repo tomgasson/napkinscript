@@ -48,3 +48,6 @@ let x = assert (@attr expr)
 let x = assert (a + b)
 
 let x = @attr assert false
+
+assert invariant["fatal"]
+assert invariants[0]

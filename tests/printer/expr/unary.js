@@ -3,6 +3,9 @@ let x = -.a
 let x = !a
 let x = &a
 
+let isMale = !user["female"]
+let stuff = &addressRefs[0]
+
 !(!a)
 !(!(!a))
 !(a |> f(b))

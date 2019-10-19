@@ -7,3 +7,6 @@ let () =
 
 let () =
   @attr user.name = "steve" |> @attr user.name = "steve"
+
+user.name = steve["name"]
+user.address = addresses[2]
