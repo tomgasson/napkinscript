@@ -2667,6 +2667,7 @@ Solution: you need to pull out each field you want explicitly."
 
   let jsxAttr = (Location.mknoloc "JSX", Parsetree.PStr [])
   let uncurryAttr = (Location.mknoloc "bs", Parsetree.PStr [])
+  let ternaryAttr = (Location.mknoloc "ns.ternary", Parsetree.PStr [])
 
   type typDefOrExt =
     | TypeDef of (Asttypes.rec_flag * Parsetree.type_declaration list)
@@ -2723,6 +2724,7 @@ Solution: you need to pull out each field you want explicitly."
         | _ -> false
         end
       | Lparen ->
+        let prevEndPos = state.prevEndPos in
         Parser.next state;
         begin match state.token with
         | Rparen ->
@@ -2748,7 +2750,7 @@ Solution: you need to pull out each field you want explicitly."
              *  in the example above, we have an unbalanced ] here
              *)
             begin match state.Parser.token with
-            | EqualGreater -> true
+            | EqualGreater when state.startPos.pos_lnum == prevEndPos.pos_lnum -> true
             | _ -> false
             end
           end
@@ -3604,7 +3606,7 @@ Solution: you need to pull out each field you want explicitly."
         loc_start = leftOperand.pexp_loc.loc_start;
         loc_end = falseBranch.Parsetree.pexp_loc.loc_end;
       } in
-      Ast_helper.Exp.ifthenelse ~loc leftOperand trueBranch (Some falseBranch)
+      Ast_helper.Exp.ifthenelse ~attrs:[ternaryAttr] ~loc leftOperand trueBranch (Some falseBranch)
     | _ ->
       leftOperand
 
@@ -7167,6 +7169,8 @@ module ParsetreeViewer : sig
    *  Notice howe `({` and `})` "hug" or stick to each other *)
   val isHuggableExpression: Parsetree.expression -> bool
 
+  val isHuggablePattern: Parsetree.pattern -> bool
+
   (* For better type errors `Js.log("test")` gets parsed as `let () = Js.log("test")`
    * This function determines if `let ()` is written by the user or inserted by
    * the parser *)
@@ -7184,6 +7188,14 @@ module ParsetreeViewer : sig
   val hasAttributes: Parsetree.attributes -> bool
 
   val isArrayAccess: Parsetree.expression -> bool
+  val isTernaryExpr: Parsetree.expression -> bool
+
+  val collectTernaryParts: Parsetree.expression -> ((Parsetree.expression * Parsetree.expression) list * Parsetree.expression)
+
+  val parametersShouldHug:
+    (Parsetree.attributes * Asttypes.arg_label * Parsetree.expression option * Parsetree.pattern ) list -> bool
+
+  val filterTernaryAttributes: Parsetree.attributes -> Parsetree.attributes
 end = struct
   open Parsetree
 
@@ -7278,6 +7290,14 @@ end = struct
     | Pexp_record _ -> true
     | _ -> false
 
+  let isHuggablePattern pattern =
+    match pattern.ppat_desc with
+    | Ppat_array _
+    | Ppat_tuple _
+    | Ppat_record _
+    | Ppat_construct _ -> true
+    | _ -> false
+
   let isGhostUnitBinding i vb = match vb.pvb_pat with
     | {
         ppat_loc=loc;
@@ -7362,6 +7382,33 @@ end = struct
         [Nolabel, parentExpr; Nolabel, memberExpr]
       ) -> true
     | _ -> false
+
+  let isTernaryExpr expr = match expr with
+    | {
+        pexp_attributes = ({txt="ns.ternary"},_)::_;
+        pexp_desc = Pexp_ifthenelse _
+      } -> true
+    | _ -> false
+
+  let collectTernaryParts expr =
+    let rec collect acc expr = match expr with
+    | {
+        pexp_attributes = ({txt="ns.ternary"},_)::_;
+        pexp_desc = Pexp_ifthenelse (condition, consequent, Some(alternate))
+      } -> collect ((condition, consequent)::acc) alternate
+    | alternate -> (List.rev acc, alternate)
+    in
+    collect [] expr
+
+  let parametersShouldHug parameters = match parameters with
+    | [([], Asttypes.Nolabel, None, pat)] when isHuggablePattern pat -> true
+    | _ -> false
+
+  let filterTernaryAttributes attrs =
+    List.filter (fun attr -> match attr with
+      |({Location.txt="ns.ternary"},_) -> false
+      | _ -> true
+    ) attrs
 end
 
 module Parens: sig
@@ -7378,6 +7425,8 @@ module Parens: sig
   val blockExpr: Parsetree.expression -> bool
 
   val setFieldExprRhs: Parsetree.expression -> bool
+
+  val ternaryOperand: Parsetree.expression -> bool
 end = struct
   let unaryExprOperand expr = match expr with
     | {Parsetree.pexp_attributes = attrs} when
@@ -7547,6 +7596,20 @@ end = struct
       )} -> false
     | {pexp_desc = Pexp_constraint _ } -> true
     | _ -> false
+
+  let ternaryOperand expr = match expr with
+    | {Parsetree.pexp_desc = Pexp_constraint (
+        {pexp_desc = Pexp_pack _},
+        {ptyp_desc = Ptyp_package _}
+      )} -> false
+    | {pexp_desc = Pexp_constraint _  | Pexp_newtype _ } -> true
+    | {pexp_desc = Pexp_fun _ } ->
+      let (_attrsOnArrow, _parameters, returnExpr) = ParsetreeViewer.funExpr expr in
+      begin match returnExpr.pexp_desc with
+      | Pexp_constraint _ -> true
+      | _ -> false
+      end
+    | _ -> false
 end
 
 module Printer = struct
@@ -7635,7 +7698,11 @@ module Printer = struct
     | Pstr_primitive valueDescription ->
       printValueDescription valueDescription
     | Pstr_eval (expr, attrs) ->
-      let needsParens = ParsetreeViewer.hasAttributes expr.pexp_attributes in
+      let needsParens = match expr with
+      | {pexp_attributes=[({txt="ns.ternary"},_)]; pexp_desc = Pexp_ifthenelse _} -> false
+      | _ when ParsetreeViewer.hasAttributes expr.pexp_attributes -> true
+      | _ -> false
+      in
       let exprDoc =
         let doc = printExpression expr in
         if needsParens then addParens doc else doc
@@ -8306,8 +8373,15 @@ module Printer = struct
 		else
       let shouldIndent =
         ParsetreeViewer.isBinaryExpression vb.pvb_expr ||
-        ParsetreeViewer.hasAttributes vb.pvb_expr.pexp_attributes ||
-        ParsetreeViewer.isArrayAccess vb.pvb_expr
+        (match vb.pvb_expr with
+        | {
+            pexp_attributes = [({Location.txt="ns.ternary"}, _)];
+            pexp_desc = Pexp_ifthenelse (ifExpr, _, _)
+          } when not (ParsetreeViewer.isBinaryExpression ifExpr) -> false
+        | e ->
+          ParsetreeViewer.hasAttributes e.pexp_attributes ||
+          ParsetreeViewer.isArrayAccess e
+        )
       in
 			Doc.concat [
 				header;
@@ -8612,16 +8686,18 @@ module Printer = struct
        {Parsetree.ppat_desc=Ppat_var {txt;_}}) when ident = txt ->
         Doc.text ident
     | (longident, pattern) ->
-        Doc.concat([
-          printLongident longident.txt;
-          Doc.text ": ";
-          Doc.indent(
-            Doc.concat [
-              Doc.softLine;
-              printPattern pattern;
-            ]
-          )
-        ])
+        Doc.group (
+          Doc.concat([
+            printLongident longident.txt;
+            Doc.text ": ";
+            Doc.indent(
+              Doc.concat [
+                Doc.softLine;
+                printPattern pattern;
+              ]
+            )
+          ])
+        )
 
   and printExpression (e : Parsetree.expression) =
     let printedExpression = match e.pexp_desc with
@@ -8815,6 +8891,43 @@ module Printer = struct
     | Pexp_setfield (expr1, longidentLoc, expr2) ->
       printSetFieldExpr e.pexp_attributes expr1 longidentLoc expr2
     | Pexp_ifthenelse (ifExpr, thenExpr, elseExpr) ->
+      if ParsetreeViewer.isTernaryExpr e then
+        let (parts, alternate) = ParsetreeViewer.collectTernaryParts e in
+        let ternaryDoc = match parts with
+        | (condition1, consequent1)::rest ->
+          Doc.concat [
+            printTernaryOperand condition1;
+            Doc.indent (
+              Doc.concat [
+                Doc.line;
+                Doc.indent (Doc.concat [Doc.text "? "; printTernaryOperand consequent1]);
+                Doc.concat (
+                  List.map (fun (condition, consequent) ->
+                    Doc.concat [
+                      Doc.line;
+                      Doc.text ": ";
+                      printTernaryOperand condition;
+                      Doc.line;
+                      Doc.text "? ";
+                      printTernaryOperand consequent;
+                    ]
+                  ) rest
+                );
+                Doc.line;
+                Doc.text ": ";
+                Doc.indent (printTernaryOperand alternate);
+              ]
+            )
+          ]
+        | _ -> Doc.nil
+        in
+        let attrs = ParsetreeViewer.filterTernaryAttributes e.pexp_attributes in
+        let needsParens = match attrs with | [] -> false | _ -> true in
+        Doc.concat [
+          printAttributes attrs;
+          if needsParens then addParens ternaryDoc else ternaryDoc;
+        ]
+      else
       let (ifs, elseExpr) = ParsetreeViewer.collectIfExpressions e in
       let ifDocs = Doc.join ~sep:Doc.space (
         List.mapi (fun i (ifExpr, thenExpr) ->
@@ -8838,6 +8951,7 @@ module Printer = struct
         ]
       in
       Doc.concat [
+        printAttributes e.pexp_attributes;
         ifDocs;
         elseDoc;
       ]
@@ -8916,7 +9030,7 @@ module Printer = struct
     | Pexp_open (overrideFlag, longidentLoc, expr) ->
       printExpressionBlock ~braces:true e
     | Pexp_pack (modExpr) ->
-      Doc.concat [
+      Doc.group (Doc.concat [
         Doc.text "module(";
         Doc.indent (
           Doc.concat [
@@ -8926,7 +9040,7 @@ module Printer = struct
         );
         Doc.softLine;
         Doc.rparen;
-      ]
+      ])
     | Pexp_sequence _ ->
       printExpressionBlock ~braces:true e
     | Pexp_let _ ->
@@ -8935,6 +9049,10 @@ module Printer = struct
       let (attrsOnArrow, parameters, returnExpr) = ParsetreeViewer.funExpr e in
       let (uncurried, attrs) =
         ParsetreeViewer.processUncurriedAttribute attrsOnArrow
+      in
+      let (returnExpr, typConstraint) = match returnExpr.pexp_desc with
+      | Pexp_constraint (expr, typ) -> (expr, Some typ)
+      | _ -> (returnExpr, None)
       in
       let parametersDoc = printExprFunParameters ~uncurried parameters in
       let returnExprDoc =
@@ -8969,6 +9087,10 @@ module Printer = struct
               ]
           )
       in
+      let typConstraintDoc = match typConstraint with
+      | Some(typ) -> Doc.concat [Doc.text ": "; printTypExpr typ]
+      | _ -> Doc.nil
+      in
       let attrs = match attrs with
       | [] -> Doc.nil
       | attrs -> Doc.concat [
@@ -8980,6 +9102,7 @@ module Printer = struct
         Doc.concat [
           attrs;
           parametersDoc;
+          typConstraintDoc;
           Doc.text " =>";
           returnExprDoc;
         ]
@@ -9004,6 +9127,7 @@ module Printer = struct
     | Pexp_apply _
     | Pexp_fun _
     | Pexp_setfield _
+    | Pexp_ifthenelse _
     (* | Pexp_match _ *)
     -> true
     | _ -> false
@@ -9019,6 +9143,10 @@ module Printer = struct
       )
     | _ -> printedExpression
     end
+
+  and printTernaryOperand expr =
+    let doc = printExpression expr in
+    if Parens.ternaryOperand expr then addParens doc else doc
 
   and printSetFieldExpr attrs lhs longidentLoc rhs =
     let rhsDoc =
@@ -9463,18 +9591,17 @@ module Printer = struct
     (* let f = (~greeting, ~from as hometown, ~x=?) => () *)
     | parameters ->
       let lparen = if uncurried then Doc.text "(. " else Doc.lparen in
+      let shouldHug = ParsetreeViewer.parametersShouldHug parameters in
+      let printedParamaters = Doc.concat [
+        if shouldHug then Doc.nil else Doc.softLine;
+        Doc.join ~sep:(Doc.concat [Doc.comma; Doc.line])
+          (List.map printExpFunParameter parameters)
+      ] in
       Doc.group (
         Doc.concat [
           lparen;
-          Doc.indent (
-            Doc.concat [
-              Doc.softLine;
-              Doc.join ~sep:(Doc.concat [Doc.comma; Doc.line])
-                (List.map printExpFunParameter parameters)
-            ]
-          );
-          Doc.trailingComma;
-          Doc.softLine;
+          if shouldHug then printedParamaters else Doc.indent (printedParamaters);
+          if shouldHug then Doc.nil else Doc.concat [Doc.trailingComma; Doc.softLine];
           Doc.rparen;
         ]
       )
@@ -9520,13 +9647,15 @@ module Printer = struct
     | (Asttypes.Optional _, None) -> Doc.text "=?"
     | _ -> Doc.nil
     in
-    Doc.concat [
-      uncurried;
-      attrs;
-      labelWithPattern;
-      defaultExprDoc;
-      optionalLabelSuffix;
-    ]
+    Doc.group (
+      Doc.concat [
+        uncurried;
+        attrs;
+        labelWithPattern;
+        defaultExprDoc;
+        optionalLabelSuffix;
+      ]
+    )
 
   (*
    * let x = {

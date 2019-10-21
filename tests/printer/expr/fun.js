@@ -180,3 +180,33 @@ let make = (
     };
   <input onChange={_ => doSomething()} />;
 };
+
+let add = (a, b): int => a + b
+
+let add = (a, b): {"field1": int, "field2": string, "field3": int, "field4": int}  => a + b
+let add = (superLongParameterName1, superLongParameterName2, superLongParameterName3): {"field1": int, "field2": string, "field3": int, "field4": int}  => a + b
+
+let add = (superLongParameterName1, superLongParameterName2, superLongParameterName3): {
+  "field1": int,
+  "field2": string,
+  "field3": int,
+  "field4": int,
+  "field5": int,
+  }  => a + b
+
+let add = (/a, b/): /int, string, int, int/  => a + b
+let add = (/a, b/): /intWithSuperLongName, stringWithSuperLongName, intWithSuperLongName, intWithSuperLongName/  => a + b
+let add = (/superLongParameterName, bsuperLongParameterName, superLongParameterName, superLongParameterName/): /intWithSuperLongName, stringWithSuperLongName, intWithSuperLongName, intWithSuperLongName/  => a + b
+
+let add = (list(a, b)): list<intWithSuperLongName, stringWithSuperLongName, intWithSuperLongName, intWithSuperLongName>  => a + b
+let add = (list(superLongParameterName, bsuperLongParameterName, superLongParameterName, superLongParameterName)): list<intWithSuperLongName, stringWithSuperLongName, intWithSuperLongName, intWithSuperLongName>  => a + b
+
+let add = ([a, b]): array<intWithSuperLongName, stringWithSuperLongName, intWithSuperLongName, intWithSuperLongName>  => a + b
+let add = ([superLongParameterName, bsuperLongParameterName, superLongParameterName, superLongParameterName]): array<intWithSuperLongName, stringWithSuperLongName, intWithSuperLongName, intWithSuperLongName>  => a + b
+
+let add = ({x: superLongParameterName, y: superLongParameterName, z: superLongParameterName}) => x + y + z
+let add = ({x as superLongParameterName, y as superLongParameterName, z as superLongParameterName}) => x + y + z
+
+
+let add = (Color(superLongParameterName, superLongParameterName, superLongParameterNameeeeeee)) => x + y + z
+let add = (Color(superLongParameterName, superLongParameterName, superLongParameterNameeeee)) : color<superLongTypeIdent, superLongType2, anotherLongOne, woooooooooooooooooooooooooooooooooooow> => x + y + z
