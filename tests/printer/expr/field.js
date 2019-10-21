@@ -54,4 +54,6 @@ let x = (@attr expr).x
 let x = (a + b).x
 
 let x = @attr user.name
+let x = (isLeft ? node.left : node.right).color
+let x = (@attrOnTernary (isLeft ? node.left : node.right)).color
 

@@ -7371,9 +7371,12 @@ end = struct
       false
 
   let hasAttributes attrs =
+    let attrs = List.filter (fun attr -> match attr with
+      | ({Location.txt = "bs" | "ns.ternary"}, _) -> false
+      | _ -> true
+    ) attrs in
     match attrs with
-    | []
-    | [({Location.txt = "bs"}, _)] -> false
+    | [] -> false
     | _ -> true
 
   let isArrayAccess expr = match expr.pexp_desc with
@@ -7469,16 +7472,8 @@ end = struct
         {ptyp_desc = Ptyp_package _}
       )} -> false
     | {pexp_desc = Pexp_constraint _ | Pexp_tuple _ | Pexp_fun _ | Pexp_function _ | Pexp_newtype _} -> true
-    (* | {pexp_attributes = attrs} when isLhs && begin *)
-      (* let (uncurried, attrs) = *)
-        (* ParsetreeViewer.processUncurriedAttribute attrs *)
-      (* in *)
-      (* begin match attrs with *)
-      (* | _::_ -> true *)
-      (* | [] -> false *)
-      (* end *)
-    (* end -> true *)
     | expr when ParsetreeViewer.isBinaryExpression expr -> true
+    | expr when ParsetreeViewer.isTernaryExpr expr -> true
     | {pexp_desc =
           Pexp_lazy _
         | Pexp_assert _
@@ -8377,7 +8372,8 @@ module Printer = struct
         | {
             pexp_attributes = [({Location.txt="ns.ternary"}, _)];
             pexp_desc = Pexp_ifthenelse (ifExpr, _, _)
-          } when not (ParsetreeViewer.isBinaryExpression ifExpr) -> false
+          }  ->
+          ParsetreeViewer.isBinaryExpression ifExpr || ParsetreeViewer.hasAttributes ifExpr.pexp_attributes
         | e ->
           ParsetreeViewer.hasAttributes e.pexp_attributes ||
           ParsetreeViewer.isArrayAccess e
@@ -9247,7 +9243,7 @@ module Printer = struct
               let right =
                 let doc = printExpression {right with pexp_attributes =
                   List.filter (fun attr -> match attr with
-                    | ({Location.txt="bs"}, _) -> true
+                    | ({Location.txt="bs" | "ns.ternary"}, _) -> true
                     | _ -> false
                   ) right.pexp_attributes
                     } in
@@ -9264,7 +9260,11 @@ module Printer = struct
                   | Pexp_setfield _
                   | Pexp_constraint _ -> true
                   | _ -> false) ||
-                  (right.pexp_attributes <> [] && ParsetreeViewer.isBinaryExpression right)
+
+                  (right.pexp_attributes <> [] && (
+                    ParsetreeViewer.isBinaryExpression right ||
+                    ParsetreeViewer.isTernaryExpr right
+                  ))
                 then
                   Doc.concat [Doc.lparen; doc; Doc.rparen]
                 else
@@ -9273,6 +9273,7 @@ module Printer = struct
                 Doc.concat [printAttributes (List.filter
                   (fun attr -> match attr with
                     | ({Location.txt="bs"}, _) -> false
+                    | ({Location.txt="ns.ternary"}, _) -> false
                     | _ -> true
                   )
                 right.pexp_attributes); doc]
@@ -9285,7 +9286,9 @@ module Printer = struct
             else
               let doc = printExpression {expr with pexp_attributes = []} in
               let doc = if Parens.subBinaryExprOperand parentOperator operator ||
-                (expr.pexp_attributes <> [] && ParsetreeViewer.isBinaryExpression expr) then
+                (expr.pexp_attributes <> [] &&
+                  (ParsetreeViewer.isBinaryExpression expr ||
+                ParsetreeViewer.isTernaryExpr expr)) then
                 Doc.concat [Doc.lparen; doc; Doc.rparen]
               else doc
               in Doc.concat [

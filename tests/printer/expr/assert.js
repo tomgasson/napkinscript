@@ -53,3 +53,5 @@ assert invariant["fatal"]
 assert invariants[0]
 
 assert address["street"] = "Brusselsestraat"
+
+assert (true ? 0 : 1)

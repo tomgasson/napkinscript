@@ -91,6 +91,8 @@ let x =
     @attr superLongIdentiiiiiiiifffffffiiiiieeeeeeeer,
   ]
 
+let x = [biggerThanZero ? 1 : 0, biggerThanZero ? 1 : 0]
+
 "
 `;
 
@@ -181,6 +183,8 @@ assert invariant[\\"fatal\\"]
 assert invariants[0]
 
 assert address[\\"street\\"] = \\"Brusselsestraat\\"
+
+assert (true ? 0 : 1)
 
 "
 `;
@@ -629,6 +633,9 @@ let x = a && truths[0] && truths[1]
 let () = node.left := value |> process |> node.right = value |> process
 let () = (node.left := value |> process) |> node.right = value |> process
 
+let x = (true ? 0 : 1) + (false ? 1 : 0)
+let x = (true ? 0 : 1) + (false ? 1 : 0) + (false ? 1 : 0)
+
 "
 `;
 
@@ -688,6 +695,8 @@ let x = (@attr 10: int)
 
 let x = (street[\\"number\\"]: int)
 let x = (streets[0]: int)
+
+let x = (true ? 1 : 0: int)
 
 "
 `;
@@ -879,6 +888,8 @@ let x = (@attr expr).x
 let x = (a + b).x
 
 let x = @attr user.name
+let x = (isLeft ? node.left : node.right).color
+let x = (@attrOnTernary (isLeft ? node.left : node.right)).color
 
 "
 `;
@@ -1368,6 +1379,8 @@ let x = lazy streets[0]
 
 lazy address[\\"street\\"] = \\"Brusselsestraat\\"
 
+lazy (true ? 0 : 1)
+
 "
 `;
 
@@ -1528,6 +1541,7 @@ user.name = steve[\\"name\\"]
 user.address = addresses[2]
 
 (currentNode.parent->castNotOption).color = Black
+(isLeft ? node.left : node.right).color = Black
 
 "
 `;
@@ -1990,6 +2004,8 @@ let x = -{
   sideEffect()
   generateNumber()
 }
+
+-(true ? 0 : 1)
 
 "
 `;

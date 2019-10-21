@@ -62,3 +62,5 @@ let x = -{
   sideEffect()
   generateNumber()
 }
+
+-(true ? 0 : 1)

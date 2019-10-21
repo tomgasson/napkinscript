@@ -18,3 +18,5 @@ let x = @attr [
   @attr superLongIdentiiiiiiiifffffffiiiiieeeeeeeer,
   @attr superLongIdentiiiiiiiifffffffiiiiieeeeeeeer,
 ]
+
+let x = [biggerThanZero ? 1 : 0, biggerThanZero ? 1 : 0]

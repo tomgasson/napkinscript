@@ -53,3 +53,4 @@ let x = lazy streets[0]
 
 lazy (address["street"] = "Brusselsestraat")
 
+lazy (true ? 0 : 1)

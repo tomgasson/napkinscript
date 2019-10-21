@@ -12,3 +12,4 @@ user.name = steve["name"]
 user.address = addresses[2]
 
 (currentNode.parent->castNotOption).color = Black
+(isLeft ? node.left : node.right).color = Black

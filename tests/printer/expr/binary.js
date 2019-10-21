@@ -266,3 +266,6 @@ let x = a && truths[0] && truths[1]
 
 let () = node.left := value |> process |> node.right = value |> process
 let () = (node.left := value |> process) |> node.right = value |> process
+
+let x = (true ? 0 : 1) + (false ? 1 : 0)
+let x = (true ? 0 : 1) + (false ? 1 : 0) +  (false ? 1 : 0)
