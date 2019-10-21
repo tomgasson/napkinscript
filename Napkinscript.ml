@@ -9153,9 +9153,13 @@ module Printer = struct
       let doc = printExpression rhs in
       if Parens.setFieldExprRhs rhs then addParens doc else doc
     in
+    let lhsDoc =
+      let doc = printExpression lhs in
+      if Parens.fieldExpr lhs then addParens doc else doc
+    in
     let shouldIndent = ParsetreeViewer.isBinaryExpression rhs in
     let doc = Doc.concat [
-      printExpression lhs;
+      lhsDoc;
       Doc.dot;
       printLongident longidentLoc.txt;
       Doc.text " =";

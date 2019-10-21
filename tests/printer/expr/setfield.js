@@ -10,3 +10,5 @@ let () =
 
 user.name = steve["name"]
 user.address = addresses[2]
+
+(currentNode.parent->castNotOption).color = Black
