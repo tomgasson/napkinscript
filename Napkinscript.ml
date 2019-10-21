@@ -10013,6 +10013,42 @@ end
   (* print_newline(); *)
   (* print_newline() *)
 
+
+(* let () = *)
+  (* let filename = "RedBlackTree.ml" in *)
+  (* let src = IO.readFile filename in *)
+  (* let p = Parser.make src filename in *)
+  (* let ast = NapkinScript.parseStructure p in *)
+  (* let benchmark = Benchmark.make ~name:"RedBlackTree Napkinscript printer" ~f:(fun _ -> *)
+    (* let txt = Printer.printImplementation ast in *)
+    (* () *)
+  (* ) () *)
+  (* in *)
+  (* let () = Benchmark.launch benchmark in *)
+  (* Benchmark.report benchmark; *)
+  (* print_newline(); *)
+  (* print_newline() *)
+
+
+
+(* let () = *)
+  (* let filename = "RedBlackTree.re" in *)
+  (* let src = IO.readFile filename in *)
+  (* let lexbuf = Lexing.from_string src in *)
+  (* Location.init lexbuf filename; *)
+  (* let astAndComments = Refmt_main3.Reason_toolchain.RE.implementation_with_comments lexbuf in *)
+  (* let benchmark = Benchmark.make ~name:"RedBlackTree Reason printer" ~f:(fun _ -> *)
+    (* Refmt_main3.Reason_toolchain.RE.print_implementation_with_comments *)
+    (* Format.str_formatter astAndComments; *)
+    (* let syntax = Format.flush_str_formatter () in *)
+    (* () *)
+  (* ) () *)
+  (* in *)
+  (* let () = Benchmark.launch benchmark in *)
+  (* Benchmark.report benchmark; *)
+  (* print_newline(); *)
+  (* print_newline() *)
+
 let () =
   Clflags.parse ();
   List.iter (fun filename ->
