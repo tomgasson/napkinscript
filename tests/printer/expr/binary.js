@@ -263,3 +263,6 @@ let x = a && module(Foo: Bool) && module(Bar: Bool)
 
 let x = a && truths[0]
 let x = a && truths[0] && truths[1]
+
+let () = node.left := value |> process |> node.right = value |> process
+let () = (node.left := value |> process) |> node.right = value |> process

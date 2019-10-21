@@ -51,3 +51,5 @@ let x = @attr assert false
 
 assert invariant["fatal"]
 assert invariants[0]
+
+assert address["street"] = "Brusselsestraat"

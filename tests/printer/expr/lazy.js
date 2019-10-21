@@ -50,3 +50,6 @@ let x = @attr lazy x
 
 let x = lazy street["number"]
 let x = lazy streets[0]
+
+lazy (address["street"] = "Brusselsestraat")
+

@@ -9167,6 +9167,37 @@ module Printer = struct
           | Pexp_setfield (lhs, field, rhs) ->
             let doc = printSetFieldExpr expr.pexp_attributes lhs field rhs in
             if isLhs then addParens doc else doc
+          | Pexp_apply(
+              {pexp_desc = Pexp_ident {txt = Longident.Lident "#="}},
+              [(Nolabel, lhs); (Nolabel, rhs)]
+            ) ->
+            let rhsDoc = printExpression rhs in
+            let lhsDoc = printExpression lhs in
+            (* TODO: unify indentation of "=" *)
+            let shouldIndent = ParsetreeViewer.isBinaryExpression rhs in
+            let doc = Doc.group(
+              Doc.concat [
+                lhsDoc;
+                Doc.text " =";
+                if shouldIndent then Doc.group (
+                  Doc.indent (
+                    (Doc.concat [Doc.line; rhsDoc])
+                  )
+                ) else
+                  Doc.concat [Doc.space; rhsDoc]
+              ]
+            ) in
+            let doc = match expr.pexp_attributes with
+            | [] -> doc
+            | attrs ->
+              Doc.group (
+                Doc.concat [
+                  printAttributes attrs;
+                  doc
+                ]
+              )
+            in
+            if isLhs then addParens doc else doc
           | _ ->
             let doc = printExpression expr in
             if Parens.binaryExprOperand ~isLhs expr parentOperator then
@@ -9240,7 +9271,35 @@ module Printer = struct
           member;
           Doc.rbracket;
         ])
-
+    | Pexp_apply (
+        {pexp_desc = Pexp_ident {txt = Longident.Lident "#="}},
+        [Nolabel, lhs; Nolabel, rhs]
+      ) ->
+        let rhsDoc = printExpression rhs in
+        (* TODO: unify indentation of "=" *)
+        let shouldIndent = ParsetreeViewer.isBinaryExpression rhs in
+        let doc = Doc.group(
+          Doc.concat [
+            printExpression lhs;
+            Doc.text " =";
+            if shouldIndent then Doc.group (
+              Doc.indent (
+                (Doc.concat [Doc.line; rhsDoc])
+              )
+            ) else
+              Doc.concat [Doc.space; rhsDoc]
+          ]
+        ) in
+        begin match expr.pexp_attributes with
+        | [] -> doc
+        | attrs ->
+          Doc.group (
+            Doc.concat [
+              printAttributes attrs;
+              doc
+            ]
+          )
+        end
     | Pexp_apply (
         {pexp_desc = Pexp_ident {txt = Longident.Ldot (Lident "Array", "get")}},
         [Nolabel, parentExpr; Nolabel, memberExpr]
