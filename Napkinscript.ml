@@ -3289,6 +3289,12 @@ Solution: you need to pull out each field you want explicitly."
     let startPos = p.Parser.startPos in
     let attrs = parseAttributes p in
     let pat = match p.Parser.token with
+    | (True | False) as token ->
+      let endPos = p.endPos in
+      Parser.next p;
+      let loc = mkLoc startPos endPos in
+      Ast_helper.Pat.construct ~loc
+        (Location.mkloc (Longident.Lident (Token.toString token)) loc) None
     | Int _ | String _ | Float _ ->
       let endPos = p.endPos in
       let c = parseConstant p in
@@ -7196,6 +7202,9 @@ module ParsetreeViewer : sig
     (Parsetree.attributes * Asttypes.arg_label * Parsetree.expression option * Parsetree.pattern ) list -> bool
 
   val filterTernaryAttributes: Parsetree.attributes -> Parsetree.attributes
+
+  val isJsxExpression: Parsetree.expression -> bool
+  val hasJsxAttribute: Parsetree.attributes -> bool
 end = struct
   open Parsetree
 
@@ -7412,6 +7421,17 @@ end = struct
       |({Location.txt="ns.ternary"},_) -> false
       | _ -> true
     ) attrs
+
+  let isJsxExpression expr = match expr with
+    | {
+        pexp_attributes = [({txt = "JSX"}, _)];
+        pexp_desc = Pexp_apply _
+      } -> true
+    | _ -> false
+
+  let hasJsxAttribute attributes = match attributes with
+    | ({Location.txt = "JSX"},_)::_ -> true
+    | _ -> false
 end
 
 module Parens: sig
@@ -7430,6 +7450,9 @@ module Parens: sig
   val setFieldExprRhs: Parsetree.expression -> bool
 
   val ternaryOperand: Parsetree.expression -> bool
+
+  val jsxPropExpr: Parsetree.expression -> bool
+  val jsxChildExpr: Parsetree.expression -> bool
 end = struct
   let unaryExprOperand expr = match expr with
     | {Parsetree.pexp_attributes = attrs} when
@@ -7605,6 +7628,52 @@ end = struct
       | _ -> false
       end
     | _ -> false
+
+
+  let startsWithMinus txt =
+    let len = String.length txt in
+    if len == 0 then
+      false
+    else
+      let s = String.get txt 0 in
+      s = '-'
+
+
+  let jsxPropExpr expr = match expr with
+    | {Parsetree.pexp_desc =
+        Pexp_constant (Pconst_integer (x, _) | Pconst_float (x, _));
+        pexp_attributes = []}
+      when startsWithMinus x -> true
+    | {Parsetree.pexp_desc =
+        Pexp_ident _ | Pexp_constant _ | Pexp_field _ | Pexp_construct _ |
+        Pexp_array _ | Pexp_pack _ | Pexp_record _ | Pexp_extension _ |
+        Pexp_letmodule _ | Pexp_letexception _ | Pexp_open _ | Pexp_sequence _ |
+        Pexp_let _ | Pexp_tuple _;
+       pexp_attributes = []
+      } -> false
+    | {Parsetree.pexp_desc = Pexp_constraint (
+        {pexp_desc = Pexp_pack _},
+        {ptyp_desc = Ptyp_package _}
+    ); pexp_attributes = []} -> false
+    | _ -> true
+
+  let jsxChildExpr expr = match expr with
+    | {Parsetree.pexp_desc = Pexp_constant (Pconst_integer (x, _) | Pconst_float (x, _));
+       pexp_attributes = []
+      } when startsWithMinus x -> true
+    | {Parsetree.pexp_desc =
+        Pexp_ident _ | Pexp_constant _ | Pexp_field _ | Pexp_construct _ |
+        Pexp_array _ | Pexp_pack _ | Pexp_record _ | Pexp_extension _ |
+        Pexp_letmodule _ | Pexp_letexception _ | Pexp_open _ | Pexp_sequence _ |
+        Pexp_let _;
+        pexp_attributes = []
+      } -> false
+    | {Parsetree.pexp_desc = Pexp_constraint (
+        {pexp_desc = Pexp_pack _},
+        {ptyp_desc = Ptyp_package _}
+       ); pexp_attributes = []} -> false
+    | expr when ParsetreeViewer.isJsxExpression expr -> false
+    | _ -> true
 end
 
 module Printer = struct
@@ -7631,6 +7700,15 @@ module Printer = struct
         );
         Doc.softLine;
         Doc.rparen;
+      ]
+    )
+
+  let addBraces doc =
+    Doc.group (
+      Doc.concat [
+        Doc.lbrace;
+        doc;
+        Doc.rbrace;
       ]
     )
 
@@ -7662,7 +7740,7 @@ module Printer = struct
     | Longident.Lident lident -> Doc.text lident
     | Longident.Ldot (lident, txt) as l ->
       let txts = Longident.flatten l in
-      Doc.join ~sep:(Doc.text ".") (List.map Doc.text txts)
+      Doc.join ~sep:Doc.dot (List.map Doc.text txts)
     | _ -> failwith "unsupported ident"
 
   let printConstant c = match c with
@@ -8380,6 +8458,7 @@ module Printer = struct
         )
       in
 			Doc.concat [
+        printAttributes ~loc:vb.pvb_loc vb.pvb_attributes;
 				header;
 				printPattern vb.pvb_pat;
 				Doc.text " =";
@@ -8698,6 +8777,8 @@ module Printer = struct
   and printExpression (e : Parsetree.expression) =
     let printedExpression = match e.pexp_desc with
     | Parsetree.Pexp_constant c -> printConstant c
+    | Pexp_construct _ when ParsetreeViewer.hasJsxAttribute e.pexp_attributes ->
+      printJsxFragment e
     | Pexp_construct ({txt = Longident.Lident "()"}, _) -> Doc.text "()"
     | Pexp_construct ({txt = Longident.Lident "[]"}, _) -> Doc.text "list()"
     | Pexp_construct ({txt = Longident.Lident "::"}, _) ->
@@ -8980,19 +9061,21 @@ module Printer = struct
         {pexp_desc = Pexp_pack modExpr},
         {ptyp_desc = Ptyp_package packageType}
       ) ->
-      Doc.concat [
-        Doc.text "module(";
-        Doc.indent (
-          Doc.concat [
-            Doc.softLine;
-            printModExpr modExpr;
-            Doc.text ": ";
-            printPackageType ~printModuleKeywordAndParens:false packageType;
-          ]
-        );
-        Doc.softLine;
-        Doc.rparen;
-      ]
+      Doc.group (
+        Doc.concat [
+          Doc.text "module(";
+          Doc.indent (
+            Doc.concat [
+              Doc.softLine;
+              printModExpr modExpr;
+              Doc.text ": ";
+              printPackageType ~printModuleKeywordAndParens:false packageType;
+            ]
+          );
+          Doc.softLine;
+          Doc.rparen;
+        ]
+      )
 
     | Pexp_constraint (expr, typ) ->
       Doc.concat [
@@ -9123,9 +9206,8 @@ module Printer = struct
     | Pexp_apply _
     | Pexp_fun _
     | Pexp_setfield _
-    | Pexp_ifthenelse _
-    (* | Pexp_match _ *)
-    -> true
+    | Pexp_ifthenelse _ -> true
+    | Pexp_construct _ when ParsetreeViewer.hasJsxAttribute e.pexp_attributes -> true
     | _ -> false
     in
     begin match e.pexp_attributes with
@@ -9464,18 +9546,165 @@ module Printer = struct
           member;
           Doc.rbracket;
         ])
+    (* TODO: cleanup, are those branches even remotely performant? *)
+    | Pexp_apply (
+        {pexp_desc = Pexp_ident {txt = lident}},
+        args
+      ) when ParsetreeViewer.isJsxExpression expr ->
+      printJsxExpression lident args
     | Pexp_apply (callExpr, args) ->
       let (uncurried, attrs) =
         ParsetreeViewer.processUncurriedAttribute expr.pexp_attributes
       in
-        let callExprDoc = printExpression callExpr in
-        let argsDoc = printArguments ~uncurried args in
-        Doc.concat [
-          printAttributes attrs;
-          callExprDoc;
-          argsDoc;
-        ]
+      let callExprDoc = printExpression callExpr in
+      let argsDoc = printArguments ~uncurried args in
+      Doc.concat [
+        printAttributes attrs;
+        callExprDoc;
+        argsDoc;
+      ]
     | _ -> assert false
+
+  and printJsxExpression lident args =
+    let name = printJsxName lident in
+    let (formattedProps, children) = formatJsxProps args in
+    (* <div className="test" /> *)
+    let isSelfClosing = match children with | [] -> true | _ -> false in
+    Doc.group (
+      Doc.concat [
+        Doc.group (
+          Doc.concat [
+            Doc.lessThan;
+            name;
+            formattedProps;
+            if isSelfClosing then Doc.concat [Doc.line; Doc.text "/>"] else Doc.nil
+          ]
+        );
+        if isSelfClosing then Doc.nil
+        else
+          Doc.concat [
+            Doc.greaterThan;
+            Doc.indent (
+              Doc.concat [
+                Doc.line;
+                printJsxChildren children;
+              ]
+            );
+            Doc.line;
+            Doc.text "</";
+            name;
+            Doc.greaterThan;
+          ]
+      ]
+    )
+
+  and printJsxFragment expr =
+    let opening = Doc.text "<>" in
+    let closing = Doc.text "</>" in
+    let (children, _) = ParsetreeViewer.collectListExpressions expr in
+    Doc.group (
+      Doc.concat [
+        opening;
+        begin match children with
+        | [] -> Doc.nil
+        | children ->
+          Doc.indent (
+            Doc.concat [
+              Doc.line;
+              printJsxChildren children;
+            ]
+          )
+        end;
+        Doc.line;
+        closing;
+      ]
+    )
+
+  and printJsxChildren (children: Parsetree.expression list) =
+    Doc.group (
+      Doc.join ~sep:Doc.line (
+        List.map (fun expr ->
+          let exprDoc = printExpression expr in
+          if Parens.jsxChildExpr expr then addBraces exprDoc else exprDoc
+        ) children
+      )
+    )
+
+  and formatJsxProps args =
+    let rec loop props args =
+      match args with
+      | [] -> (Doc.nil, [])
+      | [
+          (Asttypes.Labelled "children", children);
+          (
+            Asttypes.Nolabel,
+            {Parsetree.pexp_desc = Pexp_construct ({txt = Longident.Lident "()"}, None)}
+          )
+        ] ->
+        let formattedProps = Doc.indent (
+          match props with
+          | [] -> Doc.nil
+          | props ->
+            Doc.concat [
+              Doc.line;
+              Doc.group (
+                Doc.join ~sep:Doc.line (props |> List.rev)
+              )
+            ]
+        ) in
+        let (children, _) = ParsetreeViewer.collectListExpressions children in
+        (formattedProps, children)
+      | arg::args ->
+        let propDoc = formatJsxProp arg in
+        loop (propDoc::props) args
+    in
+    loop [] args
+
+  and formatJsxProp arg =
+    match arg with
+    | (
+        (Asttypes.Labelled lblTxt | Optional lblTxt) as lbl,
+        {
+          Parsetree.pexp_attributes = [];
+          pexp_desc = Pexp_ident {txt = Longident.Lident ident}
+        }
+      ) when lblTxt = ident (* jsx punning *) ->
+
+      begin match lbl with
+      | Nolabel -> Doc.nil
+      | Labelled lbl -> Doc.text lbl
+      | Optional lbl -> Doc.text ("?" ^ lbl)
+      end
+    | (lbl, expr) ->
+      let lblDoc = match lbl with
+      | Asttypes.Labelled lbl -> Doc.text (lbl ^ "=")
+      | Asttypes.Optional lbl -> Doc.text (lbl ^ "=?")
+      | Nolabel -> Doc.nil
+      in
+      let exprDoc = printExpression expr in
+      Doc.concat [
+        lblDoc;
+        if Parens.jsxPropExpr expr then addBraces exprDoc else exprDoc;
+      ]
+
+  (* div -> div.
+   * Navabar.createElement -> Navbar
+   * Staff.Users.createElement -> Staff.Users *)
+  and printJsxName lident =
+    let rec flatten acc lident = match lident with
+    | Longident.Lident txt -> txt::acc
+    | Ldot (lident, txt) ->
+      let acc = if txt = "createElement" then acc else txt::acc in
+      flatten acc lident
+    | _ -> acc
+    in
+    match lident with
+    | Longident.Lident txt -> Doc.text txt
+    | _ as lident ->
+      let segments = flatten [] lident in
+      Doc.join ~sep:Doc.dot (List.map Doc.text segments)
+
+
 
 	and printArguments ~uncurried (args : (Asttypes.arg_label * Parsetree.expression) list) =
 		match args with

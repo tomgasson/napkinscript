@@ -86,3 +86,8 @@ for ((Colour.Rgba(r, g, b) : Rgb.t) in x to y) { () }
 for Point({x, y, z}) in x to y { () }
 for (Point({x, y, z}) in x to y) { () }
 for (Point({x, y, z}) as p in x to y) { () }
+
+switch truth {
+| true => Js.log("true")
+| false => Js.log("false")
+}
