@@ -2677,7 +2677,7 @@ Solution: you need to pull out each field you want explicitly."
     | TermParameter of
         (bool * Parsetree.attributes * Asttypes.arg_label * Parsetree.expression option *
         Parsetree.pattern * Lexing.position)
-    | TypeParameter of (string Location.loc list * Lexing.position)
+    | TypeParameter of (bool * Parsetree.attributes * string Location.loc list * Lexing.position)
 
   type recordPatternItem =
     | PatUnderscore
@@ -2938,10 +2938,11 @@ Solution: you need to pull out each field you want explicitly."
     | [] -> ""
     | ident::_ -> ident
 
-  let makeNewtypes ~loc newtypes exp =
-    List.fold_right (fun newtype exp ->
+  let makeNewtypes ~attrs ~loc newtypes exp =
+    let expr = List.fold_right (fun newtype exp ->
       Ast_helper.Exp.mk ~loc (Pexp_newtype (newtype, exp))
     ) newtypes exp
+    in {expr with pexp_attributes = attrs}
 
   (* locally abstract types syntax sugar
    * Transforms
@@ -2950,7 +2951,7 @@ Solution: you need to pull out each field you want explicitly."
    *  let f = (type t u v. foo : list</t, u, v/>) => ...
    *)
   let wrap_type_annotation ~loc newtypes core_type body =
-    let exp = makeNewtypes ~loc newtypes
+    let exp = makeNewtypes ~attrs:[] ~loc newtypes
       (Ast_helper.Exp.constraint_ ~loc body core_type)
     in
     let typ = Ast_helper.Typ.poly ~loc newtypes
@@ -3647,8 +3648,9 @@ Solution: you need to pull out each field you want explicitly."
         | TermParameter (uncurried, attrs, lbl, defaultExpr, pat, startPos) ->
           let attrs = if uncurried then uncurryAttr::attrs else attrs in
           Ast_helper.Exp.fun_ ~loc:(mkLoc startPos endPos) ~attrs lbl defaultExpr pat expr
-        | TypeParameter (newtypes, startPos) ->
-          makeNewtypes ~loc:(mkLoc startPos endPos) newtypes expr
+        | TypeParameter (uncurried, attrs, newtypes, startPos) ->
+          let attrs = if uncurried then uncurryAttr::attrs else attrs in
+          makeNewtypes ~attrs ~loc:(mkLoc startPos endPos) newtypes expr
       ) parameters body
     in
     {arrowExpr with pexp_loc = {arrowExpr.pexp_loc with loc_start = startPos}}
@@ -3674,11 +3676,6 @@ Solution: you need to pull out each field you want explicitly."
    *)
   and parseParameter p =
     let startPos = p.Parser.startPos in
-    if p.Parser.token = Typ then (
-      Parser.next p;
-      let lidents = parseLidentList p in
-      TypeParameter (lidents, startPos)
-    ) else (
     let uncurried = Parser.optional p Token.Dot in
     (* two scenarios:
      *   attrs ~lbl ...
@@ -3687,6 +3684,11 @@ Solution: you need to pull out each field you want explicitly."
      * Otherwise it's part of the pattern
      *  *)
     let attrs = parseAttributes p in
+    if p.Parser.token = Typ then (
+      Parser.next p;
+      let lidents = parseLidentList p in
+      TypeParameter (uncurried, attrs, lidents, startPos)
+    ) else (
     let (attrs, lbl, pat) = match p.Parser.token with
     | Tilde ->
       Parser.next p;
@@ -7267,11 +7269,31 @@ end = struct
     collect [] expr
 
   let funExpr expr =
+    (* Turns (type t, type u, type z) into "type t u z" *)
+    let rec collectNewTypes acc returnExpr =
+      match returnExpr with
+      | {pexp_desc = Pexp_newtype (stringLoc, returnExpr); pexp_attributes = []} ->
+        collectNewTypes (stringLoc.txt::acc) returnExpr
+      | returnExpr ->
+        let txt = List.fold_right (fun curr acc -> acc ^ " " ^ curr) acc "type" in
+        (txt, returnExpr)
+    in
+    (* For simplicity reason Pexp_newtype gets converted to a Nolabel parameter,
+     * otherwise this function would need to return a variant:
+     * | NormalParamater(...)
+     * | NewType(...)
+     * This complicates printing with an extra variant/boxing/allocation for a code-path
+     * that is not often used. Lets just keep it simple for now *)
     let rec collect attrsBefore acc expr = match expr with
     | {pexp_desc = Pexp_fun (lbl, defaultExpr, pattern, returnExpr); pexp_attributes = []} ->
       let parameter = ([], lbl, defaultExpr, pattern) in
       collect attrsBefore (parameter::acc) returnExpr
-    | {pexp_desc = Pexp_fun (lbl, defaultExpr, pattern, returnExpr); pexp_attributes = [({txt ="bs"}, _)] as attrs} ->
+    | {pexp_desc = Pexp_newtype (stringLoc, rest); pexp_attributes = attrs} ->
+      let (txt, returnExpr) = collectNewTypes [stringLoc.txt] rest in
+      let var = {stringLoc with txt = txt} in
+      let parameter = (attrs, Asttypes.Nolabel, None, Ast_helper.Pat.var var) in
+      collect attrsBefore (parameter::acc) returnExpr
+    | {pexp_desc = Pexp_fun (lbl, defaultExpr, pattern, returnExpr); pexp_attributes = [({txt = "bs"}, _)] as attrs} ->
       let parameter = (attrs, lbl, defaultExpr, pattern) in
       collect attrsBefore (parameter::acc) returnExpr
     | {
@@ -7286,6 +7308,8 @@ end = struct
     begin match expr with
     | {pexp_desc = Pexp_fun (Nolabel, defaultExpr, pattern, returnExpr); pexp_attributes = attrs} as expr ->
       collect attrs [] {expr with pexp_attributes = []}
+    (* | {pexp_desc = Pexp_newtype (_stringLoc, _rest); pexp_attributes = attrs} as expr -> *)
+      (* collect attrs [] {expr with pexp_attributes = []} *)
     | expr -> collect [] [] expr
     end
 
@@ -8452,7 +8476,8 @@ module Printer = struct
             pexp_desc = Pexp_ifthenelse (ifExpr, _, _)
           }  ->
           ParsetreeViewer.isBinaryExpression ifExpr || ParsetreeViewer.hasAttributes ifExpr.pexp_attributes
-        | e ->
+      | { pexp_desc = Pexp_newtype _} -> false
+      | e ->
           ParsetreeViewer.hasAttributes e.pexp_attributes ||
           ParsetreeViewer.isArrayAccess e
         )
@@ -9124,7 +9149,7 @@ module Printer = struct
       printExpressionBlock ~braces:true e
     | Pexp_let _ ->
       printExpressionBlock ~braces:true e
-    | Pexp_fun _ ->
+    | Pexp_fun _ | Pexp_newtype _ ->
       let (attrsOnArrow, parameters, returnExpr) = ParsetreeViewer.funExpr e in
       let (uncurried, attrs) =
         ParsetreeViewer.processUncurriedAttribute attrsOnArrow
@@ -9205,6 +9230,7 @@ module Printer = struct
     let shouldPrintItsOwnAttributes = match e.pexp_desc with
     | Pexp_apply _
     | Pexp_fun _
+    | Pexp_newtype _
     | Pexp_setfield _
     | Pexp_ifthenelse _ -> true
     | Pexp_construct _ when ParsetreeViewer.hasJsxAttribute e.pexp_attributes -> true
