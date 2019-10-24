@@ -248,8 +248,7 @@ let x =
     1
   } else {
     2
-  } +
-  if false {
+  } + if false {
     2
   } else {
     3
@@ -330,9 +329,9 @@ if (
 
 let truth =
   longEqualityExpression.someRecordField ==
-  wowThisDoesHaveToBePrettyLong.someRecordField &&
+    wowThisDoesHaveToBePrettyLong.someRecordField &&
     longEqualityExpression.someRecordField ==
-    wowThisDoesHaveToBePrettyLong.someRecordField
+      wowThisDoesHaveToBePrettyLong.someRecordField
 
 while (
   continuePrefix.contents &&
@@ -409,8 +408,7 @@ let x = a && x.y && g.h
 let x = a && true
 let x = a && true && true
 let x =
-  a &&
-  {
+  a && {
     let a = true
     let b = true
     a || b
@@ -421,8 +419,7 @@ let x =
     let a = true
     let b = true
     a || b
-  } &&
-  {
+  } && {
     let a = true
     let b = true
     a || b
@@ -461,8 +458,7 @@ let x =
   }
 
 let x =
-  a &&
-  try unsafe() catch {
+  a && try unsafe() catch {
   | Error => ()
   }
 
@@ -470,8 +466,7 @@ let x =
   a &&
   try unsafe() catch {
   | Error => ()
-  } &&
-  try unsafe() catch {
+  } && try unsafe() catch {
   | Error => ()
   }
 
@@ -494,8 +489,7 @@ let x = a && [a, b]
 let x = a && [a, b] && [c, d]
 
 let x =
-  a &&
-  if true {
+  a && if true {
     true
   } else {
     false
@@ -506,16 +500,14 @@ let x =
     true
   } else {
     false
-  } &&
-  if false {
+  } && if false {
     false
   } else {
     true
   }
 
 let x =
-  a &&
-  {
+  a && {
     sideEffect()
     do()
   }
@@ -524,37 +516,32 @@ let x =
   {
     sideEffect()
     do()
-  } &&
-  {
+  } && {
     sideEffect()
     do()
   }
 
 let x =
-  a &&
-  while true {
+  a && while true {
     do()
   }
 let x =
   a &&
   while true {
     do()
-  } &&
-  while true {
+  } && while true {
     do()
   }
 
 let x =
-  a &&
-  for i in 0 to 10 {
+  a && for i in 0 to 10 {
     true
   }
 let x =
   a &&
   for i in 0 to 10 {
     true
-  } &&
-  for i in 0 to 10 {
+  } && for i in 0 to 10 {
     false
   }
 
@@ -562,8 +549,7 @@ let x = a && (truth: bool)
 let x = a && (truth: bool) && (otherTruth: bool)
 
 let x =
-  a &&
-  {
+  a && {
     module L = Log
     L.log()
   }
@@ -572,15 +558,13 @@ let x =
   {
     module L = Log
     L.log()
-  } &&
-  {
+  } && {
     module L = Log
     L.log()
   }
 
 let x =
-  a &&
-  {
+  a && {
     exception Exit
     raise(Exit)
   }
@@ -589,8 +573,7 @@ let x =
   {
     exception Exit
     raise(Exit)
-  } &&
-  {
+  } && {
     exception Exit
     raise(Exit)
   }
@@ -602,8 +585,7 @@ let x = a && lazy false
 let x = a && lazy false && lazy true
 
 let x =
-  a &&
-  {
+  a && {
     open React
     killPerform()
   }
@@ -612,8 +594,7 @@ let x =
   {
     open React
     killPerform()
-  } &&
-  {
+  } && {
     open Dom
     regainPerform()
   }
@@ -635,6 +616,27 @@ let () = (node.left := value |> process) |> node.right = value |> process
 
 let x = (true ? 0 : 1) + (false ? 1 : 0)
 let x = (true ? 0 : 1) + (false ? 1 : 0) + (false ? 1 : 0)
+
+while (
+  oldIter.contents < oldLen &&
+    rbt.compare(. Js.Array2.unsafe_get(old, oldIter.contents), node.value)
+) {
+  disappear(. Js.Array2.unsafe_get(old, oldIter.contents))
+  oldIter.contents = oldIter.contents + 1
+}
+
+while (
+  oldIter.contents < oldLen &&
+    rbt.compare(. Js.Array2.unsafe_get(old, oldIter.contents), node.value) < 0
+) {
+  disappear(. Js.Array2.unsafe_get(old, oldIter.contents))
+  oldIter.contents = oldIter.contents + 1
+}
+
+let x =
+  oldIter.contents < oldLen &&
+    rbt.compare(Js.Array2.unsafe_get(old, oldIter.contents), node.value) <
+    veryLongIdentifier
 
 "
 `;
@@ -1294,9 +1296,9 @@ let x = address[\\"street\\"][\\"number\\"]
 let x = @attr address[\\"street\\"]
 
 longEqualityExpression[\\"someRecordField\\"] ==
-wowThisDoesHaveToBePrettyLong[\\"someRecordField\\"] &&
+  wowThisDoesHaveToBePrettyLong[\\"someRecordField\\"] &&
   longEqualityExpression[\\"someRecordField\\"] ==
-  wowThisDoesHaveToBePrettyLong[\\"someRecordField\\"]
+    wowThisDoesHaveToBePrettyLong[\\"someRecordField\\"]
 
 "
 `;

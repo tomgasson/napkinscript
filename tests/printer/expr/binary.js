@@ -269,3 +269,29 @@ let () = (node.left := value |> process) |> node.right = value |> process
 
 let x = (true ? 0 : 1) + (false ? 1 : 0)
 let x = (true ? 0 : 1) + (false ? 1 : 0) +  (false ? 1 : 0)
+
+while (
+  oldIter.contents < oldLen &&
+    rbt.compare(.
+      Js.Array2.unsafe_get(old, oldIter.contents),
+      node.value,
+    )
+) {
+  disappear(. Js.Array2.unsafe_get(old, oldIter.contents))
+  oldIter.contents = oldIter.contents + 1
+}
+
+ while (
+    oldIter.contents < oldLen &&
+      rbt.compare(.
+        Js.Array2.unsafe_get(old, oldIter.contents),
+        node.value,
+      ) < 0
+  ) {
+    disappear(. Js.Array2.unsafe_get(old, oldIter.contents))
+    oldIter.contents = oldIter.contents + 1
+  }
+
+let x =
+  oldIter.contents < oldLen &&
+  rbt.compare(Js.Array2.unsafe_get(old, oldIter.contents), node.value) < veryLongIdentifier;
