@@ -8647,7 +8647,7 @@ module Printer = struct
                 (List.map printPattern patterns)
             ])
           );
-          Doc.ifBreaks (Doc.text ",") Doc.nil;
+          (* Doc.ifBreaks (Doc.text ",") Doc.nil; *)
           Doc.softLine;
           Doc.text "/";
         ])
@@ -8672,22 +8672,28 @@ module Printer = struct
         Doc.text "list()"
     | Ppat_construct({txt = Longident.Lident "::"}, _) ->
       let (patterns, tail) = collectPatternsFromListConstruct [] p in
+      let shouldHug = match (patterns, tail) with
+      | ([pat],
+        {ppat_desc = Ppat_construct({txt = Longident.Lident "[]"}, _)}) when ParsetreeViewer.isHuggablePattern pat -> true
+      | _ -> false
+      in
+      let children = Doc.concat([
+        if shouldHug then Doc.nil else Doc.softLine;
+        Doc.join ~sep:(Doc.concat [Doc.text ","; Doc.line])
+          (List.map printPattern patterns);
+        begin match tail.Parsetree.ppat_desc with
+        | Ppat_construct({txt = Longident.Lident "[]"}, _) -> Doc.nil
+        | _ -> Doc.concat([Doc.text ","; Doc.line; Doc.text "..."; printPattern tail])
+        end;
+      ]) in
       Doc.group(
         Doc.concat([
           Doc.text "list(";
-          Doc.indent (
-            Doc.concat([
-              Doc.softLine;
-              Doc.join ~sep:(Doc.concat [Doc.text ","; Doc.line])
-                (List.map printPattern patterns);
-              begin match tail.Parsetree.ppat_desc with
-              | Ppat_construct({txt = Longident.Lident "[]"}, _) -> Doc.nil
-              | _ -> Doc.concat([Doc.text ","; Doc.line; Doc.text "..."; printPattern tail])
-              end;
-            ])
-          );
-          Doc.ifBreaks (Doc.text ",") Doc.nil;
-          Doc.softLine;
+          if shouldHug then children else Doc.concat [
+            Doc.indent children;
+            Doc.ifBreaks (Doc.text ",") Doc.nil;
+            Doc.softLine;
+          ];
           Doc.text ")";
         ])
       )
@@ -9833,7 +9839,6 @@ module Printer = struct
       ]
     )
 
-  (* TODO: guards *)
   and printCase (case: Parsetree.case) =
     let rhs = match case.pc_rhs.pexp_desc with
     | Pexp_let _
@@ -9844,17 +9849,28 @@ module Printer = struct
       printExpressionBlock ~braces:false case.pc_rhs
     | _ -> printExpression case.pc_rhs
     in
+    let guard = match case.pc_guard with
+    | None -> Doc.nil
+    | Some expr -> Doc.group (
+        Doc.concat [
+          Doc.line;
+          Doc.text "when ";
+          printExpression expr;
+        ]
+      )
+    in
     Doc.group (
       Doc.concat [
         Doc.text "| ";
-        printPattern case.pc_lhs;
-        Doc.text " =>";
         Doc.indent (
           Doc.concat [
+            printPattern case.pc_lhs;
+            guard;
+            Doc.text " =>";
             Doc.line;
             rhs;
           ]
-        )
+        );
       ]
     )
 

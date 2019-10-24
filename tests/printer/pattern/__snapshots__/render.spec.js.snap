@@ -156,7 +156,7 @@ let /a, b/ = 1
 let /
   aaaaaaaaaaaaaaaaaaaaaaaaaa,
   bbbbbbbbbbbbbbbbbbbbbbbbbb,
-  cccccccccccccccccccccccccc,
+  cccccccccccccccccccccccccc
 / = 1
 
 "

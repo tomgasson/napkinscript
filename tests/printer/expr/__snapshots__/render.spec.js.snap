@@ -1160,7 +1160,7 @@ let add = (/
   superLongParameterName,
   bsuperLongParameterName,
   superLongParameterName,
-  superLongParameterName,
+  superLongParameterName
 /): /
   intWithSuperLongName,
   stringWithSuperLongName,
