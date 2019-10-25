@@ -16,6 +16,7 @@ module Doc = struct
     | LineSuffix of t
     | LineBreak of lineStyle
     | Group of (bool (* should break *) * t)
+    | CustomLayout of t list
     (* | Cursor *)
 
   let nil = Nil
@@ -30,6 +31,7 @@ module Doc = struct
   let lineSuffix d = LineSuffix d
   let group d = Group(false, d)
   let breakableGroup ~forceBreak d = Group(forceBreak, d)
+  let customLayout gs = CustomLayout gs
   (* let cursor = Cursor *)
 
   let space = Text " "
@@ -71,6 +73,13 @@ module Doc = struct
       ) (false, []) children
       in
       (forceBreak, Concat (List.rev newChildren))
+    | CustomLayout children ->
+      let (forceBreak, newChildren) = List.fold_left (fun (forceBreak, newChildren) child ->
+        let (childForcesBreak, newChild) = walk child in
+        (forceBreak || childForcesBreak, newChild::newChildren)
+      ) (false, []) children
+      in
+      (forceBreak, CustomLayout (List.rev newChildren))
     in
     let (_, processedDoc) = walk doc in
     processedDoc
@@ -96,8 +105,8 @@ module Doc = struct
           fits w rest
     | (_ind, _mode, Nil)::rest -> fits w rest
     | (_ind, Break, LineBreak break)::rest -> true
-    | (ind, mode, Group(shouldBreak, doc))::rest ->
-      let mode = if shouldBreak then Break else mode in
+    | (ind, mode, Group(forceBreak, doc))::rest ->
+      let mode = if forceBreak then Break else mode in
       fits w ((ind, mode, doc)::rest)
     | (ind, mode, IfBreaks(breakDoc, flatDoc))::rest ->
         if mode = Break then
@@ -109,6 +118,7 @@ module Doc = struct
       fits w (List.append ops rest)
     (* | (_ind, _mode, Cursor)::rest -> fits w rest *)
     | (_ind, _mode, LineSuffix _)::rest -> fits w rest
+    | (_ind, _mode, CustomLayout _)::rest -> fits w rest
 
   let toString ~width doc =
     let doc = propagateForcedBreaks doc in
@@ -163,6 +173,18 @@ module Doc = struct
             process ~pos lineSuffices ((ind, Break, doc)::rest)
           else
             process ~pos lineSuffices ((ind, Flat, doc)::rest)
+        | CustomLayout docs ->
+          let rec findGroupThatFits groups = match groups with
+          | [] -> Nil
+          | [lastGroup] -> lastGroup
+          | doc::docs ->
+            if (fits (width - pos) ((ind, Flat, doc)::rest)) then
+              doc
+            else
+              findGroupThatFits docs
+          in
+          let doc = findGroupThatFits docs in
+          process ~pos lineSuffices ((ind, Flat, doc)::rest)
         end
       | [] -> ()
     in
@@ -187,6 +209,20 @@ module Doc = struct
       | Concat docs -> group(
           concat [
             text "concat(";
+            indent (
+              concat [
+                line;
+                join ~sep:(concat [text ","; line])
+                  (List.map toDoc docs) ;
+              ]
+            );
+            line;
+            text ")"
+          ]
+        )
+      | CustomLayout docs -> group(
+          concat [
+            text "customLayout(";
             indent (
               concat [
                 line;
@@ -7213,6 +7249,8 @@ module ParsetreeViewer : sig
   val shouldInlineRhsBinaryExpr: Parsetree.expression -> bool
   val filterPrinteableAttributes: Parsetree.attributes -> Parsetree.attributes
   val partitionPrinteableAttributes: Parsetree.attributes -> (Parsetree.attributes * Parsetree.attributes)
+
+  val requiresSpecialCallbackPrinting: (Asttypes.arg_label * Parsetree.expression) list -> bool
 end = struct
   open Parsetree
 
@@ -7508,6 +7546,15 @@ end = struct
       | ({Location.txt="bs" | "ns.ternary"}, _) -> false
       | _ -> true
     ) attrs
+
+  let requiresSpecialCallbackPrinting args =
+    let rec loop args = match args with
+    | [] -> false
+    | [(_, {pexp_desc = Pexp_fun _ | Pexp_newtype _})] -> true
+    | (_, {pexp_desc = Pexp_fun _ | Pexp_newtype _})::_ -> false
+    | _::rest -> loop rest
+    in
+    loop args
 end
 
 module Parens: sig
@@ -8923,13 +8970,21 @@ module Printer = struct
           Doc.rparen;
         ]
       | Some(arg) ->
+        let argDoc = printExpression arg in
         let shouldHug = ParsetreeViewer.isHuggableExpression arg in
         Doc.concat [
           Doc.lparen;
-          if shouldHug then Doc.nil else Doc.softLine;
-          printExpression arg;
-          if shouldHug then Doc.nil else Doc.trailingComma;
-          if shouldHug then Doc.nil else Doc.softLine;
+          if shouldHug then argDoc
+          else Doc.concat [
+            Doc.indent (
+              Doc.concat [
+                Doc.softLine;
+                argDoc;
+              ]
+            );
+            Doc.trailingComma;
+            Doc.softLine;
+          ];
           Doc.rparen;
         ]
       in
@@ -9065,7 +9120,7 @@ module Printer = struct
         let (parts, alternate) = ParsetreeViewer.collectTernaryParts e in
         let ternaryDoc = match parts with
         | (condition1, consequent1)::rest ->
-          Doc.concat [
+          Doc.group (Doc.concat [
             printTernaryOperand condition1;
             Doc.indent (
               Doc.concat [
@@ -9088,7 +9143,7 @@ module Printer = struct
                 Doc.indent (printTernaryOperand alternate);
               ]
             )
-          ]
+          ])
         | _ -> Doc.nil
         in
         let attrs = ParsetreeViewer.filterTernaryAttributes e.pexp_attributes in
@@ -9226,7 +9281,7 @@ module Printer = struct
       | Pexp_constraint (expr, typ) -> (expr, Some typ)
       | _ -> (returnExpr, None)
       in
-      let parametersDoc = printExprFunParameters ~uncurried parameters in
+      let parametersDoc = printExprFunParameters ~inCallback:false ~uncurried parameters in
       let returnExprDoc =
         let shouldInline = match returnExpr.pexp_desc with
         | Pexp_array _
@@ -9315,6 +9370,72 @@ module Printer = struct
       )
     | _ -> printedExpression
     end
+
+  and printPexpFun ~inCallback e =
+      let (attrsOnArrow, parameters, returnExpr) = ParsetreeViewer.funExpr e in
+      let (uncurried, attrs) =
+        ParsetreeViewer.processUncurriedAttribute attrsOnArrow
+      in
+      let (returnExpr, typConstraint) = match returnExpr.pexp_desc with
+      | Pexp_constraint (expr, typ) -> (expr, Some typ)
+      | _ -> (returnExpr, None)
+      in
+      let parametersDoc = printExprFunParameters ~inCallback  ~uncurried parameters in
+      let returnShouldIndent = match returnExpr.pexp_desc with
+      | Pexp_sequence _ | Pexp_let _ | Pexp_letmodule _ | Pexp_letexception _ -> false
+      | _ -> true
+      in
+      let returnExprDoc =
+        let shouldInline = match returnExpr.pexp_desc with
+        | Pexp_array _
+        | Pexp_tuple _
+        | Pexp_construct (_, Some _)
+        | Pexp_record _ -> true
+        | _ -> false
+        in
+        let returnDoc = printExpression returnExpr in
+        if shouldInline then Doc.concat [
+          Doc.space;
+          returnDoc;
+        ] else
+          Doc.group (
+            if returnShouldIndent then
+              Doc.concat [
+                Doc.indent (
+                  Doc.concat [
+                    Doc.line;
+                    returnDoc;
+                  ]
+                );
+                if inCallback then Doc.softLine else Doc.nil;
+              ]
+            else
+              Doc.concat [
+                Doc.space;
+                returnDoc;
+              ]
+          )
+      in
+      let typConstraintDoc = match typConstraint with
+      | Some(typ) -> Doc.concat [Doc.text ": "; printTypExpr typ]
+      | _ -> Doc.nil
+      in
+      let attrs = match attrs with
+      | [] -> Doc.nil
+      | attrs -> Doc.concat [
+          Doc.join ~sep:Doc.line (List.map printAttribute attrs);
+          Doc.space;
+        ]
+      in
+      Doc.group (
+        Doc.concat [
+          attrs;
+          parametersDoc;
+          typConstraintDoc;
+          Doc.text " =>";
+          returnExprDoc;
+        ]
+      )
 
   and printTernaryOperand expr =
     let doc = printExpression expr in
@@ -9496,6 +9617,23 @@ module Printer = struct
     in
     match expr.pexp_desc with
     | Pexp_apply (
+        {pexp_desc = Pexp_ident {txt = Longident.Lident (("|." | "|>") as op)}},
+        [Nolabel, lhs; Nolabel, rhs]
+      ) when not (
+          ParsetreeViewer.isBinaryExpression lhs ||
+          ParsetreeViewer.isBinaryExpression rhs
+      ) ->
+      let lhsDoc = printOperand ~isLhs:true lhs op in
+      let rhsDoc = printOperand ~isLhs:false rhs op in
+      Doc.concat [
+        lhsDoc;
+        (match op with
+        | "|." -> Doc.text "->"
+        | "|>" -> Doc.text " |> "
+        | _ -> assert false);
+        rhsDoc;
+      ]
+    | Pexp_apply (
         {pexp_desc = Pexp_ident {txt = Longident.Lident operator}},
         [Nolabel, lhs; Nolabel, rhs]
       ) ->
@@ -9608,12 +9746,20 @@ module Printer = struct
         ParsetreeViewer.processUncurriedAttribute expr.pexp_attributes
       in
       let callExprDoc = printExpression callExpr in
-      let argsDoc = printArguments ~uncurried args in
-      Doc.concat [
-        printAttributes attrs;
-        callExprDoc;
-        argsDoc;
-      ]
+      if ParsetreeViewer.requiresSpecialCallbackPrinting args then
+        let argsDoc = printArgumentsWithCallback ~uncurried args in
+        Doc.concat [
+          printAttributes attrs;
+          callExprDoc;
+          argsDoc;
+        ]
+      else
+        let argsDoc = printArguments ~uncurried args in
+        Doc.concat [
+          printAttributes attrs;
+          callExprDoc;
+          argsDoc;
+        ]
     | _ -> assert false
 
   and printJsxExpression lident args =
@@ -9755,7 +9901,58 @@ module Printer = struct
       let segments = flatten [] lident in
       Doc.join ~sep:Doc.dot (List.map Doc.text segments)
 
+  and printArgumentsWithCallback ~uncurried args =
+    let rec loop acc args = match args with
+    | [] -> (Doc.nil, Doc.nil)
+    | [_lbl, expr] ->
+      let callback = printPexpFun ~inCallback:true expr in
+      (Doc.concat (List.rev acc), callback)
+    | arg::args ->
+      let argDoc = printArgument arg in
+      loop (Doc.line::Doc.comma::argDoc::acc) args
+    in
+    let (printedArgs, callback) = loop [] args in
 
+    (* Thing.map(foo,(arg1, arg2) => MyModuleBlah.toList(argument)) *)
+    let fitsOnOneLine = Doc.concat [
+      if uncurried then Doc.text "(." else Doc.lparen;
+      Doc.concat [
+        printedArgs;
+        callback;
+      ];
+      Doc.rparen;
+    ] in
+
+    (* Thing.map(longArgumet, veryLooooongArgument, (arg1, arg2) =>
+     *   MyModuleBlah.toList(argument)
+     * )
+     *)
+    let arugmentsFitOnOneLine =
+      Doc.concat [
+        if uncurried then Doc.text "(." else Doc.lparen;
+        Doc.concat [
+          Doc.softLine;
+          printedArgs;
+          Doc.breakableGroup ~forceBreak:true callback;
+        ];
+        Doc.softLine;
+        Doc.rparen;
+      ]
+    in
+
+    (* Thing.map(
+     *   arg1,
+     *   arg2,
+     *   arg3,
+     *   (param1, parm2) => doStuff(param1, parm2)
+     * )
+     *)
+    let breakAllArgs = printArguments ~uncurried args in
+    Doc.customLayout [
+      fitsOnOneLine;
+      arugmentsFitOnOneLine;
+      breakAllArgs;
+    ]
 
 	and printArguments ~uncurried (args : (Asttypes.arg_label * Parsetree.expression) list) =
 		match args with
@@ -9874,7 +10071,7 @@ module Printer = struct
       ]
     )
 
-  and printExprFunParameters ~uncurried parameters =
+  and printExprFunParameters ~inCallback ~uncurried parameters =
     match parameters with
     (* let f = _ => () *)
     | [([], Asttypes.Nolabel, None, {Parsetree.ppat_desc = Ppat_any})] when not uncurried ->
@@ -9890,15 +10087,15 @@ module Printer = struct
       let lparen = if uncurried then Doc.text "(. " else Doc.lparen in
       let shouldHug = ParsetreeViewer.parametersShouldHug parameters in
       let printedParamaters = Doc.concat [
-        if shouldHug then Doc.nil else Doc.softLine;
-        Doc.join ~sep:(Doc.concat [Doc.comma; Doc.line])
+        if shouldHug || inCallback then Doc.nil else Doc.softLine;
+        Doc.join ~sep:(Doc.concat [Doc.comma; if inCallback then Doc.space else Doc.line])
           (List.map printExpFunParameter parameters)
       ] in
       Doc.group (
         Doc.concat [
           lparen;
-          if shouldHug then printedParamaters else Doc.indent (printedParamaters);
-          if shouldHug then Doc.nil else Doc.concat [Doc.trailingComma; Doc.softLine];
+          if shouldHug || inCallback then printedParamaters else Doc.indent (printedParamaters);
+          if shouldHug || inCallback then Doc.nil else Doc.concat [Doc.trailingComma; Doc.softLine];
           Doc.rparen;
         ]
       )

@@ -69,3 +69,15 @@ let rec peekMinNode = node =>
 
 let constructor =
   @attr Blue
+
+let x =
+  switch (x) {
+  | Bar =>
+    ReasonReact.UpdateWithSideEffects(
+      self => {
+        let _ = 1;
+        apply(bar);
+      },
+    )
+  | Foo => ()
+  };

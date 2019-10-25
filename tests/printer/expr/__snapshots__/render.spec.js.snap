@@ -232,15 +232,13 @@ let x = -1 + -1
 let x =
   switch z {
   | Red => 1
-  }
-  |> switch y {
+  } |> switch y {
   | Blue => 2
   }
 let x =
   try z catch {
   | Exit => 1
-  }
-  |> try y catch {
+  } |> try y catch {
   | Blue => 2
   }
 let x =
@@ -256,8 +254,7 @@ let x =
 let x =
   for i in 0 to 10 {
     ()
-  }
-  |> for i in 0 to 10 {
+  } |> for i in 0 to 10 {
     ()
   }
 
@@ -675,6 +672,61 @@ let person = {
 "
 `;
 
+exports[`callback.js 1`] = `
+"array->Js.Array2.forEach((/value, height/) => add(rbt, value, ~height)->ignore)
+someArray->Js.Array2.forEach((/value, height/) =>
+  add(rbt, value, ~height)->ignore
+)
+someArraaaaaaayWithAVeryLooooooooooooooooooooooooooooooooooooooongName->Js.Array2.forEach(
+  (/value, height/) => add(rbt, value, ~height)->ignore,
+)
+
+let make = (arr, ~compare) => {
+  let rbt = make(~compare)
+  array->Js.Array2.forEach((/value, height/) =>
+    add(rbt, value, ~height)->ignore
+  )
+  rbt
+}
+
+Thing.map(foo, (arg1, arg2) => MyModuleBlah.toList(argument))
+Thing.map(foo, bar, baz, (aaaaaaaaaaarg1, aaaaarg2) =>
+  MyModuleBlah.toList(argument)
+)
+Thing.map(fooooooooooooooooooo, bar, baz, (abc, z) =>
+  MyModuleBlah.toList(argument)
+)
+Thing.map(
+  fooooooooooooooooooo,
+  baaaaaaaaaaaaaaaaaar,
+  baaaaaaaaaaaaaaaaaaaaaaaaaz,
+  (abc, z) => MyModuleBlah.toList(argument),
+)
+Fooooooooooooooooooo.baaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa(
+  baaaz,
+  quuuuux => something(here),
+)
+
+Fooooooooooooooooooo.baaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa(
+  baaaz,
+  quuuuux => {
+    let a = 1
+    let b = 2
+    a + b
+  },
+)
+
+let make = (arr, ~compare) => {
+  let rbt = make(~compare)
+  array->Js.Array2.forEach((/value, height/) =>
+    add(rbt, value, ~height)->ignore
+  )
+  rbt
+}
+
+"
+`;
+
 exports[`constant.js 1`] = `
 "let x = 1
 
@@ -783,6 +835,17 @@ let rec peekMinNode = node =>
   }
 
 let constructor = @attr Blue
+
+let x = switch x {
+| Bar =>
+  ReasonReact.UpdateWithSideEffects(
+    self => {
+      let _ = 1
+      apply(bar)
+    },
+  )
+| Foo => ()
+}
 
 "
 `;
@@ -1352,7 +1415,8 @@ let nav2 =
       {switch isMobile {
       | true =>
         <MobileMenu
-          handleOpenToggle={_ => setOpen(open_ => !open_)}
+          handleOpenToggle={_ =>
+            setOpen(open_ => !open_)}
           menuItems=props.items
           isOpen
           forceOpen={_ => setOpen(true)}
@@ -1375,7 +1439,8 @@ let nav3 =
     <NavContent>
       {isMobile
         ? <MobileMenu
-            handleOpenToggle={_ => setOpen(open_ => !open_)}
+            handleOpenToggle={_ =>
+              setOpen(open_ => !open_)}
             menuItems=props.items
             isOpen
             forceOpen={_ => setOpen(true)}
@@ -1873,9 +1938,7 @@ let x =
 `;
 
 exports[`ternary.js 1`] = `
-"condition1
-  ? value1
-  : value2
+"condition1 ? value1 : value2
 
 let x = condition1 ? value1 : value2
 
@@ -2148,9 +2211,7 @@ let f = isPositive ? ((a, b): int => a + b) : ((c, d): int => c - d)
 a => a ? () => a : () => a
 a => a ? a : a
 a =>
-  a
-    ? aasdasdasdasdasdasdaaasdasdasdasdasdasdasdasdasdasdasdasdasdaaaaaaaaa
-    : a
+  a ? aasdasdasdasdasdasdaaasdasdasdasdasdasdasdasdasdasdasdasdasdaaaaaaaaa : a
 
 let x = @attrOnTernary (truth ? true : false)
 let x = @attrOnCondition truth ? true : false
