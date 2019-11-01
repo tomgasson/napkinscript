@@ -36,8 +36,7 @@ type t<
 > = Module.Long.With.Very.VeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeryLongName.t
   constraint 't = ('s, 'a) => 'sub
 
-type t = 't
-  constraint 't = ('s, 'a) => 'sub
+type t = 't constraint 't = ('s, 'a) => 'sub
 
 "
 `;
@@ -67,8 +66,7 @@ type t = string
 `;
 
 exports[`constraint.js 1`] = `
-"type t = Reducer
-  constraint 't = @attr ('state, 'action) => 'nextSubtree
+"type t = Reducer constraint 't = @attr ('state, 'action) => 'nextSubtree
 
 "
 `;
@@ -79,8 +77,7 @@ type t = private ..
 type t<'a, 'b> = ..
 type t<'a, 'b> = private ..
 
-type t = ..
-  constraint 't = ('s, 'a) => 'sub
+type t = .. constraint 't = ('s, 'a) => 'sub
 
 "
 `;
@@ -130,8 +127,7 @@ type result<'good, 'bad> = {good: 'good, bad: 'bad}
 type user = {
   name: 't,
   age: int,
-}
-  constraint 't = string
+} constraint 't = string
 
 type t = private {name: string, age: int}
 type t = private {
@@ -200,8 +196,7 @@ type t<
   +'superlongthing,
   -'superlongthing,
   +'superlongthing,
->
-  constraint 't = ('state, 'action) => 'nextSubtree
+> constraint 't = ('state, 'action) => 'nextSubtree
 
 "
 `;
@@ -311,13 +306,11 @@ type jsx<'nature> =
       'tl
     />
 
-type color = Red | Blue
-  constraint 't = string
+type color = Red | Blue constraint 't = string
 
 type result<'good, 'bad> =
   | Good('good)
-  | Bad('bad)
-  constraint 'good = boolean constraint 'bad = float
+  | Bad('bad) constraint 'good = boolean constraint 'bad = float
 
 type color =
   | @attr Red

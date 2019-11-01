@@ -49,7 +49,22 @@ module Make = ((functor (A : X) -> functor (B : Y) ->
 module F() = Map
 module F = ((functor () -> Map)[@functorAttr ])
 include functor () -> Map
-include ((functor () -> Map)[@functorAttr ])"
+include ((functor () -> Map)[@functorAttr ])
+module Make(Cmp:sig type nonrec t val eq : t -> t -> bool end) :
+  sig
+    type nonrec key = Cmp.t
+    type nonrec coll
+    val empty : coll
+    val add : coll -> key -> coll
+  end =
+  struct
+    open Cmp
+    type nonrec key = t
+    type nonrec coll = key list
+    let empty = []
+    let add (y : coll) (e : key) =
+      if List.exists (fun x -> eq x e) y then y else e :: y
+  end "
 `;
 
 exports[`ident.js 1`] = `

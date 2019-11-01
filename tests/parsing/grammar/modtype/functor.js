@@ -7,7 +7,6 @@ module type Functor = SetLike => BtreeLike => NeoTree
 module type Functor = (@attr1 _: SetLike, @attr2 _: BtreeLike) => NeoTree
 module type Functor = @attr0 (@attr1 _: SetLike, @attr2 _: BtreeLike) => NeoTree
 
-
 module type Functor = @attr1 SetLike => @attr2 BtreeLike => @attr3 NeoTree
 module type Functor = @attr1 (SetLike) => @attr2 (BtreeLike) => @attr3 NeoTree
 

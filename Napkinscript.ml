@@ -6213,6 +6213,7 @@ Solution: you need to pull out each field you want explicitly."
       then Asttypes.Private
       else Asttypes.Public
     in
+    let constrStart = p.Parser.startPos in
     Parser.optional p Bar |> ignore;
     let first =
       let (attrs, name, kind) = match p.Parser.token with
@@ -6222,7 +6223,8 @@ Solution: you need to pull out each field you want explicitly."
       | _ ->
         parseConstrDef ~parseAttrs:true p
       in
-      Ast_helper.Te.constructor ~attrs name kind
+      let loc = mkLoc constrStart p.prevEndPos in
+      Ast_helper.Te.constructor ~loc ~attrs name kind
     in
     let rec loop p cs =
       match p.Parser.token with
@@ -6301,8 +6303,8 @@ Solution: you need to pull out each field you want explicitly."
 
   (* external value-name : typexp = external-declaration *)
   and parseExternalDef ~attrs p =
-    Parser.leaveBreadcrumb p Grammar.External;
     let startPos = p.Parser.startPos in
+    Parser.leaveBreadcrumb p Grammar.External;
     Parser.expect Token.External p;
     let (name, loc) = parseLident p in
     let name = Location.mkloc name loc in
@@ -6912,6 +6914,7 @@ Solution: you need to pull out each field you want explicitly."
     parseList ~grammar:Grammar.Signature ~f:parseSignatureItem p
 
   and parseSignatureItem p =
+    let startPos = p.Parser.startPos in
     let attrs = parseAttributes p in
     let item = match p.Parser.token with
     | Let ->
@@ -6960,7 +6963,7 @@ Solution: you need to pull out each field you want explicitly."
       Recover.defaultSignatureItem()
     in
     Parser.optional p Semicolon |> ignore;
-    item
+    {item with psig_loc = mkLoc startPos p.prevEndPos}
 
   (* module rec module-name :  module-type  { and module-name:  module-type } *)
   and parseRecModuleSpec ~attrs p =
@@ -7186,6 +7189,10 @@ module ParsetreeViewer : sig
       (Parsetree.attributes * Asttypes.arg_label * Parsetree.core_type) list *
       Parsetree.core_type
 
+  val functorType: Parsetree.module_type ->
+    (Parsetree.attributes * string Asttypes.loc * Parsetree.module_type option) list *
+    Parsetree.module_type
+
   (* filters @bs out of the provided attributes *)
   val processUncurriedAttribute: Parsetree.attributes -> bool * Parsetree.attributes
 
@@ -7251,6 +7258,15 @@ module ParsetreeViewer : sig
   val partitionPrinteableAttributes: Parsetree.attributes -> (Parsetree.attributes * Parsetree.attributes)
 
   val requiresSpecialCallbackPrinting: (Asttypes.arg_label * Parsetree.expression) list -> bool
+
+  val modExprApply : Parsetree.module_expr -> (
+    Parsetree.module_expr list * Parsetree.module_expr
+  )
+
+  val modExprFunctor : Parsetree.module_expr -> (
+    (Parsetree.attributes * string Asttypes.loc * Parsetree.module_type option) list *
+    Parsetree.module_expr
+  )
 end = struct
   open Parsetree
 
@@ -7276,6 +7292,16 @@ end = struct
       process attrs [] {typ with ptyp_attributes = []}
     | typ -> process [] [] typ
     end
+
+  let functorType modtype =
+    let rec process acc modtype = match modtype with
+    | {pmty_desc = Pmty_functor (lbl, argType, returnType); pmty_attributes = attrs} ->
+      let arg = (attrs, lbl, argType) in
+      process (arg::acc) returnType
+    | modType ->
+      (List.rev acc, modType)
+    in
+    process [] modtype
 
   let processUncurriedAttribute attrs =
     let rec process uncurriedSpotted acc attrs =
@@ -7555,6 +7581,24 @@ end = struct
     | _::rest -> loop rest
     in
     loop args
+
+  let modExprApply modExpr =
+    let rec loop acc modExpr = match modExpr with
+    | {pmod_desc = Pmod_apply (next, arg)} ->
+      loop (arg::acc) next
+    | _ -> (acc, modExpr)
+    in
+    loop [] modExpr
+
+  let modExprFunctor modExpr =
+    let rec loop acc modExpr = match modExpr with
+    | {pmod_desc = Pmod_functor (lbl, modType, returnModExpr); pmod_attributes = attrs} ->
+      let param = (attrs, lbl, modType) in
+      loop (param::acc) returnModExpr
+    | returnModExpr ->
+      (List.rev acc, returnModExpr)
+    in
+    loop [] modExpr
 end
 
 module Parens: sig
@@ -7578,6 +7622,9 @@ module Parens: sig
   val jsxChildExpr: Parsetree.expression -> bool
 
   val binaryExpr: Parsetree.expression -> bool
+  val modTypeFunctorReturn: Parsetree.module_type -> bool
+  val modTypeWithOperand: Parsetree.module_type -> bool
+  val modExprFunctorConstraint: Parsetree.module_type -> bool
 end = struct
   let unaryExprOperand expr = match expr with
     | {Parsetree.pexp_attributes = attrs} when
@@ -7807,6 +7854,23 @@ end = struct
     | {Parsetree.pexp_attributes = _::_} as expr
       when ParsetreeViewer.isBinaryExpression expr -> true
     | _ -> false
+
+  let modTypeFunctorReturn modType = match modType with
+    | {Parsetree.pmty_desc = Pmty_with _} -> true
+    | _ -> false
+
+  (* Add parens for readability:
+       module type Functor = SetLike => Set with type t = A.t
+     This is actually:
+       module type Functor = (SetLike => Set) with type t = A.t
+  *)
+  let modTypeWithOperand modType = match modType with
+    | {Parsetree.pmty_desc = Pmty_functor _} -> true
+    | _ -> false
+
+  let modExprFunctorConstraint modType = match modType with
+    | {Parsetree.pmty_desc = Pmty_functor _} -> true
+    | _ -> false
 end
 
 module Printer = struct
@@ -7917,7 +7981,416 @@ module Printer = struct
         printAttributes attrs;
         exprDoc;
       ]
-    | _ -> failwith "unsupported"
+    | Pstr_attribute attr -> Doc.concat [Doc.text "@"; printAttribute attr]
+    | Pstr_extension (extension, attrs) -> Doc.concat [
+        printAttributes attrs;
+        Doc.concat [Doc.text "%";printExtension extension];
+      ]
+    | Pstr_include includeDeclaration ->
+      printIncludeDeclaration includeDeclaration
+    | Pstr_open openDescription ->
+      printOpenDescription openDescription
+    | Pstr_modtype modTypeDecl ->
+      printModuleTypeDeclaration modTypeDecl
+    | Pstr_module moduleBinding ->
+      printModuleBinding ~isRec:false 0 moduleBinding
+    | Pstr_recmodule moduleBindings ->
+      Doc.join ~sep:Doc.line (List.mapi (fun i mb ->
+        printModuleBinding ~isRec:true i mb
+      ) moduleBindings)
+    | Pstr_exception extensionConstructor ->
+      printExceptionDef extensionConstructor;
+    | Pstr_typext typeExtension ->
+      printTypeExtension typeExtension
+    | Pstr_class _ | Pstr_class_type _ -> Doc.nil
+
+  and printTypeExtension (te : Parsetree.type_extension) =
+    let prefix = Doc.text "type " in
+    let name = printLongident te.ptyext_path.txt in
+    let typeParams = match te.ptyext_params with
+    | [] -> Doc.nil
+    | typeParams -> Doc.group (
+        Doc.concat [
+          Doc.lessThan;
+          Doc.indent (
+            Doc.concat [
+              Doc.softLine;
+              Doc.join ~sep:(Doc.concat [Doc.comma; Doc.line]) (
+                List.map printTypeParam typeParams
+              )
+            ]
+          );
+          Doc.trailingComma;
+          Doc.softLine;
+          Doc.greaterThan;
+        ]
+      )
+    in
+    let extensionConstructors =
+      let ecs = te.ptyext_constructors in
+      let forceBreak =
+        match (ecs, List.rev ecs) with
+        | (first::_, last::_) ->
+          first.pext_loc.loc_start.pos_lnum > te.ptyext_path.loc.loc_end.pos_lnum ||
+          first.pext_loc.loc_start.pos_lnum < last.pext_loc.loc_end.pos_lnum
+        | _ -> false
+        in
+      let privateFlag = match te.ptyext_private with
+      | Asttypes.Private -> Doc.concat [
+          Doc.text "private";
+          Doc.line;
+        ]
+      | Public -> Doc.nil
+      in
+      Doc.breakableGroup ~forceBreak (
+        Doc.indent (
+          Doc.concat [
+            Doc.line;
+            privateFlag;
+            Doc.join ~sep:Doc.line (
+              List.mapi printExtensionConstructor ecs
+            )
+          ]
+        )
+      )
+    in
+    Doc.group (
+      Doc.concat [
+        printAttributes ~loc: te.ptyext_path.loc te.ptyext_attributes;
+        prefix;
+        name;
+        typeParams;
+        Doc.text " +=";
+        extensionConstructors;
+      ]
+    )
+
+  and printModuleBinding ~isRec i moduleBinding =
+    let prefix = if i = 0 then
+      Doc.concat [
+        Doc.text "module ";
+        if isRec then Doc.text "rec " else Doc.nil;
+      ]
+    else
+      Doc.text "and "
+    in
+    let (modExprDoc, modConstraintDoc) =
+      match moduleBinding.pmb_expr with
+      | {pmod_desc = Pmod_constraint (modExpr, modType)} ->
+        (
+          printModExpr modExpr,
+          Doc.concat [
+            Doc.text ": ";
+            printModType modType
+          ]
+        )
+      | modExpr ->
+        (printModExpr modExpr, Doc.nil)
+    in
+    Doc.concat [
+      printAttributes ~loc:moduleBinding.pmb_name.loc moduleBinding.pmb_attributes;
+      prefix;
+      Doc.text moduleBinding.pmb_name.Location.txt;
+      modConstraintDoc;
+      Doc.text " = ";
+      modExprDoc;
+    ]
+
+  and printModuleTypeDeclaration (modTypeDecl : Parsetree.module_type_declaration) =
+    Doc.concat [
+      printAttributes modTypeDecl.pmtd_attributes;
+      Doc.text "module type ";
+      Doc.text modTypeDecl.pmtd_name.txt;
+      (match modTypeDecl.pmtd_type with
+      | None -> Doc.nil
+      | Some modType -> Doc.concat [
+          Doc.text " = ";
+          printModType modType;
+        ]);
+    ]
+
+  and printModType modType =
+    let modTypeDoc = match modType.pmty_desc with
+    | Parsetree.Pmty_ident {txt = longident; loc} ->
+      Doc.concat [
+        printAttributes ~loc modType.pmty_attributes;
+        printLongident longident
+      ]
+    | Pmty_signature signature ->
+      let signatureDoc = Doc.breakableGroup ~forceBreak:true (
+        Doc.concat [
+          Doc.lbrace;
+          Doc.indent (
+            Doc.concat [
+              Doc.line;
+              printSignature signature;
+            ]
+          );
+          Doc.line;
+          Doc.rbrace;
+        ]
+      ) in
+      Doc.concat [
+        printAttributes modType.pmty_attributes;
+        signatureDoc
+      ]
+    | Pmty_functor _ ->
+      let (parameters, returnType) = ParsetreeViewer.functorType modType in
+      let parametersDoc = match parameters with
+      | [] -> Doc.nil
+      | [attrs, {Location.txt = "_"}, Some modType] ->
+        let attrs = match attrs with
+        | [] -> Doc.nil
+        | attrs -> Doc.concat [
+          Doc.join ~sep:Doc.line (List.map printAttribute attrs);
+          Doc.line;
+        ] in
+        Doc.concat [
+          attrs;
+          printModType modType
+        ]
+      | params ->
+        Doc.group (
+          Doc.concat [
+            Doc.lparen;
+            Doc.indent (
+              Doc.concat [
+                Doc.softLine;
+                Doc.join ~sep:(Doc.concat [Doc.comma; Doc.line]) (
+                  List.map (fun (attrs, lbl, modType) ->
+                    let attrs = match attrs with
+                    | [] -> Doc.nil
+                    | attrs -> Doc.concat [
+                      Doc.join ~sep:Doc.line (List.map printAttribute attrs);
+                      Doc.line;
+                    ] in
+                    Doc.concat [
+                      attrs;
+                      if lbl.Location.txt = "_" then Doc.nil else Doc.text lbl.txt;
+                      (match modType with
+                      | None -> Doc.nil
+                      | Some modType -> Doc.concat [
+                        if lbl.txt = "_" then Doc.nil else Doc.text ": ";
+                        printModType modType;
+                      ]);
+                    ]
+                  ) params
+                );
+              ]
+            );
+            Doc.trailingComma;
+            Doc.softLine;
+            Doc.rparen;
+          ]
+        )
+      in
+      let returnDoc =
+        let doc = printModType returnType in
+        if Parens.modTypeFunctorReturn returnType then addParens doc else doc
+      in
+      Doc.group (
+        Doc.concat [
+          parametersDoc;
+          Doc.group (
+            Doc.concat [
+            Doc.text " =>";
+            Doc.line;
+            returnDoc;
+            ]
+          )
+        ]
+      )
+    | Pmty_typeof modExpr -> Doc.concat [
+        Doc.text "module type of ";
+        printModExpr modExpr;
+      ]
+    | Pmty_extension extension -> printExtension extension
+    | Pmty_alias {txt = longident} -> Doc.concat [
+        Doc.text "module ";
+        printLongident longident;
+      ]
+    | Pmty_with (modType, withConstraints) ->
+      let operand =
+        let doc = printModType modType in
+        if Parens.modTypeWithOperand modType then addParens doc else doc
+      in
+      Doc.group (
+        Doc.concat [
+          operand;
+          Doc.indent (
+            Doc.concat [
+              Doc.line;
+              printWithConstraints withConstraints;
+            ]
+          )
+        ]
+      )
+    in
+    let attrsAlreadyPrinted = match modType.pmty_desc with
+    | Pmty_functor _ | Pmty_signature _ | Pmty_ident _ -> true
+    | _ -> false in
+    Doc.concat [
+      if attrsAlreadyPrinted then Doc.nil else printAttributes modType.pmty_attributes;
+      modTypeDoc;
+    ]
+
+  and printWithConstraints withConstraints =
+    let rows =List.mapi (fun i withConstraint  ->
+      Doc.group (
+        Doc.concat [
+          if i == 0 then Doc.text "with " else Doc.text "and ";
+          printWithConstraint withConstraint;
+        ]
+      )
+    ) withConstraints
+    in
+    Doc.join ~sep:Doc.line rows
+
+  and printWithConstraint (withConstraint : Parsetree.with_constraint) =
+    match withConstraint with
+    (* with type X.t = ... *)
+    | Pwith_type ({txt = longident}, typeDeclaration) ->
+      Doc.group (printTypeDeclaration
+        ~name:(printLongident longident)
+        ~equalSign:"="
+        ~recFlag:Doc.nil
+        0
+        typeDeclaration)
+    (* with module X.Y = Z *)
+    | Pwith_module ({txt = longident1}, {txt = longident2}) ->
+        Doc.concat [
+          Doc.text "module ";
+          printLongident longident1;
+          Doc.text " =";
+          Doc.indent (
+            Doc.concat [
+              Doc.line;
+              printLongident longident2;
+            ]
+          )
+        ]
+    (* with type X.t := ..., same format as [Pwith_type] *)
+    | Pwith_typesubst ({txt = longident}, typeDeclaration) ->
+      Doc.group(printTypeDeclaration
+        ~name:(printLongident longident)
+        ~equalSign:":="
+        ~recFlag:Doc.nil
+        0
+        typeDeclaration)
+    | Pwith_modsubst ({txt = longident1}, {txt = longident2}) ->
+      Doc.concat [
+        Doc.text "module ";
+        printLongident longident1;
+        Doc.text " :=";
+        Doc.indent (
+          Doc.concat [
+            Doc.line;
+            printLongident longident2;
+          ]
+        )
+      ]
+
+  and printSignature signature =
+    interleaveWhitespace  (
+      List.map (fun si -> (si.Parsetree.psig_loc, printSignatureItem si)) signature
+    )
+
+  and printSignatureItem (si : Parsetree.signature_item) =
+    match si.psig_desc with
+    | Parsetree.Psig_value valueDescription ->
+      printValueDescription valueDescription
+    | Psig_type (recFlag, typeDeclarations) ->
+      let recFlag = match recFlag with
+      | Asttypes.Nonrecursive -> Doc.nil
+      | Asttypes.Recursive -> Doc.text "rec "
+      in
+      printTypeDeclarations ~recFlag typeDeclarations
+    | Psig_typext typeExtension ->
+      printTypeExtension typeExtension
+    | Psig_exception extensionConstructor ->
+      printExceptionDef extensionConstructor
+    | Psig_module moduleDeclaration ->
+      printModuleDeclaration moduleDeclaration
+    | Psig_recmodule moduleDeclarations ->
+      printRecModuleDeclarations moduleDeclarations
+    | Psig_modtype modTypeDecl ->
+      printModuleTypeDeclaration modTypeDecl
+    | Psig_open openDescription ->
+      printOpenDescription openDescription
+    | Psig_include includeDescription ->
+      printIncludeDescription includeDescription
+    | Psig_attribute attr -> Doc.concat [Doc.text "@"; printAttribute attr]
+    | Psig_extension (extension, attrs) -> Doc.concat [
+        printAttributes attrs;
+        Doc.concat [Doc.text "%";printExtension extension];
+      ]
+    | Psig_class _ | Psig_class_type _ -> Doc.nil
+
+  and printRecModuleDeclarations moduleDeclarations =
+    Doc.group (
+      Doc.join ~sep:Doc.line (
+        List.mapi (fun i (md: Parsetree.module_declaration) ->
+          let body = match md.pmd_type.pmty_desc with
+          | Parsetree.Pmty_alias {txt = longident } ->
+            Doc.concat [Doc.text " = "; printLongident longident]
+          | _ ->
+            let needsParens = match md.pmd_type.pmty_desc with
+            | Pmty_with _ -> true
+            | _ -> false
+            in
+            let modTypeDoc =
+              let doc = printModType md.pmd_type in
+              if needsParens then addParens doc else doc
+            in
+            Doc.concat [Doc.text ": "; modTypeDoc]
+          in
+          let prefix = if i < 1 then "module rec " else "and " in
+          Doc.concat [
+            printAttributes ~loc:md.pmd_name.loc md.pmd_attributes;
+            Doc.text prefix;
+            Doc.text md.pmd_name.txt;
+            body
+          ]
+        ) moduleDeclarations
+      )
+    )
+
+  and printModuleDeclaration (md: Parsetree.module_declaration) =
+    let body = match md.pmd_type.pmty_desc with
+    | Parsetree.Pmty_alias {txt = longident } ->
+      Doc.concat [Doc.text " = "; printLongident longident]
+    | _ -> Doc.concat [Doc.text ": "; printModType md.pmd_type]
+    in
+    Doc.concat [
+      printAttributes ~loc:md.pmd_name.loc md.pmd_attributes;
+      Doc.text "module ";
+      Doc.text md.pmd_name.txt;
+      body
+    ]
+
+  and printOpenDescription (openDescription : Parsetree.open_description) =
+    Doc.concat [
+      printAttributes openDescription.popen_attributes;
+      Doc.text "open";
+      (match openDescription.popen_override with
+      | Asttypes.Fresh -> Doc.space
+      | Asttypes.Override -> Doc.text "! ");
+      printLongident openDescription.popen_lid.txt
+    ]
+
+  and printIncludeDescription (includeDescription: Parsetree.include_description) =
+    Doc.concat [
+      printAttributes includeDescription.pincl_attributes;
+      Doc.text "include ";
+      printModType includeDescription.pincl_mod;
+    ]
+
+  and printIncludeDeclaration (includeDeclaration : Parsetree.include_declaration) =
+    Doc.concat [
+      printAttributes includeDeclaration.pincl_attributes;
+      Doc.text "include ";
+      printModExpr includeDeclaration.pincl_mod;
+    ]
 
 
   and printValueBindings ~recFlag (vbs: Parsetree.value_binding list) =
@@ -7938,36 +8411,46 @@ module Printer = struct
    * }
    *)
   and printValueDescription valueDescription =
+    let isExternal =
+      match valueDescription.pval_prim with | [] -> false | _ -> true
+    in
     Doc.group (
       Doc.concat [
-        Doc.text "external ";
+        Doc.text (if isExternal then "external " else "let ");
         Doc.text valueDescription.pval_name.txt;
         Doc.text ": ";
         printTypExpr valueDescription.pval_type;
-        Doc.group (
-          Doc.concat [
-            Doc.text " =";
-            Doc.indent(
-              Doc.concat [
-                Doc.line;
-                Doc.join ~sep:Doc.line (
-                  List.map(fun s -> Doc.concat [
-                    Doc.text "\"";
-                    Doc.text s;
-                    Doc.text "\"";
-                  ])
-                  valueDescription.pval_prim
-                );
-              ]
-            )
-          ]
-        )
+        if isExternal then
+          Doc.group (
+            Doc.concat [
+              Doc.text " =";
+              Doc.indent(
+                Doc.concat [
+                  Doc.line;
+                  Doc.join ~sep:Doc.line (
+                    List.map(fun s -> Doc.concat [
+                      Doc.text "\"";
+                      Doc.text s;
+                      Doc.text "\"";
+                    ])
+                    valueDescription.pval_prim
+                  );
+                ]
+              )
+            ]
+          )
+        else Doc.nil
       ]
     )
 
   and printTypeDeclarations ~recFlag typeDeclarations =
     let rows = List.mapi (fun i td ->
-      let doc = printTypeDeclaration ~recFlag i td in
+      let doc = printTypeDeclaration
+        ~name:(Doc.text td.Parsetree.ptype_name.txt)
+        ~equalSign:"="
+        ~recFlag
+        i td
+      in
       (td.Parsetree.ptype_loc, doc)
     ) typeDeclarations in
     interleaveWhitespace rows
@@ -8004,14 +8487,14 @@ module Printer = struct
    *        (* Invariant: non-empty list *)
    *  | Ptype_open
    *)
-  and printTypeDeclaration ~recFlag i (td: Parsetree.type_declaration) =
+  and printTypeDeclaration ~name ~equalSign ~recFlag i (td: Parsetree.type_declaration) =
     let attrs = printAttributes ~loc:td.ptype_loc td.ptype_attributes in
     let prefix = if i > 0 then
       Doc.text "and "
     else
       Doc.concat [Doc.text "type "; recFlag]
     in
-    let typeName = Doc.text td.ptype_name.txt in
+    let typeName = name in
     let typeParams = match td.ptype_params with
     | [] -> Doc.nil
     | typeParams -> Doc.group (
@@ -8037,13 +8520,13 @@ module Printer = struct
       | None -> Doc.nil
       | Some(typ) ->
         Doc.concat [
-          Doc.text " = ";
+          Doc.concat [Doc.space; Doc.text equalSign; Doc.space];
           printPrivateFlag td.ptype_private;
           printTypExpr typ;
         ]
       end
     | Ptype_open -> Doc.concat [
-        Doc.text " = ";
+        Doc.concat [Doc.space; Doc.text equalSign; Doc.space];
         printPrivateFlag td.ptype_private;
         Doc.text "..";
       ]
@@ -8051,13 +8534,13 @@ module Printer = struct
       let manifest = match td.ptype_manifest with
       | None -> Doc.nil
       | Some(typ) -> Doc.concat [
-          Doc.text " = ";
+          Doc.concat [Doc.space; Doc.text equalSign; Doc.space];
           printTypExpr typ;
         ]
       in
       Doc.concat [
         manifest;
-        Doc.text " = ";
+        Doc.concat [Doc.space; Doc.text equalSign; Doc.space];
         printPrivateFlag td.ptype_private;
         printRecordDeclaration lds;
       ]
@@ -8065,13 +8548,13 @@ module Printer = struct
       let manifest = match td.ptype_manifest with
       | None -> Doc.nil
       | Some(typ) -> Doc.concat [
-          Doc.text " = ";
+          Doc.concat [Doc.space; Doc.text equalSign; Doc.space];
           printTypExpr typ;
         ]
       in
       Doc.concat [
         manifest;
-        Doc.text " =";
+        Doc.concat [Doc.space; Doc.text equalSign];
         printConstructorDeclarations ~privateFlag:td.ptype_private cds;
       ]
     in
@@ -8093,7 +8576,7 @@ module Printer = struct
     | cstrs -> Doc.indent (
         Doc.group (
           Doc.concat [
-            Doc.hardLine;
+            Doc.line;
             Doc.group(
               Doc.join ~sep:Doc.line (
                 List.map printTypeDefinitionConstraint cstrs
@@ -10175,10 +10658,7 @@ module Printer = struct
       let loc = {modLoc with loc_end = modExpr.pmod_loc.loc_end} in
       collectRows ((loc, letModuleDoc)::acc) expr
     | Pexp_letexception (extensionConstructor, expr) ->
-      let letExceptionDoc = Doc.concat [
-        Doc.text "exception ";
-        printExtensionConstructor extensionConstructor;
-      ] in
+      let letExceptionDoc = printExceptionDef extensionConstructor in
       let loc = extensionConstructor.pext_loc in
       collectRows ((loc, letExceptionDoc)::acc) expr
     | Pexp_open (overrideFlag, longidentLoc, expr) ->
@@ -10279,23 +10759,306 @@ module Printer = struct
         lineBreak;
       ]
 
-  and printAttribute (attr : Parsetree.attribute) =
-    match attr with
-    | (id, _) -> Doc.text ("@" ^ id.txt)
+  and printAttribute ((id, payload) : Parsetree.attribute) =
+      let attrName = Doc.text ("@" ^ id.txt) in
+        match payload with
+      | PStr [{pstr_desc = Pstr_eval (expr, attrs)}] ->
+        let exprDoc = printExpression expr in
+        let needsParens = match attrs with | [] -> false | _ -> true in
+        Doc.group (
+          Doc.concat [
+            attrName;
+            addParens (
+              Doc.concat [
+                printAttributes attrs;
+                if needsParens then addParens exprDoc else exprDoc;
+              ]
+            )
+          ]
+        )
+      | _ -> attrName
+
 
   and printModExpr modExpr =
     match modExpr.pmod_desc with
     | Pmod_ident longidentLoc ->
       printLongident longidentLoc.txt
-    | _ -> failwith "not yet implemented module expression"
+    | Pmod_structure structure ->
+      Doc.breakableGroup ~forceBreak:true (
+        Doc.concat [
+          Doc.lbrace;
+          Doc.indent (
+            Doc.concat [
+              Doc.softLine;
+              printStructure structure;
+            ];
+          );
+          Doc.softLine;
+          Doc.rbrace;
+        ]
+      )
+    | Pmod_unpack expr ->
+      let shouldHug = match expr.pexp_desc with
+      | Pexp_let _ -> true
+      | Pexp_constraint (
+          {pexp_desc = Pexp_let _ },
+          {ptyp_desc = Ptyp_package packageType}
+        ) -> true
+      | _ -> false
+      in
+      let (expr, moduleConstraint) = match expr.pexp_desc with
+      | Pexp_constraint (
+          expr,
+          {ptyp_desc = Ptyp_package packageType}
+      ) ->
+        let typeDoc = Doc.group (Doc.concat [
+          Doc.text ":";
+          Doc.indent (
+            Doc.concat [
+              Doc.line;
+              printPackageType ~printModuleKeywordAndParens:false packageType
+            ]
+          )
+        ]) in
+        (expr, typeDoc)
+      | _ -> (expr, Doc.nil)
+      in
+      let unpackDoc = Doc.group(Doc.concat [
+        printExpression expr;
+        moduleConstraint;
+      ]) in
+      Doc.group (
+        Doc.concat [
+          Doc.text "unpack(";
+          if shouldHug then unpackDoc
+          else
+            Doc.concat [
+              Doc.indent (
+                Doc.concat [
+                  Doc.softLine;
+                  unpackDoc;
+                ]
+              );
+             Doc.softLine;
+            ];
+          Doc.rparen;
+        ]
+      )
+    | Pmod_extension extension ->
+      printExtension extension
+    | Pmod_apply _ ->
+      let (args, callExpr) = ParsetreeViewer.modExprApply modExpr in
+      let isUnitSugar = match args with
+      | [{pmod_desc = Pmod_structure []}] -> true
+      | _ -> false
+      in
+      let shouldHug = match args with
+      | [{pmod_desc = Pmod_structure _}] -> true
+      | _ -> false
+      in
+      Doc.group (
+        Doc.concat [
+          printModExpr callExpr;
+          if isUnitSugar then
+            printModApplyArg (List.hd args)
+          else
+            Doc.concat [
+              Doc.lparen;
+              if shouldHug then
+                printModApplyArg (List.hd args)
+              else
+                Doc.indent (
+                  Doc.concat [
+                    Doc.softLine;
+                    Doc.join ~sep:(Doc.concat [Doc.comma; Doc.line]) (
+                      List.map printModApplyArg args
+                    )
+                  ]
+                );
+              if not shouldHug then
+                Doc.concat [
+                  Doc.trailingComma;
+                  Doc.softLine;
+                ]
+              else Doc.nil;
+              Doc.rparen;
+            ]
+        ]
+      )
+    | Pmod_constraint (modExpr, modType) ->
+      Doc.concat [
+        printModExpr modExpr;
+        Doc.text ": ";
+        printModType modType;
+      ]
+    | Pmod_functor _ ->
+      printModFunctor modExpr
 
-  and printExtensionConstructor (constr : Parsetree.extension_constructor) =
+  and printModFunctor modExpr =
+    let (parameters, returnModExpr) = ParsetreeViewer.modExprFunctor modExpr in
+    (* let shouldInline = match returnModExpr.pmod_desc with *)
+    (* | Pmod_structure _ | Pmod_ident _ -> true *)
+    (* | Pmod_constraint ({pmod_desc = Pmod_structure _}, _) -> true *)
+    (* | _ -> false *)
+    (* in *)
+    let (returnConstraint, returnModExpr) = match returnModExpr.pmod_desc with
+    | Pmod_constraint (modExpr, modType) ->
+      let constraintDoc =
+        let doc = printModType modType in
+        if Parens.modExprFunctorConstraint modType then addParens doc else doc
+      in
+      let modConstraint = Doc.concat [
+        Doc.text ": ";
+        constraintDoc;
+      ] in
+      (modConstraint, printModExpr modExpr)
+    | _ -> (Doc.nil, printModExpr returnModExpr)
+    in
+    let parametersDoc = match parameters with
+    | [(attrs, {txt = "*"}, None)] ->
+        let attrs = match attrs with
+        | [] -> Doc.nil
+        | attrs -> Doc.concat [
+          Doc.join ~sep:Doc.line (List.map printAttribute attrs);
+          Doc.line;
+        ] in
+        Doc.group (Doc.concat [
+          attrs;
+          Doc.text "()"
+        ])
+    | [([], {txt = lbl}, None)] -> Doc.text lbl
+    | parameters ->
+      Doc.group (
+        Doc.concat [
+          Doc.lparen;
+          Doc.indent (
+            Doc.concat [
+              Doc.softLine;
+              Doc.join ~sep:(Doc.concat [Doc.comma; Doc.line]) (
+                List.map printModFunctorParam parameters
+              )
+            ]
+          );
+          Doc.trailingComma;
+          Doc.softLine;
+          Doc.rparen;
+        ]
+      )
+    in
+    Doc.group (
+      Doc.concat [
+        parametersDoc;
+        returnConstraint;
+        Doc.text " => ";
+        returnModExpr
+
+      ]
+    )
+
+  and printModFunctorParam (attrs, lbl, optModType) =
+    let attrs = match attrs with
+    | [] -> Doc.nil
+    | attrs -> Doc.concat [
+      Doc.join ~sep:Doc.line (List.map printAttribute attrs);
+      Doc.line;
+    ] in
+    Doc.group (
+      Doc.concat [
+        attrs;
+        Doc.text lbl.txt;
+        (match optModType with
+        | None -> Doc.nil
+        | Some modType ->
+          Doc.concat [
+            Doc.text ": ";
+            printModType modType
+          ]);
+      ]
+    )
+
+  and printModApplyArg modExpr =
+    match modExpr.pmod_desc with
+    | Pmod_structure [] -> Doc.text "()"
+    | _ -> printModExpr modExpr
+
+
+  and printExceptionDef (constr : Parsetree.extension_constructor) =
+    let kind = match constr.pext_kind with
+    | Pext_rebind {txt = longident} -> Doc.indent (
+        Doc.concat [
+          Doc.text " =";
+          Doc.line;
+          printLongident longident;
+        ]
+     )
+    | Pext_decl (Pcstr_tuple [], None) -> Doc.nil
+    | Pext_decl (args, gadt) ->
+      let gadtDoc = match gadt with
+      | Some typ -> Doc.concat [
+          Doc.text ": ";
+          printTypExpr typ;
+        ]
+      | None -> Doc.nil
+      in
+      Doc.concat [
+        printConstructorArguments args;
+        gadtDoc
+      ]
+    in
+    Doc.group (
+      Doc.concat [
+        printAttributes constr.pext_attributes;
+        Doc.text "exception ";
+        Doc.text constr.pext_name.txt;
+        kind
+      ]
+    )
+
+  and printExtensionConstructor i (constr : Parsetree.extension_constructor) =
+    let attrs = printAttributes constr.pext_attributes in
+    let bar = if i > 0 then Doc.text "| "
+      else Doc.ifBreaks (Doc.text "| ") Doc.nil
+    in
+    let kind = match constr.pext_kind with
+    | Pext_rebind {txt = longident} -> Doc.indent (
+        Doc.concat [
+          Doc.text " =";
+          Doc.line;
+          printLongident longident;
+        ]
+     )
+    | Pext_decl (Pcstr_tuple [], None) -> Doc.nil
+    | Pext_decl (args, gadt) ->
+      let gadtDoc = match gadt with
+      | Some typ -> Doc.concat [
+          Doc.text ": ";
+          printTypExpr typ;
+        ]
+      | None -> Doc.nil
+      in
+      Doc.concat [
+        printConstructorArguments args;
+        gadtDoc
+      ]
+    in
     Doc.concat [
-      Doc.text constr.pext_name.txt;
+      bar;
+      Doc.group (
+        Doc.concat [
+          attrs;
+          Doc.text constr.pext_name.txt;
+          kind;
+        ]
+      )
     ]
 
   let printImplementation (s: Parsetree.structure) =
     let stringDoc = Doc.toString ~width:80 (printStructure s) in
+    print_endline stringDoc;
+    print_newline()
+
+  let printInterface (s: Parsetree.signature) =
+    let stringDoc = Doc.toString ~width:80 (printSignature s) in
     print_endline stringDoc;
     print_newline()
 
@@ -10404,7 +11167,8 @@ end = struct
   let printInterface ~target filename ast _parserState =
     match target with
     | "ml" | "ocaml" -> Pprintast.signature Format.std_formatter ast
-    (* | "ns" | "napkinscript" -> PPrin *)
+    | "ns" | "napkinscript" ->
+      Printer.printInterface ast
     | "ast" -> Printast.interface Format.std_formatter ast
     | _ -> (* default binary *)
       if !Clflags.ancient then (
@@ -10507,7 +11271,7 @@ end
   (* let p = Parser.make src filename in *)
   (* let ast = NapkinScript.parseStructure p in *)
   (* let benchmark = Benchmark.make ~name:"RedBlackTree Napkinscript printer" ~f:(fun _ -> *)
-    (* let txt = Printer.printImplementation ast in *)
+    (* let _ = Sys.opaque_identity (Doc.toString ~width:80 (Printer.printStructure ast)) in *)
     (* () *)
   (* ) () *)
   (* in *)
@@ -10525,9 +11289,9 @@ end
   (* Location.init lexbuf filename; *)
   (* let astAndComments = Refmt_main3.Reason_toolchain.RE.implementation_with_comments lexbuf in *)
   (* let benchmark = Benchmark.make ~name:"RedBlackTree Reason printer" ~f:(fun _ -> *)
-    (* Refmt_main3.Reason_toolchain.RE.print_implementation_with_comments *)
-    (* Format.str_formatter astAndComments; *)
-    (* let syntax = Format.flush_str_formatter () in *)
+    (* let _ = Sys.opaque_identity (Refmt_main3.Reason_toolchain.RE.print_implementation_with_comments *)
+    (* Format.str_formatter astAndComments) in *)
+    (* (* let syntax = Format.flush_str_formatter () in *) *)
     (* () *)
   (* ) () *)
   (* in *)
