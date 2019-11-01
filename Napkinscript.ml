@@ -7940,9 +7940,39 @@ module Printer = struct
       Doc.join ~sep:Doc.dot (List.map Doc.text txts)
     | _ -> failwith "unsupported ident"
 
+  (* TODO: better allocation strategy for the buffer *)
+  let escapeStringContents s =
+    let len = String.length s in
+    let b = Buffer.create len in
+    for i = 0 to len - 1 do
+      let c = String.get s i in
+      if c = '\008'  then (
+        Buffer.add_char b '\\';
+        Buffer.add_char b 'b';
+      ) else if c = '\009'  then (
+        Buffer.add_char b '\\';
+        Buffer.add_char b 't';
+      ) else if c = '\010' then (
+        Buffer.add_char b '\\';
+        Buffer.add_char b 'n';
+      ) else if c = '\013' then (
+        Buffer.add_char b '\\';
+        Buffer.add_char b 'r';
+      ) else if c = '\034' then (
+        Buffer.add_char b '\\';
+        Buffer.add_char b '"';
+      ) else if c = '\092' then (
+        Buffer.add_char b '\\';
+        Buffer.add_char b '\\';
+      )else (
+        Buffer.add_char b c;
+      );
+    done;
+    Buffer.contents b
+
   let printConstant c = match c with
     | Parsetree.Pconst_integer (s, _) -> Doc.text s
-    | Pconst_string (s, _) -> Doc.text ("\"" ^ s ^ "\"")
+    | Pconst_string (s, _) -> Doc.text ("\"" ^ (escapeStringContents s) ^ "\"")
     | Pconst_float (s, _) -> Doc.text s
     | Pconst_char c -> Doc.text ("'" ^ (Char.escaped c) ^ "'")
 
