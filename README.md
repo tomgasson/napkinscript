@@ -18,13 +18,6 @@ Update your `bsconfig.json`:
   "pp-flags": "napkinscript",
 ```
 
-Note: if you still need an 4.02.3 ast, add:
-```javascript
-  "pp-flags": "napkinscript -ancient",
-```
-
-
-
 ## Dev Setup
 
 Required:

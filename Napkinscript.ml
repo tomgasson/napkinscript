@@ -11183,16 +11183,9 @@ end = struct
         Printer.printImplementation ast
     | "ast" -> Printast.implementation Format.std_formatter ast
     | _ -> (* default binary *)
-      if !Clflags.ancient then (
-        let open Migrate_parsetree in
-        let module Convert = Convert(OCaml_406)(OCaml_402) in
-        let ast402 = Convert.copy_structure ast in
-        Ast_io.to_channel stdout filename (Ast_io.Impl ((module OCaml_402), ast402))
-      ) else (
-				output_string stdout Config.ast_impl_magic_number;
-				output_value stdout filename;
-				output_value stdout ast
-      )
+      output_string stdout Config.ast_impl_magic_number;
+      output_value stdout filename;
+      output_value stdout ast
 
   let printInterface ~target filename ast _parserState =
     match target with
@@ -11201,16 +11194,9 @@ end = struct
       Printer.printInterface ast
     | "ast" -> Printast.interface Format.std_formatter ast
     | _ -> (* default binary *)
-      if !Clflags.ancient then (
-        let open Migrate_parsetree in
-        let module Convert = Convert(OCaml_406)(OCaml_402) in
-        let ast402 = Convert.copy_signature ast in
-        Ast_io.to_channel stdout filename (Ast_io.Intf ((module OCaml_402), ast402))
-      ) else (
-				output_string stdout Config.ast_intf_magic_number;
-				output_value stdout filename;
-				output_value stdout ast
-      )
+      output_string stdout Config.ast_intf_magic_number;
+      output_value stdout filename;
+      output_value stdout ast
 
   let processFile ~recover ~target filename =
     try
