@@ -615,6 +615,11 @@ module CharacterCodes = struct
     let z = 0x5a
   end
 
+  (* returns lower-case ch, ch should be ascii *)
+  let lower ch =
+    (* if ch >= Lower.a && ch <= Lower.z then ch else ch + 32 *)
+    32 lor ch
+
   let isLetter ch =
     Lower.a <= ch && ch <= Lower.z ||
     Upper.a <= ch && ch <= Upper.z
@@ -623,6 +628,10 @@ module CharacterCodes = struct
     Upper.a <= ch && ch <= Upper.z
 
   let isDigit ch = _0 <= ch && ch <= _9
+
+  let isHex ch =
+    (_0 <= ch && ch <= _9) ||
+    (Lower.a <= (lower ch) && (lower ch) <= Lower.f)
 
     (*
       // ES5 7.3:
@@ -642,6 +651,14 @@ module CharacterCodes = struct
     || ch == lineSeparator
     || ch == paragraphSeparator
 
+
+  let digitValue ch =
+    if _0 <= ch && ch <= _9 then
+      ch - 48
+    else if Lower.a <= (lower ch) && (lower ch) <= Lower.f then
+      (lower ch) - Lower.a + 10
+    else
+      16 (* larger than any legal value *)
 end
 
 
@@ -710,9 +727,9 @@ module Token = struct
   type t =
     | Open
     | True | False
-    | Char of char
-    | Int of string
-    | Float of string
+    | Character of char
+    | Int of (string * char option)
+    | Float of (string * char option)
     | String of string
     | Lident of string
     | Uident of string
@@ -794,13 +811,13 @@ module Token = struct
   let toString = function
     | Open -> "open"
     | True -> "true" | False -> "false"
-    | Char c -> "'" ^ (Char.escaped c) ^ "'"
+    | Character c -> "'" ^ (Char.escaped c) ^ "'"
     | String s -> s
     | Lident str -> str
     | Uident str -> str
     | Dot -> "." | DotDot -> ".." | DotDotDot -> "..."
-    | Int i -> "int " ^ i
-    | Float f -> "Float: " ^ f
+    | Int (i, _) -> "int " ^ i
+    | Float (f, _) -> "Float: " ^ f
     | Bang -> "!"
     | Semicolon -> ";"
     | Let -> "let"
@@ -1054,7 +1071,7 @@ module Grammar = struct
     | _ -> false
 
   let isAtomicPatternStart = function
-    | Token.Int _ | String _
+    | Token.Int _ | String _ | Character _
     | Lparen | Lbracket | Lbrace | Forwardslash
     | Underscore
     | Lident _ | Uident _ | List
@@ -1064,7 +1081,7 @@ module Grammar = struct
 
   let isAtomicExprStart = function
     | Token.True | False
-    | Int _ | String _ | Float _
+    | Int _ | String _ | Float _ | Character _
     | Backtick
     | Uident _ | Lident _
     | Lparen
@@ -1086,7 +1103,7 @@ module Grammar = struct
 
   let isExprStart = function
     | Token.True | False
-    | Int _ | String _ | Float _ | Backtick
+    | Int _ | String _ | Float _ | Character _ | Backtick
     | Uident _ | Lident _
     | Lparen | List | Lbracket | Lbrace | Forwardslash
     | LessThan
@@ -1889,24 +1906,86 @@ module Scanner = struct
     let str = Bytes.sub_string scanner.src startOff (scanner.offset - startOff) in
     Token.lookupKeyword str
 
+  let scanDigits scanner ~base =
+    if base <= 10 then (
+      while CharacterCodes.isDigit scanner.ch || scanner.ch == CharacterCodes.underscore do
+        next scanner
+      done;
+    ) else (
+      while CharacterCodes.isHex scanner.ch || scanner.ch == CharacterCodes.underscore do
+        next scanner
+      done;
+    )
+
   (* float: (0…9) { 0…9∣ _ } [. { 0…9∣ _ }] [(e∣ E) [+∣ -] (0…9) { 0…9∣ _ }]   *)
   let scanNumber scanner =
     let startOff = scanner.offset in
-    while CharacterCodes.isDigit scanner.ch do
-      next scanner
-    done;
-    (* floats *)
-    if CharacterCodes.dot == scanner.ch then (
+
+    (* integer part *)
+    let base, prefix = if scanner.ch != CharacterCodes.dot then (
+      if scanner.ch == CharacterCodes._0 then (
+        next scanner;
+        let ch = CharacterCodes.lower scanner.ch in
+        if ch == CharacterCodes.Lower.x then (
+          next scanner;
+          16, 'x'
+        ) else if ch == CharacterCodes.Lower.o then (
+          next scanner;
+          8, 'o'
+        ) else if ch == CharacterCodes.Lower.b then (
+          next scanner;
+          2, 'b'
+        ) else (
+          8, '0'
+        )
+      ) else (
+        10, ' '
+      )
+    ) else (10, ' ')
+    in
+    scanDigits scanner ~base;
+
+    (*  *)
+    let isFloat = if CharacterCodes.dot == scanner.ch then (
       next scanner;
-      while CharacterCodes.isDigit scanner.ch do
-        next scanner
-      done;
-      let str = Bytes.sub_string scanner.src startOff (scanner.offset - startOff) in
-      Token.Float str
+      scanDigits scanner ~base;
+      true
     ) else (
-      let str = Bytes.sub_string scanner.src startOff (scanner.offset - startOff) in
-      Token.Int str
-    )
+      false
+    ) in
+
+    (* exponent part *)
+    let isFloat =
+      if let exp = CharacterCodes.lower scanner.ch in
+        exp == CharacterCodes.Lower.e || exp == CharacterCodes.Lower.p
+      then (
+        next scanner;
+        if scanner.ch == CharacterCodes.plus || scanner.ch == CharacterCodes.minus then
+          next scanner;
+        scanDigits scanner ~base;
+        true
+      ) else
+        isFloat
+    in
+    let literal =
+      Bytes.sub_string scanner.src startOff (scanner.offset - startOff)
+    in
+
+    (* suffix *)
+    let suffix =
+      if scanner.ch >= CharacterCodes.Lower.g && scanner.ch <= CharacterCodes.Lower.z
+         || scanner.ch >= CharacterCodes.Upper.g && scanner.ch <= CharacterCodes.Upper.z
+      then (
+        let ch = scanner.ch in
+        next scanner;
+        Some (Char.unsafe_chr ch)
+      ) else
+        None
+    in
+    if isFloat then
+      Token.Float (literal, suffix)
+    else
+      Token.Int (literal, suffix)
 
   let scanString scanner =
     let buffer = Buffer.create 256 in
@@ -1921,9 +2000,9 @@ module Scanner = struct
       ) else if scanner.ch == CharacterCodes.backslash then (
         next scanner;
         let char_for_backslash = function
+          | 98 -> '\008'
           | 110 -> '\010'
           | 114 -> '\013'
-          | 98 -> '\008'
           | 116 -> '\009'
           | c   -> Char.chr c
         in
@@ -1944,6 +2023,39 @@ module Scanner = struct
     in
     scan ();
     Token.String (Buffer.contents buffer)
+
+  (* I wonder if this gets inlined *)
+  let convertNumber scanner ~n ~base ~max =
+    let x = ref 0 in
+    for _ = n downto 1 do
+      let d = CharacterCodes.digitValue scanner.ch in
+      x := (!x * base) + d;
+      next scanner
+    done;
+    !x
+
+  let scanEscape scanner =
+    (* let offset = scanner.offset in *)
+    let c = match scanner.ch with
+    | 98 (* b *)  -> next scanner; '\008'
+    | 110 (* n *) -> next scanner; '\010'
+    | 114 (* r *) -> next scanner; '\013'
+    | 116 (* t *) -> next scanner; '\009'
+    | ch when CharacterCodes.isDigit ch ->
+      let x = convertNumber scanner ~n:3 ~base:10 ~max:255 in
+      Char.chr x
+    | ch when ch == CharacterCodes.Lower.x ->
+      next scanner;
+      let x = convertNumber scanner ~n:2 ~base:16 ~max:255 in
+      Char.chr x
+    | ch when ch == CharacterCodes.Lower.o ->
+      next scanner;
+      let x = convertNumber scanner ~n:3 ~base:8 ~max:255 in
+      Char.chr x
+    | ch -> next scanner; Char.chr ch
+    in
+    next scanner; (* Consume \' *)
+    Token.Character c
 
   let scanSingleLineComment scanner =
     let startOff = scanner.offset in
@@ -2067,9 +2179,19 @@ module Scanner = struct
         )
       else if ch == CharacterCodes.doubleQuote then
         scanString scanner
-      else if ch == CharacterCodes.singleQuote then
-        Token.SingleQuote
-      else if ch == CharacterCodes.bang then
+      else if ch == CharacterCodes.singleQuote then (
+        if scanner.ch == CharacterCodes.backslash then (
+          next scanner;
+          scanEscape scanner
+        ) else if (peek scanner) == CharacterCodes.singleQuote then (
+          let ch = scanner.ch in
+          next scanner;
+          next scanner;
+          Token.Character (Char.chr ch)
+        ) else (
+          SingleQuote
+        )
+      ) else if ch == CharacterCodes.bang then
         if scanner.ch == CharacterCodes.equal then (
           next scanner;
           if scanner.ch == CharacterCodes.equal then (
@@ -2394,8 +2516,8 @@ module Parser = struct
       )
     | True -> advance p; DirBool true
     | False -> advance p; DirBool false
-    | Int n -> advance p; DirInt (int_of_string n)
-    | Float n -> advance p; DirFloat (float_of_string n)
+    | Int (n, _) -> advance p; DirInt (int_of_string n)
+    | Float (n, _) -> advance p; DirFloat (float_of_string n)
     | String s -> advance p; DirString s
     | Lparen -> advance p; parseDirectiveExpr p
     | _ -> DirError
@@ -3180,9 +3302,10 @@ Solution: you need to pull out each field you want explicitly."
    (* ∣	 string-literal   *)
   let parseConstant p =
     let constant = match p.Parser.token with
-    | Int i -> Parsetree.Pconst_integer (i, None)
-    | Float i -> Parsetree.Pconst_float (i, None)
+    | Int (i, suffix) -> Parsetree.Pconst_integer (i, suffix)
+    | Float (i, suffix) -> Parsetree.Pconst_float (i, suffix)
     | String s -> Pconst_string(s, None)
+    | Character c -> Pconst_char c
     | token ->
       Parser.err p (Diagnostics.unexpected token p.breadcrumbs);
       Pconst_string("", None)
@@ -3332,7 +3455,7 @@ Solution: you need to pull out each field you want explicitly."
       let loc = mkLoc startPos endPos in
       Ast_helper.Pat.construct ~loc
         (Location.mkloc (Longident.Lident (Token.toString token)) loc) None
-    | Int _ | String _ | Float _ ->
+    | Int _ | String _ | Float _ | Character _ ->
       let endPos = p.endPos in
       let c = parseConstant p in
       let loc = mkLoc startPos endPos in
@@ -3878,7 +4001,7 @@ Solution: you need to pull out each field you want explicitly."
         let loc = mkLoc startPos endPos in
         Ast_helper.Exp.construct
           (Location.mkloc (Longident.Lident (Token.toString token)) loc) None
-      | Int _ | String _ | Float _ ->
+      | Int _ | String _ | Float _ | Character _ ->
         let c = parseConstant p in
         Ast_helper.Exp.constant c
       | Backtick ->
@@ -7964,14 +8087,18 @@ module Printer = struct
       ) else if c = '\092' then (
         Buffer.add_char b '\\';
         Buffer.add_char b '\\';
-      )else (
+      ) else (
         Buffer.add_char b c;
       );
     done;
     Buffer.contents b
 
   let printConstant c = match c with
-    | Parsetree.Pconst_integer (s, _) -> Doc.text s
+    | Parsetree.Pconst_integer (s, suffix) ->
+      begin match suffix with
+      | Some c -> Doc.text (s ^ (Char.escaped c))
+      | None -> Doc.text s
+      end
     | Pconst_string (s, _) -> Doc.text ("\"" ^ (escapeStringContents s) ^ "\"")
     | Pconst_float (s, _) -> Doc.text s
     | Pconst_char c -> Doc.text ("'" ^ (Char.escaped c) ^ "'")
@@ -11253,6 +11380,35 @@ end
   (* let filename = "RedBlackTreePureOcaml.ml" in *)
   (* let src = IO.readFile filename in *)
   (* let benchmark = Benchmark.make ~name:"RedBlackTree Ocaml 4.06 parser" ~f:(fun _ -> *)
+    (* let lexbuf = Lexing.from_string src in *)
+    (* Location.init lexbuf filename; *)
+    (* let _ast = Parse.implementation lexbuf in *)
+    (* () *)
+  (* ) () *)
+  (* in *)
+  (* let () = Benchmark.launch benchmark in *)
+  (* Benchmark.report benchmark; *)
+  (* print_newline(); *)
+  (* print_newline() *)
+
+(* let () = *)
+  (* let filename = "PrinterBench.ml" in *)
+  (* let src = IO.readFile filename in *)
+  (* let benchmark = Benchmark.make ~name:"Printer Napkinscript parser (no comments!)" ~f:(fun _ -> *)
+    (* let p = Parser.make src filename in *)
+    (* let _ast = NapkinScript.parseStructure p in *)
+    (* () *)
+  (* ) () *)
+  (* in *)
+  (* let () = Benchmark.launch benchmark in *)
+  (* Benchmark.report benchmark; *)
+  (* print_newline(); *)
+  (* print_newline() *)
+
+(* let () = *)
+  (* let filename = "MyPrinter.ml" in *)
+  (* let src = IO.readFile filename in *)
+  (* let benchmark = Benchmark.make ~name:"Printer Ocaml parser" ~f:(fun _ -> *)
     (* let lexbuf = Lexing.from_string src in *)
     (* Location.init lexbuf filename; *)
     (* let _ast = Parse.implementation lexbuf in *)

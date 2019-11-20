@@ -9,7 +9,6 @@ let x = -a.bar
 
 
 let x = true.x
-let x = 12.x
 let x = (12: int).x
 let x = list(1, 2, ...x).x
 let x = module(Foo: Bar).x
