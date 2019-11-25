@@ -61,7 +61,7 @@ exports[`extension.js 1`] = `
 `;
 
 exports[`external.js 1`] = `
-"external null: reactElement = \\"null\\"
+"@bs.val external null: reactElement = \\"null\\"
 
 external string: string => reactElement = \\"%identity\\"
 

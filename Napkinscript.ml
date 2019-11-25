@@ -794,6 +794,7 @@ module Token = struct
     | Backtick
     | BarGreater
     | Try | Catch
+    | Import
 
   let precedence = function
     | HashEqual | ColonEqual -> 1
@@ -883,6 +884,7 @@ module Token = struct
     | Backtick -> "`"
     | BarGreater -> "|>"
     | Try -> "try" | Catch -> "catch"
+    | Import -> "import"
 
   let keywordTable =
     let keywords = [|
@@ -921,6 +923,7 @@ module Token = struct
       "with", With;
       "try", Try;
       "catch", Catch;
+      "import", Import;
     |] in
     let t = Hashtbl.create 50 in
     Array.iter (fun (k, v) ->
@@ -934,7 +937,7 @@ module Token = struct
     | Downto | While | Switch | When | External | Typ | Private
     | Mutable | Constraint | Include | Module | Of | Mod
     | Land | Lor | Lxor | Lsl | Lsr | Asr | List | With
-    | Try | Catch -> true
+    | Try | Catch | Import -> true
     | _ -> false
 
   let lookupKeyword str =
@@ -1002,6 +1005,7 @@ module Grammar = struct
     | Primitive
     | AtomicTypExpr
     | ListExpr
+    | JsFfiImport
 
   let toString = function
     | OpenDescription -> "an open description"
@@ -1056,12 +1060,13 @@ module Grammar = struct
     | AtomicTypExpr -> "a type"
     | ListExpr -> "an ocaml list expr"
     | PackageConstraint -> "a package constraint"
+    | JsFfiImport -> "js ffi import"
 
   let isSignatureItemStart = function
     | Token.At
     | Let
     | Typ
-    | External
+    | External | Import
     | Exception
     | Open
     | Include
@@ -1120,7 +1125,7 @@ module Grammar = struct
     | Token.Open
     | Let
     | Typ
-    | External
+    | External | Import
     | Exception
     | Include
     | Module
@@ -1230,6 +1235,10 @@ module Grammar = struct
     | Token.At -> true
     | _ -> false
 
+  let isJsFfiImportStart = function
+    | Token.Lident _ | At -> true
+    | _ -> false
+
   let isListElement grammar token =
     match grammar with
     | ExprList -> isExprStart token
@@ -1258,6 +1267,7 @@ module Grammar = struct
     | ConstructorDeclaration -> token = Bar
     | Primitive -> begin match token with Token.String _ -> true | _ -> false end
     | JsxAttribute -> isJsxAttributeStart token
+    | JsFfiImport -> isJsFfiImportStart token
     | _ -> false
 
   let isListTerminator grammar token =
@@ -1288,6 +1298,7 @@ module Grammar = struct
     | ConstructorDeclaration -> token <> Bar
     | Primitive -> isStructureItemStart token || token = Semicolon
     | JsxAttribute -> token = Forwardslash || token = GreaterThan
+    | JsFfiImport -> token = Rbrace
     | _ -> false
     )
 
@@ -2415,6 +2426,87 @@ module Scanner = struct
       Token.LessThan
 end
 
+(* AST for js externals *)
+module JsFfi = struct
+  type scope =
+    | Global
+    | Module of string (* bs.module("path") *)
+    | Scope of Longident.t (* bs.scope(/"window", "location"/) *)
+
+  type label_declaration = {
+    jld_attributes: Parsetree.attributes;
+    jld_name: string;
+    jld_alias: string;
+    jld_type: Parsetree.core_type;
+    jld_loc:  Location.t
+  }
+  type import_description = {
+    jid_loc: Location.t;
+    jid_declarations: label_declaration list;
+    jid_scope: scope;
+    jid_attributes:  Parsetree.attributes;
+  }
+
+  let decl ~attrs ~loc ~name ~alias ~typ = {
+    jld_loc = loc;
+    jld_attributes = attrs;
+    jld_name = name;
+    jld_alias = alias;
+    jld_type = typ
+  }
+
+  let importDescr ~attrs ~scope ~loc ~decls = {
+    jid_loc = loc;
+    jid_declarations = decls;
+    jid_scope = scope;
+    jid_attributes = attrs;
+  }
+
+  let toParsetree importDescr =
+    let bsVal = (Location.mknoloc "bs.val", Parsetree.PStr []) in
+    let attrs = match importDescr.jid_scope with
+    | Global -> [bsVal]
+    | Module s -> (* bs.module *)
+      let structure = [
+        Parsetree.Pconst_string (s, None)
+        |> Ast_helper.Exp.constant
+        |> Ast_helper.Str.eval
+      ] in
+      let bsModule = (Location.mknoloc "bs.module", Parsetree.PStr structure) in
+      [bsModule]
+    | Scope longident ->
+      let structureItem =
+        let expr = match Longident.flatten longident |> List.map (fun s ->
+          Ast_helper.Exp.constant (Parsetree.Pconst_string (s, None))
+        ) with
+        | [expr] -> expr
+        | [] as exprs | (_ as exprs) -> exprs |> Ast_helper.Exp.tuple
+        in
+        Ast_helper.Str.eval expr
+      in
+      let bsScope = (
+        Location.mknoloc "bs.scope",
+        Parsetree. PStr [structureItem]
+      ) in
+      [bsVal; bsScope]
+    in
+    let valueDescrs = List.map (fun decl ->
+      let prim = [decl.jld_name] in
+      let allAttrs = List.concat [attrs; importDescr.jid_attributes] in
+      Ast_helper.Val.mk
+        ~loc:importDescr.jid_loc
+        ~prim
+        ~attrs:allAttrs
+        (Location.mknoloc decl.jld_alias)
+        decl.jld_type
+      |> Ast_helper.Str.primitive
+    ) importDescr.jid_declarations
+    in
+    Ast_helper.Mod.structure valueDescrs
+    |> Ast_helper.Incl.mk
+    |> Ast_helper.Str.include_
+end
+
 module Parser = struct
   type directive = DirDisabled | DirIfTrue | DirIfFalse
 
@@ -3155,7 +3247,7 @@ Solution: you need to pull out each field you want explicitly."
       Parser.next p;
       let loc = mkLoc startPos p.prevEndPos in
       (ident, loc)
-    | t ->
+    | _ ->
       begin match Recover.recoverLident p with
       | Retry ->
         parseLident p
@@ -3250,6 +3342,33 @@ Solution: you need to pull out each field you want explicitly."
     in
     (* Parser.eatBreadcrumb p; *)
     moduleIdent
+
+  (* `window.location` or `Math` or `Foo.Bar` *)
+  let parseIdentPath p =
+    let rec loop p acc =
+      match p.Parser.token with
+      | Uident ident | Lident ident ->
+        Parser.next p;
+        let lident = (Longident.Ldot (acc, ident)) in
+        begin match p.Parser.token with
+        | Dot ->
+          Parser.next p;
+          loop p lident
+        | _ -> lident
+        end
+      | t -> acc
+    in
+    match p.Parser.token with
+    | Lident ident | Uident ident ->
+      Parser.next p;
+      begin match p.Parser.token with
+      | Dot ->
+        Parser.next p;
+        loop p (Longident.Lident ident)
+      | _ -> Longident.Lident ident
+      end
+    | _ ->
+      Longident.Lident "_"
 
   let verifyJsxOpeningClosingName p nameExpr =
     let closing = match p.Parser.token with
@@ -6506,6 +6625,9 @@ Solution: you need to pull out each field you want explicitly."
       end
     | External ->
       Ast_helper.Str.primitive (parseExternalDef ~attrs p)
+    | Import ->
+      let importDescr = parseJsImport ~startPos ~attrs p in
+      JsFfi.toParsetree importDescr
     | Exception ->
       Ast_helper.Str.exception_ (parseExceptionDef ~attrs p)
     | Include ->
@@ -6534,6 +6656,57 @@ Solution: you need to pull out each field you want explicitly."
     Parser.optional p Semicolon |> ignore;
     let loc = mkLoc startPos p.prevEndPos in
     {item with pstr_loc = loc}
+
+  and parseJsImport ~startPos ~attrs p =
+    Parser.expect Token.Import p;
+    let decls = match p.Parser.token with
+    | Token.Lident _ | Token.At -> [parseJsFfiDeclaration p]
+    | _ -> parseJsFfiDeclarations p
+    in
+    let scope = parseJsFfiScope p in
+    let loc = mkLoc startPos p.prevEndPos in
+    JsFfi.importDescr ~attrs ~scope ~decls ~loc
+
+  and parseJsFfiScope p =
+    match p.Parser.token with
+    | Token.Lident "from" ->
+      Parser.next p;
+      begin match p.token with
+      | String s -> Parser.next p; JsFfi.Module s
+      | Uident _ | Lident _ ->
+        let value = parseIdentPath p in
+        JsFfi.Scope value
+      | _ -> JsFfi.Global
+      end
+    | _ -> JsFfi.Global
+
+  and parseJsFfiDeclarations p =
+    Parser.expect Token.Lbrace p;
+    let decls = parseCommaDelimitedList
+      ~grammar:Grammar.JsFfiImport
+      ~closing:Rbrace
+      ~f:parseJsFfiDeclaration
+      p
+    in
+    Parser.expect Rbrace p;
+    decls
+
+  and parseJsFfiDeclaration p =
+    let startPos = p.Parser.startPos in
+    let attrs = parseAttributes p in
+    let (ident, _) = parseLident p in
+    let alias = match p.token with
+    | As ->
+      Parser.next p;
+      let (ident, _) = parseLident p in
+      ident
+    | _ ->
+      ident
+    in
+    Parser.expect Token.Colon p;
+    let typ = parseTypExpr p in
+    let loc = mkLoc startPos p.prevEndPos in
+    JsFfi.decl ~loc ~alias ~attrs ~name:ident ~typ
 
   (* include-statement ::= include module-expr *)
   and parseIncludeStatement ~attrs p =
@@ -8573,6 +8746,7 @@ module Printer = struct
     in
     Doc.group (
       Doc.concat [
+        printAttributes valueDescription.pval_attributes;
         Doc.text (if isExternal then "external " else "let ");
         Doc.text valueDescription.pval_name.txt;
         Doc.text ": ";
