@@ -1,0 +1,22 @@
+/* first line
+* the leading stars
+* should align here.
+*/
+let f = () => ()
+
+ /* first line
+* second line
+   * third line */
+
+ /* first line
+*
+   * third line */
+
+/* x */
+/* */
+/**/
+/*  */
+
+/**
+ * test
+*/

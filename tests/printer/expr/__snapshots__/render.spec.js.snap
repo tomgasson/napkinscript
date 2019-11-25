@@ -208,12 +208,14 @@ while (
   ()
 }
 
+// uncurried attribute shouldn't result in parens
 while (
   rbt.compare(. Js.Array2.unsafe_get(old, oldIter.contents), node.value) < 0
 ) {
   ()
 }
 
+// unary expr as child of binary expr doesn't need parens
 let x =
   !filePath.includes(allMlSuffixesCategory) &&
   !filePath.endsWith(allScriptDirectoriesCategory)
@@ -270,6 +272,7 @@ let () = x.left = value |> logMutation
 let () = x.left = value |> process |> x.right = value |> process
 let () = (x: int) |> (print_int: int => unit)
 
+// math
 x + y / z
 x / y + z
 (100 * x) / total
@@ -1667,6 +1670,7 @@ let x = <MyComponent sidebar={<div> test </div>} nav={<Navbar />} />
 exports[`lazy.js 1`] = `
 "let x = lazy sideEffect
 
+// parens
 let x = lazy true
 let x = lazy 12
 let x = lazy (12: int)
@@ -2353,11 +2357,12 @@ let stuff = &addressRefs[0]
 !(foo->parseTruth)
 
 node.left->peekMinNode
-
+// same as the above
 node.left->peekMinNode
 
+// field access has higher precedence than unary -
 let x = -a.bar
-
+// same as above
 let x = -a.bar
 
 !(lazy x)
@@ -2372,7 +2377,7 @@ let x = (!truth: bool)
 let z = !(%extension)
 &(x.left = value)
 &(x.left = value)
-
+// (!x.left) = value -> this does not parse, lhs of Pexp_setfield can't be a unary expression?
 -[a, b, c]
 !module(Foo: Bar)
 !module(Foo)
@@ -2436,6 +2441,7 @@ while true {
   ()
 }
 
+// adds parens when condition breaks over multiple lines
 while (
   continuePrefix.contents &&
   aPrefixLen.contents <= aLen &&

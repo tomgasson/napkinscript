@@ -58,7 +58,7 @@ include (
 module Make = (A: X, B: Y) => {
   let a = A.a + B.b
 }
-
+// constraint on return type
 module Make = (A: X, B: Y): Set => {
   let a = A.a + B.b
 }
@@ -70,7 +70,7 @@ include (
 ): Set => {
   let a = A.a + B.b
 }
-
+// with attributes
 module Make = (@functorAttr A: X, B: Y): Set => {
   let a = A.a + B.b
 }

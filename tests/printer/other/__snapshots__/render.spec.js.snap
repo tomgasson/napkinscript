@@ -2,7 +2,10 @@
 
 exports[`StaticReactTypes.js 1`] = `
 "type empty = Empty_
-
+/*
+ * Also create another form for splicing in nodes into otherwise fixed length
+ * sets.
+ */
 type elem<'t> =
   | Empty: elem<empty>
   | Element(renderable<('s, 'a) => 'sub>): elem<('s, 'a) => 'sub>

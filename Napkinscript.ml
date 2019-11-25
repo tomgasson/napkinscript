@@ -17,6 +17,7 @@ module Doc = struct
     | LineBreak of lineStyle
     | Group of (bool (* should break *) * t)
     | CustomLayout of t list
+    | BreakParent
     (* | Cursor *)
 
   let nil = Nil
@@ -32,6 +33,7 @@ module Doc = struct
   let group d = Group(false, d)
   let breakableGroup ~forceBreak d = Group(forceBreak, d)
   let customLayout gs = CustomLayout gs
+  let breakParent = BreakParent
   (* let cursor = Cursor *)
 
   let space = Text " "
@@ -53,6 +55,8 @@ module Doc = struct
     let rec walk doc = match doc with
     | Text _ | Nil | LineSuffix _ ->
       (false, doc)
+    | BreakParent ->
+      (true, Nil)
     | LineBreak (Hard | Literal) ->
       (true, doc)
     | LineBreak (Classic | Soft) ->
@@ -118,6 +122,7 @@ module Doc = struct
       fits w (List.append ops rest)
     (* | (_ind, _mode, Cursor)::rest -> fits w rest *)
     | (_ind, _mode, LineSuffix _)::rest -> fits w rest
+    | (_ind, _mode, BreakParent)::rest -> fits w rest
     | (_ind, _mode, CustomLayout _)::rest -> fits w rest
 
   let toString ~width doc =
@@ -128,7 +133,7 @@ module Doc = struct
       match stack with
       | ((ind, mode, doc) as cmd)::rest ->
         begin match doc with
-        | Nil ->
+        | Nil | BreakParent ->
           process ~pos lineSuffices rest
         | Text txt ->
           Buffer.add_string buffer txt;
@@ -189,12 +194,17 @@ module Doc = struct
       | [] -> ()
     in
     process ~pos:0 [] [0, Flat, doc];
+    let len = Buffer.length buffer in
+    if len > 0 && Buffer.nth buffer (len - 1) != '\n' then
+      Buffer.add_char buffer '\n';
+    Buffer.add_char buffer '\n';
     Buffer.contents buffer
 
 
   let debug t =
     let rec toDoc = function
       | Nil -> text "nil"
+      | BreakParent -> text "breakparent"
       | Text txt -> text ("text(" ^ txt ^ ")")
       | LineSuffix doc -> group(
           concat [
@@ -677,7 +687,6 @@ module CharacterCodes = struct
       16 (* larger than any legal value *)
 end
 
-
 module Comment: sig
   type t
 
@@ -685,6 +694,9 @@ module Comment: sig
   val toAttribute: t -> Parsetree.attribute
 
   val loc: t -> Location.t
+  val txt: t -> string
+
+  val isSingleLineComment: t -> bool
 
   val makeSingleLineComment: loc:Location.t -> string -> t
   val makeMultiLineComment: loc:Location.t -> string -> t
@@ -704,6 +716,11 @@ end = struct
   }
 
   let loc t = t.loc
+  let txt t = t.txt
+
+  let isSingleLineComment t = match t.style with
+    | SingleLine -> true
+    | MultiLine -> false
 
   let toString t =
     Format.sprintf
@@ -7819,6 +7836,10 @@ module ParsetreeViewer : sig
   )
 
   val splitGenTypeAttr : Parsetree.attributes -> (bool * Parsetree.attributes)
+
+  val collectPatternsFromListConstruct:
+    Parsetree.pattern list -> Parsetree.pattern ->
+      (Parsetree.pattern list * Parsetree.pattern)
 end = struct
   open Parsetree
 
@@ -8156,6 +8177,16 @@ end = struct
     match attrs with
     | ({Location.txt = "genType"}, _)::attrs -> (true, attrs)
     | attrs -> (false, attrs)
+
+  let rec collectPatternsFromListConstruct acc pattern =
+    let open Parsetree in
+    match pattern.ppat_desc with
+    | Ppat_construct(
+        {txt = Longident.Lident "::"},
+        Some {ppat_desc=Ppat_tuple (pat::rest::[])}
+      ) ->
+      collectPatternsFromListConstruct (pat::acc) rest
+    | _ -> List.rev acc, pattern
 end
 
 module Parens: sig
@@ -8430,18 +8461,200 @@ end = struct
     | _ -> false
 end
 
-module Printer = struct
-  (* TODO: should this go inside a ast utility module? *)
-  let rec collectPatternsFromListConstruct acc pattern =
-    let open Parsetree in
-    match pattern.ppat_desc with
-    | Ppat_construct(
-        {txt = Longident.Lident "::"},
-        Some {ppat_desc=Ppat_tuple (pat::rest::[])}
-      ) ->
-      collectPatternsFromListConstruct (pat::acc) rest
-    | _ -> List.rev acc, pattern
+module CommentInterleaver = struct
+  type t = {
+    leading: (Location.t, Comment.t list) Hashtbl.t;
+    inside: (Location.t, Comment.t list) Hashtbl.t;
+    trailing: (Location.t, Comment.t list) Hashtbl.t;
+    src: string;
+  }
 
+  let make () = {
+    leading = Hashtbl.create 100;
+    inside = Hashtbl.create 100;
+    trailing = Hashtbl.create 100;
+    src = "";
+  }
+
+  let empty = make ()
+
+  let log t =
+    let open Location in
+    let leadingStuff = Hashtbl.fold (fun (k : Location.t) (v : Comment.t list) acc ->
+      let loc = Doc.concat [
+        Doc.lbracket;
+        Doc.text (string_of_int k.loc_start.pos_lnum);
+        Doc.text ":";
+        Doc.text (string_of_int (k.loc_start.pos_cnum  - k.loc_start.pos_bol));
+        Doc.text "-";
+        Doc.text (string_of_int k.loc_end.pos_lnum);
+        Doc.text ":";
+        Doc.text (string_of_int (k.loc_end.pos_cnum  - k.loc_end.pos_bol));
+        Doc.rbracket;
+      ] in
+      let doc = Doc.breakableGroup ~forceBreak:true (
+        Doc.concat [
+          loc;
+          Doc.indent (
+            Doc.concat [
+              Doc.line;
+              Doc.join ~sep:Doc.comma (List.map (fun c -> Doc.text (Comment.txt c)) v)
+            ]
+          );
+          Doc.line;
+        ]
+      ) in
+      doc::acc
+    ) t.leading []
+    in
+    let trailingStuff = Hashtbl.fold (fun (k : Location.t) (v : Comment.t list) acc ->
+      let loc = Doc.concat [
+        Doc.lbracket;
+        Doc.text (string_of_int k.loc_start.pos_lnum);
+        Doc.text ":";
+        Doc.text (string_of_int (k.loc_start.pos_cnum  - k.loc_start.pos_bol));
+        Doc.text "-";
+        Doc.text (string_of_int k.loc_end.pos_lnum);
+        Doc.text ":";
+        Doc.text (string_of_int (k.loc_end.pos_cnum  - k.loc_end.pos_bol));
+        Doc.rbracket;
+      ] in
+      let doc = Doc.breakableGroup ~forceBreak:true (
+        Doc.concat [
+          loc;
+          Doc.indent (
+            Doc.concat [
+              Doc.line;
+              Doc.join ~sep:(Doc.concat [Doc.comma; Doc.line]) (List.map (fun c -> Doc.text (Comment.txt c)) v)
+            ]
+          );
+          Doc.line;
+        ]
+      ) in
+      doc::acc
+    ) t.trailing []
+    in
+    Doc.breakableGroup ~forceBreak:true (
+      Doc.concat [
+        Doc.text "leading comments:";
+        Doc.line;
+        Doc.indent (Doc.concat leadingStuff);
+        Doc.line;
+        Doc.line;
+        Doc.text "trailing comments:";
+        Doc.indent (Doc.concat trailingStuff);
+        Doc.line;
+        Doc.line;
+      ]
+    ) |> Doc.toString ~width:80 |> print_endline
+
+  let attach tbl loc comments =
+    match comments with
+    | [] -> ()
+    | comments -> Hashtbl.replace tbl loc comments
+
+  let partitionByLoc comments loc =
+    let rec loop (leading, inside, trailing)  comments =
+      let open Location in
+      match comments with
+      | comment::rest ->
+        let cmtLoc = Comment.loc comment in
+        if cmtLoc.loc_end.pos_cnum <= loc.loc_start.pos_cnum then
+          loop (comment::leading, inside, trailing) rest
+        else if cmtLoc.loc_start.pos_cnum >= loc.loc_end.pos_cnum then
+          loop (leading, inside, comment::trailing) rest
+        else
+          loop (leading, comment::inside, trailing) rest
+      | [] -> (List.rev leading, List.rev inside, List.rev trailing)
+    in
+    loop ([], [], []) comments
+
+  let partitionLeadingTrailing comments loc =
+    let rec loop (leading, trailing)  comments =
+      let open Location in
+      match comments with
+      | comment::rest ->
+        let cmtLoc = Comment.loc comment in
+        if cmtLoc.loc_end.pos_cnum <= loc.loc_start.pos_cnum then
+          loop (comment::leading, trailing) rest
+        else
+          loop (leading, comment::trailing) rest
+      | [] -> (List.rev leading, List.rev trailing)
+    in
+    loop ([], []) comments
+
+  let partitionByOnSameLine loc comments =
+    let rec loop (onSameLine, onOtherLine) comments =
+      let open Location in
+      match comments with
+      | [] -> (List.rev onSameLine, List.rev onOtherLine)
+      | comment::rest ->
+        let cmtLoc = Comment.loc comment in
+        if cmtLoc.loc_start.pos_lnum == loc.loc_end.pos_lnum then
+          loop (comment::onSameLine, onOtherLine) rest
+        else
+          loop (onSameLine, comment::onOtherLine) rest
+    in
+    loop ([], []) comments
+
+  let rec walkStructure s t comments =
+    let rec loop structure ?prevLoc comments =
+      let open Location in
+      match structure with
+      | _ when comments = [] -> ()
+      | [] ->
+        begin match prevLoc with
+        | Some loc ->
+          attach t.trailing loc comments
+        | None -> ()
+        end
+      | node::nodes ->
+        let currLoc = node.Parsetree.pstr_loc in
+        let (leading, inside, trailing) = partitionByLoc comments currLoc in
+        begin match prevLoc with
+        | Some prevLoc ->
+          (* Same line *)
+          if prevLoc.loc_end.pos_lnum == currLoc.loc_start.pos_lnum then
+            ()
+          else (* not one same line *)
+            (* Attach all comments as trailing if on the same line as prevLoc *)
+            let (onSameLineAsPrev, afterPrev) = partitionByOnSameLine prevLoc leading in
+            let () = attach t.trailing prevLoc onSameLineAsPrev in
+            let (leading, _inside, _trailing) = partitionByLoc afterPrev currLoc in
+            let () = attach t.leading currLoc leading in
+            ()
+            (* visit structure item with inside comments *)
+        | None ->
+          attach t.leading currLoc leading
+        end;
+        walkStructureItem node t inside;
+        (* go inside *)
+        loop nodes ~prevLoc:currLoc trailing
+    in
+    match s with
+    | _ when comments = [] -> ()
+    | [] -> attach t.inside Location.none comments
+    | s ->
+      loop s comments
+
+    and walkStructureItem si t comments =
+      match si.Parsetree.pstr_desc with
+      | Pstr_open openDescription ->
+        walkOpenDescription openDescription t comments
+      (* | Pstr_value (_, valueBindings) -> *)
+
+      (* | Pstr *)
+      | _ -> ()
+
+    and walkOpenDescription openDescription t comments =
+      let loc = openDescription.popen_lid.loc in
+      let (leading, trailing) = partitionLeadingTrailing comments loc in
+      attach t.leading loc leading;
+      attach t.trailing loc trailing;
+
+end
+
+module Printer = struct
   let addParens doc =
     Doc.group (
       Doc.concat [
@@ -8465,6 +8678,224 @@ module Printer = struct
         Doc.rbrace;
       ]
     )
+
+  let getFirstLeadingComment tbl loc =
+    match Hashtbl.find tbl.CommentInterleaver.leading loc with
+    | comment::_ -> Some comment
+    | [] -> None
+    | exception Not_found -> None
+
+  let printMultilineCommentContent txt =
+    (* Turns
+     *         /* first line
+     *  * second line
+     *      * third line */
+     * Into
+     * /* first line
+     *  * second line
+     *  * third line */
+     *
+     * What makes a comment suitable for this kind of indentation?
+     *  ->  multiple lines + every line starts with a star
+     *)
+    let rec indentStars lines acc =
+      match lines with
+      | [] -> Doc.nil
+      | [lastLine] ->
+        let line = String.trim lastLine in
+        let doc = Doc.text (" " ^ line) in
+        let trailingSpace = if String.length line > 0 then Doc.space else Doc.nil in
+        List.rev (trailingSpace::doc::acc) |> Doc.concat
+      | line::lines ->
+        let line = String.trim line in
+        let len = String.length line in
+        if len > 0 && String.get line 0 == '*' then
+          let doc = Doc.text (" " ^ (String.trim line)) in
+          indentStars lines (Doc.hardLine::doc::acc)
+        else if len == 0 then
+          List.rev acc |> Doc.concat
+        else
+          Doc.text txt
+    in
+    let lines = String.split_on_char '\n' txt in
+    match lines with
+    | [] -> Doc.text "/* */"
+    | [line] -> Doc.text ("/* " ^ (String.trim line) ^ " */")
+    | first::rest ->
+      let firstLine = String.trim first in
+      Doc.concat [
+        Doc.text "/*";
+        if String.length firstLine > 0 && not (String.equal firstLine "*") then
+          Doc.space else Doc.nil;
+        indentStars rest [Doc.hardLine; Doc.text firstLine];
+        Doc.text "*/";
+      ]
+
+  let printComment ?nextComment comment =
+    let singleLine = Comment.isSingleLineComment comment in
+    let content =
+      let txt = Comment.txt comment in
+      if singleLine then
+         Doc.text ("// " ^ String.trim txt)
+      else
+        printMultilineCommentContent txt
+    in
+    let separator = Doc.concat  [
+      if singleLine then Doc.concat [
+        Doc.hardLine;
+        Doc.breakParent;
+      ] else Doc.nil;
+      (match nextComment with
+      | Some next ->
+        let nextLoc = Comment.loc next in
+        let currLoc = Comment.loc comment in
+        let diff =
+          nextLoc.Location.loc_start.pos_lnum -
+          currLoc.Location.loc_end.pos_lnum
+        in
+        let nextSingleLine = Comment.isSingleLineComment next in
+        if singleLine && nextSingleLine then
+          if diff > 1 then Doc.hardLine else Doc.nil
+        else if singleLine && not nextSingleLine then
+          if diff > 1 then Doc.hardLine else Doc.nil
+        else
+          if diff > 1 then Doc.concat [Doc.hardLine; Doc.hardLine]
+          else if diff == 1 then Doc.hardLine
+          else
+            Doc.space
+      | None -> Doc.nil)
+    ]
+    in
+    Doc.concat [
+      content;
+      separator;
+    ]
+
+  let printLeadingComments node tbl loc =
+    let rec loop acc comments =
+      match comments with
+      | [] -> (None, node)
+      | [comment] ->
+        let cmtDoc = printComment comment in
+        let separator =
+          if Comment.isSingleLineComment comment then
+           Doc.nil
+          else if loc.Location.loc_start.pos_lnum ==
+            (Comment.loc comment).Location.loc_end.pos_lnum
+          then
+           Doc.space
+          else
+           Doc.hardLine
+        in
+        let doc = Doc.group (Doc.concat [
+          Doc.concat (List.rev (cmtDoc::acc));
+          separator;
+          node
+        ])
+        in
+        (Some comment, doc)
+      | comment::((nextComment::comments) as rest) ->
+        let cmtDoc = printComment ~nextComment comment in
+        loop (cmtDoc::acc) rest
+    in
+    match Hashtbl.find tbl loc with
+    | exception Not_found -> (None, node)
+    | comments ->
+      loop [] comments
+
+  let printTrailingComments node tbl loc =
+    let rec loop acc comments =
+      match comments with
+      | [] -> assert false
+      | [comment] ->
+        let cmtDoc = printComment comment in
+        (comment, Doc.concat (List.rev (cmtDoc::acc)))
+      | comment::((nextComment::comments) as rest) ->
+        let cmtDoc = printComment ~nextComment comment in
+        loop (cmtDoc::acc) rest
+    in
+    match Hashtbl.find tbl loc with
+    | exception Not_found -> (None, node)
+    | [] -> (None, node)
+    | (first::_) as comments ->
+      let (lastComment, printedComments) = loop [] comments in
+      let separator =
+        let firstCmtLoc = Comment.loc first in
+        let diff =
+          firstCmtLoc.Location.loc_start.pos_lnum - loc.Location.loc_end.pos_lnum
+        in
+        if diff > 1  then
+          Doc.concat [Doc.hardLine; Doc.hardLine]
+        else if diff == 1 then
+          Doc.hardLine
+        else
+          Doc.space
+      in
+      let doc =
+        Doc.group (
+          Doc.concat [
+            node;
+            separator;
+            printedComments;
+          ]
+        )
+      in
+      (Some lastComment, doc)
+
+  let printCommentsRaw node tbl loc =
+    let (lastLeadingComment, doc) = printLeadingComments node tbl.CommentInterleaver.leading loc in
+    let (lastTrailingComment, doc) = printTrailingComments doc tbl.CommentInterleaver.trailing loc in
+    let lastComment = match (lastLeadingComment, lastTrailingComment) with
+    | (_, ((Some comment) as last)) -> last
+    | (_, _) -> None
+    in
+    (lastComment, doc)
+
+  let printComments node tbl loc =
+    let (_, doc) = printCommentsRaw node tbl loc in
+    doc
+
+      (* let leadingNewLine = match getFirstLeadingComment t firstLoc with *)
+      (* | Some comment when *)
+          (* let loc = Comment.loc comment in *)
+          (* prevLoc.Location.loc_end.pos_lnum < loc.Location.loc_start.pos_lnum - 1 *)
+        (* -> Doc.line *)
+      (* | _ -> Doc.nil *)
+      (* in *)
+  let printList ~getLoc ~nodes ~print ?(forceBreak=false) t =
+    let rec loop prevLoc acc nodes =
+      match nodes with
+      | [] -> (prevLoc, Doc.concat (List.rev acc))
+      | node::nodes ->
+        let loc = getLoc node in
+        let (lastComment, doc) = printCommentsRaw (print node t) t loc in
+        let prevLoc = match lastComment with
+        | Some comment -> Comment.loc comment
+        | None -> prevLoc
+        in
+        let needsNewline = match getFirstLeadingComment t loc with
+        | Some comment ->
+          let cmtLoc = Comment.loc comment in
+          cmtLoc.Location.loc_start.pos_lnum - prevLoc.Location.loc_end.pos_lnum > 1
+        | None ->
+          loc.Location.loc_start.pos_lnum - prevLoc.Location.loc_end.pos_lnum > 1
+        in
+        if needsNewline then
+          loop loc (doc::Doc.hardLine::Doc.hardLine::acc) nodes
+        else
+          loop loc (doc::Doc.hardLine::acc) nodes
+    in
+    match nodes with
+    | [] -> Doc.nil
+    | node::nodes ->
+      let firstLoc = getLoc node in
+      let (_, doc) = printCommentsRaw (print node t) t firstLoc in
+      let (lastLoc, docs) = loop firstLoc [doc] nodes in
+      let forceBreak =
+        forceBreak ||
+        firstLoc.loc_start.pos_lnum != lastLoc.loc_end.pos_lnum
+      in
+      Doc.breakableGroup ~forceBreak docs
 
   (* This could be done in one pass by collecting locations as we go? *)
   let interleaveWhitespace ?(forceBreak=false) (rows: (Location.t * Doc.t) list) =
@@ -8496,6 +8927,10 @@ module Printer = struct
       let txts = Longident.flatten l in
       Doc.join ~sep:Doc.dot (List.map Doc.text txts)
     | _ -> failwith "unsupported ident"
+
+  let printLongidentLocation l p =
+    let doc = printLongident l.Location.txt in
+    printComments doc p l.loc
 
   (* TODO: better allocation strategy for the buffer *)
   let escapeStringContents s =
@@ -8537,12 +8972,19 @@ module Printer = struct
     | Pconst_float (s, _) -> Doc.text s
     | Pconst_char c -> Doc.text ("'" ^ (Char.escaped c) ^ "'")
 
-  let rec printStructure (s : Parsetree.structure) =
-    interleaveWhitespace  (
-      List.map (fun si -> (si.Parsetree.pstr_loc, printStructureItem si)) s
-    )
+  let rec printStructure (s : Parsetree.structure) t =
+    printList
+      ~getLoc:(fun s -> s.Parsetree.pstr_loc)
+      ~nodes:s
+      ~print:printStructureItem
+     t
 
-  and printStructureItem (si: Parsetree.structure_item) =
+  (* and printStructure2 s = *)
+    (* interleaveWhitespace  ( *)
+      (* List.map (fun si -> (si.Parsetree.pstr_loc, printStructureItem si)) s *)
+    (* ) *)
+
+  and printStructureItem (si: Parsetree.structure_item) p =
     match si.pstr_desc with
     | Pstr_value(rec_flag, valueBindings) ->
 			let recFlag = match rec_flag with
@@ -8580,7 +9022,7 @@ module Printer = struct
     | Pstr_include includeDeclaration ->
       printIncludeDeclaration includeDeclaration
     | Pstr_open openDescription ->
-      printOpenDescription openDescription
+      printOpenDescription openDescription p
     | Pstr_modtype modTypeDecl ->
       printModuleTypeDeclaration modTypeDecl
     | Pstr_module moduleBinding ->
@@ -8907,7 +9349,7 @@ module Printer = struct
     | Psig_modtype modTypeDecl ->
       printModuleTypeDeclaration modTypeDecl
     | Psig_open openDescription ->
-      printOpenDescription openDescription
+      printOpenDescription openDescription CommentInterleaver.empty
     | Psig_include includeDescription ->
       printIncludeDescription includeDescription
     | Psig_attribute attr -> Doc.concat [Doc.text "@"; printAttribute attr]
@@ -8959,14 +9401,14 @@ module Printer = struct
       body
     ]
 
-  and printOpenDescription (openDescription : Parsetree.open_description) =
+  and printOpenDescription (openDescription : Parsetree.open_description) p =
     Doc.concat [
       printAttributes openDescription.popen_attributes;
       Doc.text "open";
       (match openDescription.popen_override with
       | Asttypes.Fresh -> Doc.space
       | Asttypes.Override -> Doc.text "! ");
-      printLongident openDescription.popen_lid.txt
+      printLongidentLocation openDescription.popen_lid p
     ]
 
   and printIncludeDescription (includeDescription: Parsetree.include_description) =
@@ -9807,7 +10249,7 @@ module Printer = struct
     | Ppat_construct({txt = Longident.Lident "[]"}, _) ->
         Doc.text "list()"
     | Ppat_construct({txt = Longident.Lident "::"}, _) ->
-      let (patterns, tail) = collectPatternsFromListConstruct [] p in
+      let (patterns, tail) = ParsetreeViewer.collectPatternsFromListConstruct [] p in
       let shouldHug = match (patterns, tail) with
       | ([pat],
         {ppat_desc = Ppat_construct({txt = Longident.Lident "[]"}, _)}) when ParsetreeViewer.isHuggablePattern pat -> true
@@ -11411,7 +11853,7 @@ module Printer = struct
           Doc.indent (
             Doc.concat [
               Doc.softLine;
-              printStructure structure;
+              printStructure structure CommentInterleaver.empty;
             ];
           );
           Doc.softLine;
@@ -11673,15 +12115,16 @@ module Printer = struct
       )
     ]
 
-  let printImplementation (s: Parsetree.structure) =
-    let stringDoc = Doc.toString ~width:80 (printStructure s) in
-    print_endline stringDoc;
-    print_newline()
+  let printImplementation (s: Parsetree.structure) comments =
+    let tree = CommentInterleaver.make () in
+    CommentInterleaver.walkStructure s tree comments;
+    (* CommentInterleaver.log tree; *)
+    let stringDoc = Doc.toString ~width:80 (printStructure s tree) in
+    print_string stringDoc
 
   let printInterface (s: Parsetree.signature) =
     let stringDoc = Doc.toString ~width:80 (printSignature s) in
-    print_endline stringDoc;
-    print_newline()
+    print_string stringDoc
 
 end
 
@@ -11775,7 +12218,7 @@ end = struct
     | "ml" | "ocaml" ->
         Pprintast.structure Format.std_formatter ast
     | "ns" | "napkinscript" ->
-        Printer.printImplementation ast
+        Printer.printImplementation ast (List.rev _parserState.Parser.comments)
     | "ast" -> Printast.implementation Format.std_formatter ast
     | _ -> (* default binary *)
       output_string stdout Config.ast_impl_magic_number;
@@ -11853,7 +12296,7 @@ end = struct
       let ast = NapkinScript.parseStructure p in
       (fun _ ->
         let _ = Sys.opaque_identity (
-          Doc.toString ~width:80 (Printer.printStructure ast)
+          Doc.toString ~width:80 (Printer.printStructure ast CommentInterleaver.empty)
         ) in ()
       )
     | _ -> (fun _ -> ())

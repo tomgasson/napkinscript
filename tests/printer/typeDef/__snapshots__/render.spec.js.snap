@@ -116,6 +116,7 @@ type user<
   fields: string,
 }
 
+// auto-breaks over multiple lines, because user gave \\"hints\\" to printer
 type user = {
   name: string,
   age: int,
@@ -142,6 +143,7 @@ type t = User.t = private {
   age: int,
 }
 
+// attributes
 type user = {
   @attr name: string,
   @attr age: int,
@@ -235,6 +237,7 @@ type color = Colour.t =
   | SuperLongColoooooooooourName
   | AnotherSuuuuuuuuuperLongName
 
+// gadt
 type color = Red: color | Blue: color
 type color =
   | Red: color
