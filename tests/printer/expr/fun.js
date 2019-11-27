@@ -210,3 +210,20 @@ let add = ({x as superLongParameterName, y as superLongParameterName, z as super
 
 let add = (Color(superLongParameterName, superLongParameterName, superLongParameterNameeeeeee)) => x + y + z
 let add = (Color(superLongParameterName, superLongParameterName, superLongParameterNameeeee)) : color<superLongTypeIdent, superLongType2, anotherLongOne, woooooooooooooooooooooooooooooooooooow> => x + y + z
+
+let parseExceptionDef = (~attrs, p) => {
+  let startPos = p.Parser.startPos
+  Parser.expect(Token.Exception, p)
+  let /_, name, kind/ = parseConstrDef(~parseAttrs=false, p)
+  let loc = mkLoc(startPos, p.prevEndPos)
+  Ast_helper.Te.constructor(~loc, ~attrs, name, kind)
+}
+
+and parseStructure = (p): Parsetree.structure =>
+  parseList(p, ~grammar=Grammar.Structure, ~f=parseStructureItem)
+
+and parseStructureItem = (_): Parsetree.structure_item => {
+  let startPos = p.Parser.startPos
+  let attrs = parseAttributes(p)
+  attrs
+}

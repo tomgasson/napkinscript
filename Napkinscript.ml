@@ -915,7 +915,7 @@ module Token = struct
       "include", Include;
       "module", Module;
       "of", Of;
-      "mod", Mod; "land", Land; "lor", Lor; "lxor", Lxor;
+      "mod", Mod; "land", Land;  "lxor", Lxor;
       "lsl", Lsl;
       "lsr", Lsr;
       "asr", Asr;
@@ -1137,7 +1137,7 @@ module Grammar = struct
 
 
   let isPatternStart = function
-    | Token.Int _ | String _
+    | Token.Int _ | String _ | Character _ | True | False
     | Lparen | Lbracket | Lbrace | Forwardslash | List
     | Underscore
     | Lident _ | Uident _
@@ -1910,7 +1910,7 @@ module Scanner = struct
     while (
       CharacterCodes.isLetter scanner.ch ||
       CharacterCodes.isDigit scanner.ch ||
-      scanner.ch == CharacterCodes.underscore
+      CharacterCodes.underscore == scanner.ch
     ) do
       next scanner
     done;
@@ -2164,7 +2164,7 @@ module Scanner = struct
       scanTemplate scanner
     else if ch == CharacterCodes.underscore then (
       let nextCh = peek scanner in
-      if nextCh == CharacterCodes.underscore || CharacterCodes.isLetter nextCh then
+      if nextCh == CharacterCodes.underscore || CharacterCodes.isDigit nextCh || CharacterCodes.isLetter nextCh then
         scanIdentifier scanner
       else (
         next scanner;
@@ -2508,17 +2508,6 @@ module JsFfi = struct
 end
 
 module Parser = struct
-  type directive = DirDisabled | DirIfTrue | DirIfFalse
-
-  type directiveNode =
-    | DirBool of bool
-    | DirString of string
-    | DirInt of int
-    | DirFloat of float
-    | DirBinary of (Token.t * directiveNode * directiveNode)
-    | DirError
-
-
   type t = {
     mutable scanner: Scanner.t;
     mutable token: Token.t;
@@ -2528,7 +2517,6 @@ module Parser = struct
     mutable breadcrumbs: (Grammar.t * Lexing.position) list;
     mutable errors: Reporting.parseError list;
     mutable diagnostics: Diagnostics.t list;
-    mutable directive: directive;
     mutable comments: Comment.t list;
   }
 
@@ -2564,147 +2552,17 @@ module Parser = struct
    | BangEqualEqual -> true
    | _ -> false
 
-  let rec advance p =
+  let rec next p =
     let (startPos, endPos, token) = Scanner.scan p.scanner in
     match token with
     | Comment c ->
-        p.comments <- c::p.comments;
-        advance p
+      p.comments <- c::p.comments;
+      next p
     | _ ->
       p.token <- token;
       p.prevEndPos <- p.endPos;
       p.startPos <- startPos;
       p.endPos <- endPos
-
-  let rec skipTokens p cont =
-    advance p;
-    if p.token = Eof then
-      err p (Diagnostics.message "Missing #endif")
-    else if p.token = Hash then (
-      advance p;
-      match p.token with
-      | Lident "endif" ->
-        p.directive <- DirDisabled;
-        cont p
-      | Lident "elseif" ->
-        advance p;
-        let v = parseDirectiveExpr p in
-        interpretDirective p v cont
-      | Else ->
-        if p.directive = DirIfTrue then skipTokens p cont else cont p
-      | _ -> skipTokens p cont
-    )
-    else
-      skipTokens p cont
-
-  and parseDirectiveOperand p =
-    match p.token with
-    | Uident uident ->
-        advance p;
-        DirString (
-        match Sys.getenv_opt uident with
-        | Some v -> v
-        | None -> ""
-      )
-    | True -> advance p; DirBool true
-    | False -> advance p; DirBool false
-    | Int (n, _) -> advance p; DirInt (int_of_string n)
-    | Float (n, _) -> advance p; DirFloat (float_of_string n)
-    | String s -> advance p; DirString s
-    | Lparen -> advance p; parseDirectiveExpr p
-    | _ -> DirError
-
-  and parseDirectiveBinaryExpr p prec =
-    let rec loop a =
-      let token = p.token in
-      if isDirectiveOp token then
-        let tokenPrec = Token.precedence token in
-        let () = advance p in
-        if tokenPrec < prec then a
-        else (
-          let b = parseDirectiveBinaryExpr p (tokenPrec + 1) in
-          let expr = DirBinary (token, a, b) in
-          loop expr
-        )
-      else
-        a
-    in
-    let operand = parseDirectiveOperand p in
-    loop operand
-
- and eval exp =
-   let f_of_op = function
-   | Token.LessThan -> (<)
-   | GreaterThan -> (>)
-   | GreaterEqual -> (>=)
-   | LessEqual -> (<=)
-   | EqualEqual -> (=)
-   | EqualEqualEqual -> (==)
-   | BangEqual -> (<>)
-   | BangEqualEqual -> (!=)
-   | _ -> assert false
-   in
-   match exp with
-    | DirBool b -> b
-    | DirInt n -> n <> 0
-    | DirFloat n -> n <> 0.0
-    | DirBinary (op, DirString a, DirString b) ->
-      (f_of_op op) a b
-    | DirBinary (op, DirInt a, DirInt b) ->
-      (f_of_op op) a b
-    | DirBinary (op, DirFloat a, DirFloat b) ->
-      (f_of_op op) a b
-    | _ -> false
-
-  and parseDirectiveExpr p =
-    parseDirectiveBinaryExpr p 1
-
-  and interpretDirective p v cont =
-    if eval v then (
-      p.directive <- DirIfTrue
-    ) else (
-      p.directive <- DirIfFalse;
-      skipTokens p cont
-    )
-
-  let rec next p =
-    advance p;
-    match p.token with
-    | Hash ->
-      advance p;
-      begin match (p.token, p.directive) with
-      | If, DirDisabled ->
-        advance p;
-        let v = parseDirectiveExpr p in
-        interpretDirective p v next
-      | (Lident "elseif" | Else), DirIfTrue ->
-        advance p;
-        let rec skip p =
-          let token = p.token in
-          if token = Eof then
-            ()
-          else (
-            advance p;
-            if token = Hash then (
-              match p.token with
-              | Lident "endif" ->
-                p.directive <- DirDisabled;
-                next p
-              | _ -> skip p
-            ) else (
-              skip p
-            )
-          )
-        in
-        skip p
-      | Else, DirIfFalse ->
-        advance p
-      | Lident "endif", (DirIfTrue | DirIfFalse) ->
-        p.directive <- DirDisabled;
-        next p
-      | _ -> ()
-      end
-    | _ -> ()
 
   let make src filename =
     let scanner = Scanner.make (Bytes.of_string src) filename in
@@ -2717,7 +2575,6 @@ module Parser = struct
       breadcrumbs = [];
       errors = [];
       diagnostics = [];
-      directive = DirDisabled;
       comments = [];
     } in
     parserState.scanner.err <- (fun ~startPos ~endPos error ->
@@ -2774,7 +2631,6 @@ module Parser = struct
     let breadcrumbs = p.breadcrumbs in
     let errors = p.errors in
     let diagnostics = p.diagnostics in
-    let directive = p.directive in
     let comments = p.comments in
 
     let res = callback p in
@@ -2793,7 +2649,6 @@ module Parser = struct
     p.breadcrumbs <- breadcrumbs;
     p.errors <- errors;
     p.diagnostics <- diagnostics;
-    p.directive <- directive;
     p.comments <- comments;
 
     res
@@ -4004,7 +3859,8 @@ Solution: you need to pull out each field you want explicitly."
       end
     | _ ->
       let pattern = parseConstrainedPattern p in
-      ([], Asttypes.Nolabel, {pattern with ppat_attributes = attrs @ pattern.ppat_attributes})
+      let attrs = List.concat [attrs; pattern.ppat_attributes] in
+      ([], Asttypes.Nolabel, {pattern with ppat_attributes = attrs})
     in
     let parameter = match p.Parser.token with
     | Equal ->
@@ -4361,7 +4217,7 @@ Solution: you need to pull out each field you want explicitly."
     in
     let endPos = p.Parser.prevEndPos in
     {expr with
-      pexp_attributes = expr.Parsetree.pexp_attributes @ attrs;
+      pexp_attributes = List.concat[expr.Parsetree.pexp_attributes; attrs];
       pexp_loc = mkLoc startPos endPos}
 
   (* a binary expression is an expression that combines two expressions with an
@@ -4537,7 +4393,6 @@ Solution: you need to pull out each field you want explicitly."
     let breadcrumbs = p.breadcrumbs in
     let errors = p.errors in
     let diagnostics = p.diagnostics in
-    let directive = p.directive in
     let comments = p.comments in
 
     match p.Parser.token with
@@ -4561,7 +4416,6 @@ Solution: you need to pull out each field you want explicitly."
         p.breadcrumbs <- breadcrumbs;
         p.errors <- errors;
         p.diagnostics <- diagnostics;
-        p.directive <- directive;
         p.comments <- comments;
         []
       end
@@ -4667,10 +4521,10 @@ Solution: you need to pull out each field you want explicitly."
     Ast_helper.Exp.apply
       ~loc
       name
-      (jsxProps @ [
+      (List.concat [jsxProps; [
         (Asttypes.Labelled "children", children);
         (Asttypes.Nolabel, Ast_helper.Exp.construct (Location.mknoloc (Longident.Lident "()")) None)
-      ])
+      ]])
 
   (*
    *  jsx ::=
@@ -4946,7 +4800,7 @@ Solution: you need to pull out each field you want explicitly."
     let exprs =
       parseCommaDelimitedList ~grammar:Grammar.RecordRows ~closing:Rbrace ~f:parseRecordRow p
     in
-    let rows = rows @ exprs in
+    let rows = List.concat[rows; exprs] in
     let () = match rows with
     | [] ->
       let msg = "Record spread needs at least one field that's updated" in
@@ -5008,7 +4862,7 @@ Solution: you need to pull out each field you want explicitly."
         | True | False | Int _ | Float _ | String _ | Lident _ | Uident _
         | Lparen | List | Lbracket | Lbrace | Forwardslash | Assert
         | Lazy | If | For | While | Switch | Open | Module | Exception | Let
-        | LessThan | Backtick | Percent | Try ->
+        | LessThan | Backtick | Percent | Try | Underscore ->
           parseExprBlock p
         | _ ->
           let loc = mkLoc p.startPos p.endPos in
@@ -5020,7 +4874,7 @@ Solution: you need to pull out each field you want explicitly."
       | True | False | Int _ | Float _ | String _ | Lident _ | Uident _
       | Lparen | List | Lbracket | Lbrace | Forwardslash | Assert
       | Lazy | If | For | While | Switch | Open | Module | Exception | Let
-      | LessThan | Backtick | Percent | Try ->
+      | LessThan | Backtick | Percent | Try | Underscore ->
         parseExprBlock p
       | _ ->
         let loc = mkLoc p.startPos p.endPos in
@@ -5036,7 +4890,7 @@ Solution: you need to pull out each field you want explicitly."
       | True | False | Int _ | Float _ | String _ | Lident _ | Uident _
       | Lparen | List | Lbracket | Lbrace | Forwardslash | Assert
       | Lazy | If | For | While | Switch | Open | Module | Exception | Let
-      | LessThan | Backtick | Percent | Try ->
+      | LessThan | Backtick | Percent | Try | Underscore ->
         let e2 = parseExprBlock p in
         Ast_helper.Exp.sequence e1 e2
       | _ -> e1
@@ -5067,10 +4921,10 @@ Solution: you need to pull out each field you want explicitly."
         begin match p.Parser.token with
         (* seq expr start *)
         | At | Percent | Minus | MinusDot | Plus | PlusDot | Bang | Band
-        | True | False | Int _ | String _ | Lident _ | Uident _
+        | True | False | Int _ | String _ | Character _ | Lident _ | Uident _
         | Lparen | List | Lbracket | Lbrace | Forwardslash | Assert
         | Lazy | If | For | While | Switch | Open | Module | Exception | Let
-        | LessThan | Backtick | Try ->
+        | LessThan | Backtick | Try | Underscore ->
           let next = parseExprBlockItem p in
           ignore(Parser.optional p Semicolon);
           Ast_helper.Exp.sequence item next
@@ -5080,20 +4934,20 @@ Solution: you need to pull out each field you want explicitly."
       | token when
           begin match token with
           | Bang | Band
-          | True | False | Int _ | String _ | Lident _ | Uident _
+          | True | False | Int _ | String _ | Character _ | Lident _ | Uident _
           | Lparen | List | Lbracket | Lbrace | Forwardslash | Assert
           | Lazy | If | For | While | Switch | Open | Module | Exception | Let
-          | LessThan | Backtick | Percent | Try -> true
+          | LessThan | Backtick | Percent | Try | Underscore -> true
           | _ -> false
           end
         ->
           begin match p.Parser.token with
           (* seq expr start *)
           | At | Minus | MinusDot | Plus | PlusDot | Bang | Band
-          | True | False | Int _ | String _ | Lident _ | Uident _
+          | True | False | Int _ | String _ | Character _ | Lident _ | Uident _
           | Lparen | List | Lbracket | Lbrace | Forwardslash | Assert
           | Lazy | If | For | While | Switch | Open | Module | Exception | Let
-          | LessThan | Backtick | Percent | Try ->
+          | LessThan | Backtick | Percent | Try | Underscore ->
             let next = parseExprBlockItem p in
             ignore(Parser.optional p Semicolon);
             Ast_helper.Exp.sequence item next
@@ -5589,7 +5443,7 @@ Solution: you need to pull out each field you want explicitly."
         Parser.expect Rparen p;
         {t with
           ptyp_loc = mkLoc startPos p.prevEndPos;
-          ptyp_attributes = attrs @ t.ptyp_attributes}
+          ptyp_attributes = List.concat[attrs; t.ptyp_attributes]}
       end
     | Uident _ | Lident _ | List ->
       let constr = parseValuePath p in
@@ -5731,7 +5585,7 @@ Solution: you need to pull out each field you want explicitly."
       end
     | _ ->
       let typ = parseTypExpr p in
-      let typWithAttributes = {typ with ptyp_attributes = attrs @ typ.ptyp_attributes} in
+      let typWithAttributes = {typ with ptyp_attributes = List.concat[attrs; typ.ptyp_attributes]} in
       (uncurried, [], Asttypes.Nolabel, typWithAttributes, startPos)
 
   (* (int, ~x:string, float) *)
@@ -5780,7 +5634,7 @@ Solution: you need to pull out each field you want explicitly."
         Ast_helper.Typ.arrow ~loc:(mkLoc startPos endPos) ~attrs argLbl typ t
       ) parameters returnType
       in
-      {typ with ptyp_attributes = typ.ptyp_attributes @ attrs}
+      {typ with ptyp_attributes = List.concat [typ.ptyp_attributes; attrs]}
 
   (*
    * typexpr ::=
@@ -6901,7 +6755,7 @@ Solution: you need to pull out each field you want explicitly."
       else
         parsePrimaryModExpr p
     in
-    {modExpr with pmod_attributes = modExpr.pmod_attributes @ attrs}
+    {modExpr with pmod_attributes = List.concat [modExpr.pmod_attributes; attrs]}
 
   and parseConstrainedModExpr p =
     let modExpr = parseModuleExpr p in
@@ -7089,7 +6943,7 @@ Solution: you need to pull out each field you want explicitly."
       | _ -> modty
     in
     let moduleType = { modty with
-      pmty_attributes = modty.pmty_attributes @ attrs
+      pmty_attributes = List.concat [modty.pmty_attributes; attrs]
     } in
     if with_ then
       parseWithConstraints moduleType p
@@ -10095,7 +9949,13 @@ module Printer = struct
       | Pexp_constraint (expr, typ) -> (expr, Some typ)
       | _ -> (returnExpr, None)
       in
-      let parametersDoc = printExprFunParameters ~inCallback:false ~uncurried parameters in
+      let hasConstraint = match typConstraint with | Some _ -> true | None -> false in
+      let parametersDoc = printExprFunParameters
+        ~inCallback:false
+        ~uncurried
+        ~hasConstraint
+        parameters
+      in
       let returnExprDoc =
         let shouldInline = match returnExpr.pexp_desc with
         | Pexp_array _
@@ -10162,6 +10022,11 @@ module Printer = struct
         Doc.space;
         printCases cases;
       ]
+    | Pexp_function cases ->
+      Doc.concat [
+        Doc.text "x => switch x ";
+        printCases cases;
+      ]
     | _ -> failwith "expression not yet implemented in printer"
     in
     let shouldPrintItsOwnAttributes = match e.pexp_desc with
@@ -10194,7 +10059,11 @@ module Printer = struct
       | Pexp_constraint (expr, typ) -> (expr, Some typ)
       | _ -> (returnExpr, None)
       in
-      let parametersDoc = printExprFunParameters ~inCallback  ~uncurried parameters in
+      let parametersDoc = printExprFunParameters
+        ~inCallback
+        ~uncurried
+        ~hasConstraint:(match typConstraint with | Some _ -> true | None -> false)
+        parameters in
       let returnShouldIndent = match returnExpr.pexp_desc with
       | Pexp_sequence _ | Pexp_let _ | Pexp_letmodule _ | Pexp_letexception _ -> false
       | _ -> true
@@ -10885,14 +10754,14 @@ module Printer = struct
       ]
     )
 
-  and printExprFunParameters ~inCallback ~uncurried parameters =
+  and printExprFunParameters ~inCallback ~uncurried ~hasConstraint parameters =
     match parameters with
     (* let f = _ => () *)
     | [([], Asttypes.Nolabel, None, {Parsetree.ppat_desc = Ppat_any})] when not uncurried ->
-      Doc.text "_"
+      if hasConstraint then Doc.text "(_)" else Doc.text "_"
     (* let f = a => () *)
     | [([], Asttypes.Nolabel, None, {Parsetree.ppat_desc = Ppat_var stringLoc})]  when not uncurried ->
-      Doc.text stringLoc.txt
+      if hasConstraint then Doc.text ("(" ^ stringLoc.txt ^ ")") else Doc.text stringLoc.txt
     (* let f = () => () *)
     | [([], Nolabel, None, {ppat_desc = Ppat_construct({txt = Longident.Lident "()"}, None)})] when not uncurried ->
       Doc.text "()"
@@ -11397,17 +11266,17 @@ end
 
 (* command line flags *)
 module Clflags: sig
-  val ancient: bool ref
   val recover: bool ref
   val profile: bool ref
+  val bench: bool ref
   val print: string ref
   val files: string list ref
 
   val parse: unit -> unit
 end = struct
-  let ancient = ref false
   let recover = ref false
   let profile = ref false
+  let bench = ref false
   let setRecover () = recover := true
 
   let files = ref []
@@ -11419,8 +11288,8 @@ end = struct
 
   let spec = [
     ("-recover", Arg.Unit (fun () -> recover := true), "Emit partial ast");
+    ("-bench", Arg.Unit (fun () -> bench := true), "Run internal benchmarks");
     ("-print", Arg.String (fun txt -> print := txt), "Print either binary, ocaml or ast");
-    ("-ancient", Arg.Unit (fun () -> ancient := true), "Output 4.02.3 binary ast");
     ("-profile", Arg.Unit (fun () -> profile := true), "Enable performance profiling");
   ]
 
@@ -11535,116 +11404,76 @@ end = struct
     | _ -> exit 1
 end
 
-(* let () = *)
-  (* let filename = "RedBlackTree.ml" in *)
-  (* let src = IO.readFile filename in *)
-  (* let benchmark = Benchmark.make ~name:"RedBlackTree Napkinscript parser" ~f:(fun _ -> *)
-    (* let p = Parser.make src filename in *)
-    (* let _ast = NapkinScript.parseStructure p in *)
-    (* () *)
-  (* ) () *)
-  (* in *)
-  (* let () = Benchmark.launch benchmark in *)
-  (* Benchmark.report benchmark; *)
-  (* print_newline(); *)
-  (* print_newline() *)
+module Benchmarks: sig
+  val run: unit -> unit
+end = struct
+  type action = Parse | Print
+  let string_of_action action = match action with
+   | Parse -> "parser"
+   | Print -> "printer"
 
+  (* TODO: we could at Reason here *)
+  type lang = Ocaml | Napkin
+  let string_of_lang lang = match lang with
+    | Ocaml -> "ocaml"
+    | Napkin -> "napkinscript"
+
+  let parseOcaml src filename =
+    let lexbuf = Lexing.from_string src in
+    Location.init lexbuf filename;
+    Parse.implementation lexbuf
+
+  let parseNapkin src filename =
+    let p = Parser.make src filename in
+    NapkinScript.parseStructure p
+
+  let benchmark ~filename ~lang ~action =
+    let src = IO.readFile filename in
+    let name =
+      filename ^ " " ^ (string_of_lang lang) ^ " " ^ (string_of_action action)
+    in
+    let benchmarkFn = match (lang, action) with
+    | (Napkin, Parse) -> (fun _ ->
+        let _ = Sys.opaque_identity (parseNapkin src filename) in ()
+      )
+    | (Ocaml, Parse) -> (fun _ ->
+        let _ = Sys.opaque_identity (parseOcaml src filename) in ()
+      )
+    | (Napkin, Print) ->
+      let p = Parser.make src filename in
+      let ast = NapkinScript.parseStructure p in
+      (fun _ ->
+        let _ = Sys.opaque_identity (
+          Doc.toString ~width:80 (Printer.printStructure ast)
+        ) in ()
+      )
+    | _ -> (fun _ -> ())
+    in
+    let b = Benchmark.make ~name ~f:benchmarkFn () in
+    Benchmark.launch b;
+    Benchmark.report b
+
+  let run () =
+    benchmark "./benchmarks/RedBlackTreeNapkin.ml" Napkin Parse;
+    benchmark "./benchmarks/RedBlackTreeOcaml.ml" Ocaml Parse;
+    benchmark "./benchmarks/PrinterNapkin.ml" Napkin Parse;
+    benchmark "./benchmarks/PrinterOcaml.ml" Ocaml Parse;
+    benchmark "./benchmarks/RedBlackTreeNapkin.ml" Napkin Print;
+    benchmark "./benchmarks/PrinterNapkin.ml" Napkin Print;
+    benchmark "./benchmarks/NapkinscriptNapkin.ml" Napkin Parse;
+    benchmark "./benchmarks/NapkinscriptOcaml.ml" Ocaml Parse;
+    benchmark "./benchmarks/NapkinscriptNapkin.ml" Napkin Print;
+end
 
 (* let () = *)
-  (* let filename = "RedBlackTreePureOcaml.ml" in *)
+  (* let filename = "Napkinscript2.ml" in *)
   (* let src = IO.readFile filename in *)
-  (* let benchmark = Benchmark.make ~name:"RedBlackTree Ocaml 4.06 parser" ~f:(fun _ -> *)
+  (* let ast = *)
     (* let lexbuf = Lexing.from_string src in *)
     (* Location.init lexbuf filename; *)
-    (* let _ast = Parse.implementation lexbuf in *)
-    (* () *)
-  (* ) () *)
+    (* Parse.implementation lexbuf *)
   (* in *)
-  (* let () = Benchmark.launch benchmark in *)
-  (* Benchmark.report benchmark; *)
-  (* print_newline(); *)
-  (* print_newline() *)
-
-(* let () = *)
-  (* let filename = "PrinterBench.ml" in *)
-  (* let src = IO.readFile filename in *)
-  (* let benchmark = Benchmark.make ~name:"Printer Napkinscript parser (no comments!)" ~f:(fun _ -> *)
-    (* let p = Parser.make src filename in *)
-    (* let _ast = NapkinScript.parseStructure p in *)
-    (* () *)
-  (* ) () *)
-  (* in *)
-  (* let () = Benchmark.launch benchmark in *)
-  (* Benchmark.report benchmark; *)
-  (* print_newline(); *)
-  (* print_newline() *)
-
-(* let () = *)
-  (* let filename = "MyPrinter.ml" in *)
-  (* let src = IO.readFile filename in *)
-  (* let benchmark = Benchmark.make ~name:"Printer Ocaml parser" ~f:(fun _ -> *)
-    (* let lexbuf = Lexing.from_string src in *)
-    (* Location.init lexbuf filename; *)
-    (* let _ast = Parse.implementation lexbuf in *)
-    (* () *)
-  (* ) () *)
-  (* in *)
-  (* let () = Benchmark.launch benchmark in *)
-  (* Benchmark.report benchmark; *)
-  (* print_newline(); *)
-  (* print_newline() *)
-
-
-(* let () = *)
-  (* let filename = "RedBlackTree.re" in *)
-  (* let src = IO.readFile filename in *)
-  (* let benchmark = Benchmark.make ~name:"RedBlackTree reason parser" ~f:(fun _ -> *)
-    (* let lexbuf = Lexing.from_string src in *)
-    (* Location.init lexbuf filename; *)
-    (* let (_ast, _comments) = Refmt_main3.Reason_toolchain.RE.implementation_with_comments lexbuf in *)
-    (* () *)
-  (* ) () *)
-  (* in *)
-  (* let () = Benchmark.launch benchmark in *)
-  (* Benchmark.report benchmark; *)
-  (* print_newline(); *)
-  (* print_newline() *)
-
-
-(* let () = *)
-  (* let filename = "RedBlackTree.ml" in *)
-  (* let src = IO.readFile filename in *)
-  (* let p = Parser.make src filename in *)
-  (* let ast = NapkinScript.parseStructure p in *)
-  (* let benchmark = Benchmark.make ~name:"RedBlackTree Napkinscript printer" ~f:(fun _ -> *)
-    (* let _ = Sys.opaque_identity (Doc.toString ~width:80 (Printer.printStructure ast)) in *)
-    (* () *)
-  (* ) () *)
-  (* in *)
-  (* let () = Benchmark.launch benchmark in *)
-  (* Benchmark.report benchmark; *)
-  (* print_newline(); *)
-  (* print_newline() *)
-
-
-
-(* let () = *)
-  (* let filename = "RedBlackTree.re" in *)
-  (* let src = IO.readFile filename in *)
-  (* let lexbuf = Lexing.from_string src in *)
-  (* Location.init lexbuf filename; *)
-  (* let astAndComments = Refmt_main3.Reason_toolchain.RE.implementation_with_comments lexbuf in *)
-  (* let benchmark = Benchmark.make ~name:"RedBlackTree Reason printer" ~f:(fun _ -> *)
-    (* let _ = Sys.opaque_identity (Refmt_main3.Reason_toolchain.RE.print_implementation_with_comments *)
-    (* Format.str_formatter astAndComments) in *)
-    (* (* let syntax = Format.flush_str_formatter () in *) *)
-    (* () *)
-  (* ) () *)
-  (* in *)
-  (* let () = Benchmark.launch benchmark in *)
-  (* Benchmark.report benchmark; *)
-  (* print_newline(); *)
-  (* print_newline() *)
+  (* Doc.toString ~width:80 (Printer.printStructure ast) |> print_endline *)
 
 let () =
   Clflags.parse ();
@@ -11652,4 +11481,5 @@ let () =
     Driver.processFile ~recover:!Clflags.recover ~target:!Clflags.print filename
   ) !Clflags.files;
   if !Clflags.profile then Profile.print();
+  if !Clflags.bench then Benchmarks.run();
   exit 0

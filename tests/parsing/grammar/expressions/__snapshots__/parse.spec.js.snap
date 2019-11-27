@@ -159,7 +159,8 @@ let nestedLet = let _ = 1 in ()
 let nestedLet = let _ = 1 in 2
 let init () = foo (1 == 1); [%assert let () = 1 == 2]
 let init () =
-  [%assert let () = 1 == 2]; foo (1 == 1); [%assert let () = 1 == 2]"
+  [%assert let () = 1 == 2]; foo (1 == 1); [%assert let () = 1 == 2]
+let f () = let x = 1 in fun _ -> ()"
 `;
 
 exports[`bracedOrRecord.js 1`] = `

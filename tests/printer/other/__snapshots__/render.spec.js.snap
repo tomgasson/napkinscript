@@ -117,6 +117,12 @@ let x = '\\\\179'
 "
 `;
 
+exports[`lor.js 1`] = `
+"let lower = ch => lor(32, ch)
+
+"
+`;
+
 exports[`number.js 1`] = `
 "let x = 0b0000_0001
 
