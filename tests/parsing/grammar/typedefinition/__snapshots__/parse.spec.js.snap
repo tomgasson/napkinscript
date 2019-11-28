@@ -257,7 +257,10 @@ type nonrec t = private
   | Green  constraint 'a = unit constraint 'b = unit
 type nonrec t = {
   x: int ;
-  y: int }"
+  y: int }
+type nonrec callback = (ReactEvent.Mouse.t -> unit) as 'callback
+type nonrec callback = ReactEvent.Mouse.t -> unit as 'u
+type nonrec callback = (ReactEvent.Mouse.t -> unit) as 'callback"
 `;
 
 exports[`typeNonrec.js 1`] = `

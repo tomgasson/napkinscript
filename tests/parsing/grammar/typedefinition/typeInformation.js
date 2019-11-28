@@ -46,3 +46,7 @@ type t = private Green  constraint 'a = unit
 type t = private Green  constraint 'a = unit constraint 'b = unit
 
 type t = {x: int, y: int}
+
+type callback = ReactEvent.Mouse.t => unit as 'callback
+type callback = ReactEvent.Mouse.t => (unit as 'u)
+type callback = (ReactEvent.Mouse.t => unit) as 'callback

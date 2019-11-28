@@ -84,7 +84,7 @@ include
   end
 include
   struct
-    external dirname : string -> string = \\"dirname\\"[@@bs.module \\"path\\"]
+    external dirname : string -> string = \\"dirname\\"[@@genType.import \\"path\\"]
   end"
 `;
 
