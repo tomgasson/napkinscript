@@ -87,7 +87,7 @@ File \\"/napkinscript/tests/parsing/errors/structure/letBindingPatternKeyword.js
 [31m1[0m │  let [31mopen[0m = 1
 2 │  let to = 3
 
-open is a reserved keyword, Try \`open_\` or \`_open\` instead
+open is a reserved keyword, Try \`open_\` instead
 
 
 File \\"/napkinscript/tests/parsing/errors/structure/letBindingPatternKeyword.js\\", line 2, characters 4-6:
@@ -96,7 +96,7 @@ File \\"/napkinscript/tests/parsing/errors/structure/letBindingPatternKeyword.js
 1 │  let open = 1
 [31m2[0m │  let [31mto[0m = 3
 
-to is a reserved keyword, Try \`to_\` or \`_to\` instead
+to is a reserved keyword, Try \`to_\` instead
 
 
 

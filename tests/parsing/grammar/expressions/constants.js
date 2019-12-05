@@ -61,3 +61,8 @@ let x = ' '
 let x = '\o021'
 let x = '\xAA'
 let x = '\179'
+
+let () = {
+  getResult()
+  -10
+}

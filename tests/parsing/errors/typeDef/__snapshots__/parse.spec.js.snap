@@ -1,5 +1,23 @@
 // Jest Snapshot v1, https://goo.gl/fbAQLP
 
+exports[`emptyRecord.js 1`] = `
+"=====Parsetree==========================================
+type nonrec record = {
+  }
+=====Errors=============================================
+
+File \\"/napkinscript/tests/parsing/errors/typeDef/emptyRecord.js\\", line 1, characters 14-16:
+
+
+[31m1[0m │  type record = [31m{}[0m
+
+A record needs at least one field
+
+
+
+========================================================"
+`;
+
 exports[`typeDef.js 1`] = `
 "=====Parsetree==========================================
 type stack =

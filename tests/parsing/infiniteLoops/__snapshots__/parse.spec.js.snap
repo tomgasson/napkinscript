@@ -159,6 +159,94 @@ Did you mean \`==\` here?
 ========================================================"
 `;
 
+exports[`jsxChildren.js 1`] = `
+"=====Parsetree==========================================
+type nonrec action =
+  | AddUser 
+let () = ((string ~children:[] ())[@JSX ])
+let (a : action) = AddUser \\"test\\"
+;;etype
+let () = s = { x = [((i ~children:[] ())[@JSX ])] }
+=====Errors=============================================
+
+File \\"/napkinscript/tests/parsing/infiniteLoops/jsxChildren.js\\", line 1, characters 21-29:
+
+
+[31m1[0m │  type action = AddUser[31m<string>[0m
+2 │  
+3 │  let a: action = AddUser(\\"test\\")
+
+Missing </string>
+
+
+File \\"/napkinscript/tests/parsing/infiniteLoops/jsxChildren.js\\", line 5, characters 17-18:
+
+
+3 │  let a: action = AddUser(\\"test\\")
+4 │  
+[31m5[0m │  etype s = {x:list<i>}          
+                       [31m^[0m
+
+Did you forget a \`(\` here? 
+
+
+File \\"/napkinscript/tests/parsing/infiniteLoops/jsxChildren.js\\", line 5, characters 20-21:
+
+
+3 │  let a: action = AddUser(\\"test\\")
+4 │  
+[31m5[0m │  etype s = {x:list<i>}          
+                          [31m^^[0m
+
+Did you forget a \`</\` here? 
+
+
+File \\"/napkinscript/tests/parsing/infiniteLoops/jsxChildren.js\\", line 5, characters 17-20:
+
+
+3 │  let a: action = AddUser(\\"test\\")
+4 │  
+[31m5[0m │  etype s = {x:list[31m<i>[0m}
+
+Closing jsx name should be the same as the opening name. Did you mean </i> ?
+
+
+File \\"/napkinscript/tests/parsing/infiniteLoops/jsxChildren.js\\", line 5, characters 20-21:
+
+
+3 │  let a: action = AddUser(\\"test\\")
+4 │  
+[31m5[0m │  etype s = {x:list<i>}          
+                          [31m^[0m
+
+Did you forget a \`>\` here? 
+
+
+File \\"/napkinscript/tests/parsing/infiniteLoops/jsxChildren.js\\", line 5, characters 20-21:
+
+
+3 │  let a: action = AddUser(\\"test\\")
+4 │  
+[31m5[0m │  etype s = {x:list<i>}          
+                          [31m^[0m
+
+Did you forget a \`)\` here? 
+
+
+File \\"/napkinscript/tests/parsing/infiniteLoops/jsxChildren.js\\", line 5, characters 8-9:
+
+
+3 │  let a: action = AddUser(\\"test\\")
+4 │  
+[31m5[0m │  etype s [31m=[0m {x:list<i>}
+
+Did you mean \`==\` here?
+
+
+
+========================================================"
+`;
+
 exports[`nonRecTypes.js 1`] = `
 "=====Parsetree==========================================
 

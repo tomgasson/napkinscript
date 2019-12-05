@@ -64,3 +64,8 @@ let x = -{
 }
 
 -(true ? 0 : 1)
+
+let () = {
+  getResult()
+  -10
+}

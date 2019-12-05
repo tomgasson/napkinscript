@@ -961,6 +961,7 @@ module Grammar = struct
     | Es6ArrowExpr
     | Jsx
     | JsxAttribute
+    | JsxChild
     | ExprOperand
     | ExprUnary
     | ExprSetField
@@ -1064,6 +1065,7 @@ module Grammar = struct
     | ListExpr -> "an ocaml list expr"
     | PackageConstraint -> "a package constraint"
     | JsFfiImport -> "js ffi import"
+    | JsxChild -> "jsx child"
 
   let isSignatureItemStart = function
     | Token.At
@@ -1206,6 +1208,7 @@ module Grammar = struct
     | _ -> false
 
   let isRecordRowStart = function
+    | Token.DotDotDot -> true
     | Token.Uident _ | Lident _ -> true
     (* TODO *)
     | t when Token.isKeyword t -> true
@@ -1242,11 +1245,13 @@ module Grammar = struct
     | Token.Lident _ | At -> true
     | _ -> false
 
+  let isJsxChildStart = isAtomicExprStart
+
   let isListElement grammar token =
     match grammar with
-    | ExprList -> isExprStart token
+    | ExprList -> token = Token.DotDotDot || isExprStart token
     | ListExpr -> token = DotDotDot || isExprStart token
-    | PatternList -> isPatternStart token
+    | PatternList -> token = DotDotDot || isPatternStart token
     | ParameterList -> isParameterStart token
     | StringFieldDeclarations -> isStringFieldDeclStart token
     | FieldDeclarations -> isFieldDeclStart token
@@ -1722,7 +1727,7 @@ end = struct
       | _ ->
         (* TODO: match on circumstance to verify Lident needed ? *)
         if Token.isKeyword t then
-          name ^ " is a reserved keyword, Try `" ^ name ^ "_` or `_" ^ name ^ "` instead"
+          name ^ " is a reserved keyword, Try `" ^ name ^ "_` instead"
         else
         "I'm not sure what to parse here when looking at \"" ^ name ^ "\"."
       end
@@ -2795,7 +2800,20 @@ Explanation: a list spread at the tail is efficient, but a spread in the middle 
 Explanation: you can't collect a subset of a record's field into its own record, since a record needs an explicit declaration and that subset wouldn't have one.
 Solution: you need to pull out each field you want explicitly."
 
-  let recordPatternUnderscore = "Record patterns only supports one `_`, at the end."
+    let recordPatternUnderscore = "Record patterns only support one `_`, at the end."
+
+    let arrayPatternSpread = "Array's `...` spread is not supported in pattern matches.
+Explanation: such spread would create a subarray; out of performance concern, our pattern matching currently guarantees to never create new intermediate data.
+Solution: if it's to validate the first few elements, use a `when` clause + Array size check + `get` checks on the current pattern. If it's to obtain a subarray, use `Array.sub` or `Belt.Array.slice`."
+
+    let arrayExprSpread = "Arrays can't use the `...` spread currently. Please use `concat` or other Array helpers."
+
+    let recordExprSpread = "Records can only have one `...` spread, at the beginning.
+Explanation: since records have a known, fixed shape, a spread like `{a, ...b}` wouldn't make sense, as `b` would override every field of `a` anyway."
+
+    let listExprSpread =  "Lists can only have one `...` spread, and at the end.
+Explanation: lists are singly-linked list, where a node contains a value and points to the next node. `list(a, ...bc)` efficiently creates a new item and links `bc` as its next nodes. `[...bc, a]` would be expensive, as it'd need to traverse `bc` and prepend each item to `a` one by one. We therefore disallow such syntax sugar.
+Solution: directly use `concat`."
   end
 
 
@@ -2980,7 +2998,7 @@ Solution: you need to pull out each field you want explicitly."
     match token, operand.Parsetree.pexp_desc with
     | (Token.Plus | PlusDot), Pexp_constant((Pconst_integer _ | Pconst_float _)) ->
       operand
-    | (Minus | MinusDot), Pexp_constant(Pconst_integer (n,m)) ->
+    | Minus, Pexp_constant(Pconst_integer (n,m)) ->
       {operand with pexp_desc = Pexp_constant(Pconst_integer (negateString n,m))}
     | (Minus | MinusDot), Pexp_constant(Pconst_float (n,m)) ->
       {operand with pexp_desc = Pexp_constant(Pconst_float (negateString n,m))}
@@ -3557,6 +3575,23 @@ Solution: you need to pull out each field you want explicitly."
       Ast_helper.Pat.or_ ~loc pattern1 pattern2
     | _ -> pattern1
 
+
+  and parseNonSpreadPattern ~msg p =
+    let () = match p.Parser.token with
+    | DotDotDot ->
+      Parser.err p (Diagnostics.message msg);
+      Parser.next p;
+    | _ -> ()
+    in
+    let pat = parsePattern p in
+    match p.Parser.token with
+    | Colon ->
+      Parser.next p;
+      let typ = parseTypExpr p in
+      let loc = mkLoc pat.ppat_loc.loc_start typ.Parsetree.ptyp_loc.loc_end in
+      Ast_helper.Pat.constraint_ ~loc pat typ
+    | _ -> pat
+
   and parseConstrainedPattern p =
     let pat = parsePattern p in
     match p.Parser.token with
@@ -3702,7 +3737,6 @@ Solution: you need to pull out each field you want explicitly."
       Ast_helper.Pat.unpack ~loc ~attrs uident
     end
 
-
   and parseListPattern ~attrs p =
     let startPos = p.Parser.startPos in
     Parser.expect List p;
@@ -3736,7 +3770,10 @@ Solution: you need to pull out each field you want explicitly."
     Parser.expect Lbracket p;
     let patterns =
       parseCommaDelimitedList
-        p ~grammar:Grammar.PatternList ~closing:Rbracket ~f:parseConstrainedPattern
+        p
+        ~grammar:Grammar.PatternList
+        ~closing:Rbracket
+        ~f:(parseNonSpreadPattern ~msg:ErrorMessages.arrayPatternSpread)
     in
     Parser.expect Rbracket p;
     let loc = mkLoc startPos p.prevEndPos in
@@ -4270,7 +4307,7 @@ Solution: you need to pull out each field you want explicitly."
          * The newline indicates the difference between the two.
          * Branching here has a performance impact.
          * TODO: totally different tuple syntax *)
-        if (token = Token.Forwardslash || token = Token.Minus) &&
+        if (token = Token.Forwardslash || token = Token.Minus || token = MinusDot) &&
             p.startPos.pos_lnum > p.prevEndPos.pos_lnum
         then
           -1
@@ -4507,7 +4544,7 @@ Solution: you need to pull out each field you want explicitly."
     in
     Ast_helper.Exp.ident ~loc:longident.loc longident
 
-  and parseJsxOpeningOrSelfClosingElement p =
+  and parseJsxOpeningOrSelfClosingElement ~startPos p =
     let jsxStartPos = p.Parser.startPos in
     let name = parseJsxName p in
     let jsxProps = parseJsxProps p in
@@ -4528,6 +4565,7 @@ Solution: you need to pull out each field you want explicitly."
       let () = match p.token with
       | LessThanSlash -> Parser.next p
       | LessThan -> Parser.next p; Parser.expect Forwardslash p
+      | token when Grammar.isStructureItemStart token -> ()
       | _ -> Parser.expect LessThanSlash p
       in
       begin match p.Parser.token with
@@ -4538,11 +4576,18 @@ Solution: you need to pull out each field you want explicitly."
           List.hd children
         else
           makeListExpression loc children None
-      | _ ->
-        let opening = "</" ^ (string_of_pexp_ident name) ^ ">" in
-        let msg = "Closing jsx name should be the same as the opening name. Did you mean " ^ opening ^ " ?" in
-        Parser.err p (Diagnostics.message msg);
-        Parser.expect GreaterThan p;
+      | token ->
+        let () = if Grammar.isStructureItemStart token then (
+          let closing = "</" ^ (string_of_pexp_ident name) ^ ">" in
+          let msg = Diagnostics.message ("Missing " ^ closing) in
+          Parser.err ~startPos ~endPos:p.prevEndPos p msg;
+        ) else (
+          let opening = "</" ^ (string_of_pexp_ident name) ^ ">" in
+          let msg = "Closing jsx name should be the same as the opening name. Did you mean " ^ opening ^ " ?" in
+          Parser.err ~startPos ~endPos:p.prevEndPos p (Diagnostics.message msg);
+          Parser.expect GreaterThan p
+        )
+        in
         let loc = mkLoc childrenStartPos childrenEndPos in
         if spread then
           List.hd children
@@ -4573,10 +4618,11 @@ Solution: you need to pull out each field you want explicitly."
    *)
   and parseJsx p =
     Parser.leaveBreadcrumb p Grammar.Jsx;
+    let startPos = p.Parser.startPos in
     Parser.expect LessThan p;
     let jsxExpr = match p.Parser.token with
     | Lident _ | Uident _ ->
-      parseJsxOpeningOrSelfClosingElement p
+      parseJsxOpeningOrSelfClosingElement ~startPos p
     | GreaterThan -> (* fragment: <> foo </> *)
       parseJsxFragment p
     | _ ->
@@ -4663,9 +4709,12 @@ Solution: you need to pull out each field you want explicitly."
           let () = p.token <- token in
           let () = Scanner.popMode p.scanner Jsx in
           List.rev children
-      | _ ->
+      | token when Grammar.isJsxChildStart token ->
         let child = parsePrimaryExpr ~noCall:true p in
         loop p (child::children)
+      | _ ->
+        Scanner.popMode p.scanner Jsx;
+        List.rev children
     in
     match p.Parser.token with
     | DotDotDot ->
@@ -4678,7 +4727,7 @@ Solution: you need to pull out each field you want explicitly."
     Parser.expect Lbrace p;
     let expr = match p.Parser.token with
     | Rbrace ->
-      Parser.err  p (Diagnostics.unexpected Rbrace p.breadcrumbs);
+      Parser.err p (Diagnostics.unexpected Rbrace p.breadcrumbs);
       let loc = mkLoc p.prevEndPos p.endPos in
       Ast_helper.Exp.construct
         ~loc (Location.mkloc (Longident.Lident "()") loc) None
@@ -4813,6 +4862,12 @@ Solution: you need to pull out each field you want explicitly."
       (field, Ast_helper.Exp.ident ~loc:field.loc field)
 
   and parseRecordRow p =
+    let () = match p.Parser.token with
+    | Token.DotDotDot ->
+      Parser.err p (Diagnostics.message ErrorMessages.recordExprSpread);
+      Parser.next p;
+    | _ -> ()
+    in
     let field = parseValuePath p in
     match p.Parser.token with
     | Colon ->
@@ -4835,7 +4890,10 @@ Solution: you need to pull out each field you want explicitly."
 
   and parseRecordExpr ?(spread=None) rows p =
     let exprs =
-      parseCommaDelimitedList ~grammar:Grammar.RecordRows ~closing:Rbrace ~f:parseRecordRow p
+      parseCommaDelimitedList
+        ~grammar:Grammar.RecordRows
+        ~closing:Rbrace
+        ~f:parseRecordRow p
     in
     let rows = List.concat[rows; exprs] in
     let () = match rows with
@@ -4970,7 +5028,7 @@ Solution: you need to pull out each field you want explicitly."
       (* semicolon recovery *)
       | token when
           begin match token with
-          | Bang | Band
+          | Bang | Band | Minus | MinusDot
           | True | False | Int _ | String _ | Character _ | Lident _ | Uident _
           | Lparen | List | Lbracket | Lbrace | Forwardslash | Assert
           | Lazy | If | For | While | Switch | Open | Module | Exception | Let
@@ -5135,6 +5193,12 @@ Solution: you need to pull out each field you want explicitly."
         ~closing:Rbrace
         ~f:parsePatternMatchCase
         p
+    in
+    let () = match cases with
+    | [] -> Parser.err ~startPos:p.prevEndPos p (
+        Diagnostics.message "Pattern matching needs at least one case"
+      )
+    | _ -> ()
     in
     cases
 
@@ -5378,17 +5442,40 @@ Solution: you need to pull out each field you want explicitly."
     | exprs ->
      let exprs =
         exprs
-        |> List.map snd
+        |> List.map (fun (spread, expr) ->
+            if spread then
+              Parser.err p (Diagnostics.message ErrorMessages.listExprSpread);
+            expr)
         |> List.rev
       in
       makeListExpression loc exprs None
+
+  (* Overparse ... and give a nice error message *)
+  and parseNonSpreadExp ~msg p =
+    let () = match p.Parser.token with
+    | DotDotDot ->
+      Parser.err p (Diagnostics.message msg);
+      Parser.next p;
+    | _ -> ()
+    in
+    let expr = parseExpr p in
+    match p.Parser.token with
+    | Colon ->
+      Parser.next p;
+      let typ = parseTypExpr p in
+      let loc = mkLoc expr.pexp_loc.loc_start typ.ptyp_loc.loc_end in
+      Ast_helper.Exp.constraint_ ~loc expr typ
+    | _ -> expr
 
   and parseArrayExp p =
     let startPos = p.Parser.startPos in
     Parser.expect Lbracket p;
     let exprs =
       parseCommaDelimitedList
-        p ~grammar:Grammar.ExprList ~closing:Rbracket ~f:parseConstrainedExpr
+        p
+        ~grammar:Grammar.ExprList
+        ~closing:Rbracket
+        ~f:(parseNonSpreadExp ~msg:ErrorMessages.arrayExprSpread)
     in
     Parser.expect Rbracket p;
     Ast_helper.Exp.array ~loc:(mkLoc startPos p.prevEndPos) exprs
@@ -6268,6 +6355,12 @@ Solution: you need to pull out each field you want explicitly."
               ~f:parseFieldDeclaration
               p
           )
+        in
+        let () = match fields with
+        | [] -> Parser.err ~startPos p (
+            Diagnostics.message "A record needs at least one field"
+          )
+        | _ -> ()
         in
         Parser.expect Rbrace p;
         Parser.eatBreadcrumb p;
