@@ -59,7 +59,8 @@ let x = loop 0 (Nil |. (push doc))
 ;;match stack with
   | Empty -> [%napkinscript.exprhole ]
   | Cons (doc, rest) -> ()
-  | Join (doc1, doc2) -> (buffer |. (Buffer.add_string indentation); loop ())
+  | Join (doc1, doc2) ->
+      let () = buffer |. (Buffer.add_string indentation) in loop ()
 let pipeline =
   match scheduler with | Some -> [%napkinscript.exprhole ] | None -> ()
 =====Errors=============================================

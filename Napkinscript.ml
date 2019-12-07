@@ -1247,6 +1247,14 @@ module Grammar = struct
 
   let isJsxChildStart = isAtomicExprStart
 
+  let isBlockExprStart = function
+    | Token.At | Percent | Minus | MinusDot | Plus | PlusDot | Bang | Band
+    | True | False | Int _ | String _ | Character _ | Lident _ | Uident _
+    | Lparen | List | Lbracket | Lbrace | Forwardslash | Assert
+    | Lazy | If | For | While | Switch | Open | Module | Exception | Let
+    | LessThan | Backtick | Try | Underscore -> true
+    | _ -> false
+
   let isListElement grammar token =
     match grammar with
     | ExprList -> token = Token.DotDotDot || isExprStart token
@@ -4947,29 +4955,16 @@ Solution: directly use `concat`."
       let (recFlag, letBindings) = parseLetBindings ~attrs:[] p in
       let endPos = p.prevEndPos in
       let loc = mkLoc startPos endPos in
-
       let next = match p.Parser.token with
       | Semicolon ->
         Parser.next p;
-        begin match p.Parser.token with
-        (* seq expr start *)
-        | At | Minus | MinusDot | Plus | PlusDot | Bang | Band
-        | True | False | Int _ | Float _ | String _ | Lident _ | Uident _
-        | Lparen | List | Lbracket | Lbrace | Forwardslash | Assert
-        | Lazy | If | For | While | Switch | Open | Module | Exception | Let
-        | LessThan | Backtick | Percent | Try | Underscore ->
+        if Grammar.isBlockExprStart p.Parser.token then
           parseExprBlock p
-        | _ ->
+        else
           let loc = mkLoc p.startPos p.endPos in
           Ast_helper.Exp.construct ~loc
             (Location.mkloc (Longident.Lident "()") loc) None
-        end
-      (* High danger, TODO check if we really can omit semi in these case*)
-      | Bang | Band
-      | True | False | Int _ | Float _ | String _ | Lident _ | Uident _
-      | Lparen | List | Lbracket | Lbrace | Forwardslash | Assert
-      | Lazy | If | For | While | Switch | Open | Module | Exception | Let
-      | LessThan | Backtick | Percent | Try | Underscore ->
+      | token when Grammar.isBlockExprStart token ->
         parseExprBlock p
       | _ ->
         let loc = mkLoc p.startPos p.endPos in
@@ -4979,17 +4974,16 @@ Solution: directly use `concat`."
     | _ ->
       let e1 = parseExpr p in
       ignore (Parser.optional p Semicolon);
-      begin match p.Parser.token with
-      (* seq expr start *)
-      | At | Minus | MinusDot | Plus | PlusDot | Bang | Band
-      | True | False | Int _ | Float _ | String _ | Lident _ | Uident _
-      | Lparen | List | Lbracket | Lbrace | Forwardslash | Assert
-      | Lazy | If | For | While | Switch | Open | Module | Exception | Let
-      | LessThan | Backtick | Percent | Try | Underscore ->
+      if Grammar.isBlockExprStart p.Parser.token then
+        let fakeUnitPat =
+          let unitLid = Location.mknoloc (Longident.Lident "()") in
+          Ast_helper.Pat.construct unitLid None
+        in
         let e2 = parseExprBlock p in
-        Ast_helper.Exp.sequence e1 e2
-      | _ -> e1
-      end
+        let vb = Ast_helper.Vb.mk ~loc:e1.pexp_loc fakeUnitPat e1 in
+        let loc = {e1.pexp_loc with loc_end = e2.pexp_loc.loc_end} in
+        Ast_helper.Exp.let_ ~loc Asttypes.Nonrecursive [vb] e2
+      else e1
 
   (* blockExpr ::= expr
    *            |  expr          ;
@@ -5013,41 +5007,28 @@ Solution: directly use `concat`."
       let blockExpr = match p.Parser.token with
       | Semicolon ->
         Parser.next p;
-        begin match p.Parser.token with
-        (* seq expr start *)
-        | At | Percent | Minus | MinusDot | Plus | PlusDot | Bang | Band
-        | True | False | Int _ | String _ | Character _ | Lident _ | Uident _
-        | Lparen | List | Lbracket | Lbrace | Forwardslash | Assert
-        | Lazy | If | For | While | Switch | Open | Module | Exception | Let
-        | LessThan | Backtick | Try | Underscore ->
+        if Grammar.isBlockExprStart p.Parser.token then
           let next = parseExprBlockItem p in
           ignore(Parser.optional p Semicolon);
-          Ast_helper.Exp.sequence item next
-        | _ -> item
-        end
-      (* semicolon recovery *)
-      | token when
-          begin match token with
-          | Bang | Band | Minus | MinusDot
-          | True | False | Int _ | String _ | Character _ | Lident _ | Uident _
-          | Lparen | List | Lbracket | Lbrace | Forwardslash | Assert
-          | Lazy | If | For | While | Switch | Open | Module | Exception | Let
-          | LessThan | Backtick | Percent | Try | Underscore -> true
-          | _ -> false
-          end
-        ->
-          begin match p.Parser.token with
-          (* seq expr start *)
-          | At | Minus | MinusDot | Plus | PlusDot | Bang | Band
-          | True | False | Int _ | String _ | Character _ | Lident _ | Uident _
-          | Lparen | List | Lbracket | Lbrace | Forwardslash | Assert
-          | Lazy | If | For | While | Switch | Open | Module | Exception | Let
-          | LessThan | Backtick | Percent | Try | Underscore ->
-            let next = parseExprBlockItem p in
-            ignore(Parser.optional p Semicolon);
-            Ast_helper.Exp.sequence item next
-          | _ -> item
-          end
+          let fakeUnitPat =
+            let unitLid = Location.mknoloc (Longident.Lident "()") in
+            Ast_helper.Pat.construct unitLid None
+          in
+          let vb = Ast_helper.Vb.mk ~loc:item.pexp_loc fakeUnitPat item in
+          let loc = {vb.pvb_loc with loc_end = next.pexp_loc.loc_end} in
+          Ast_helper.Exp.let_ ~loc Asttypes.Nonrecursive [vb] next
+        else
+          item
+      | token when Grammar.isBlockExprStart token ->
+        let next = parseExprBlockItem p in
+        ignore(Parser.optional p Semicolon);
+        let fakeUnitPat =
+          let unitLid = Location.mknoloc (Longident.Lident "()") in
+          Ast_helper.Pat.construct unitLid None
+        in
+        let vb = Ast_helper.Vb.mk ~loc:item.pexp_loc fakeUnitPat item in
+        let loc = {vb.pvb_loc with loc_end = next.pexp_loc.loc_end} in
+        Ast_helper.Exp.let_ ~loc Asttypes.Nonrecursive [vb] next
       | _ ->
         item
       in
@@ -5154,7 +5135,6 @@ Solution: directly use `concat`."
 			end
 		| _ ->
       parseForRest false (parsePattern p) startPos p
-
 
   and parseWhileExpression p =
     let startPos = p.Parser.startPos in

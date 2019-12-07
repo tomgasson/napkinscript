@@ -134,8 +134,8 @@ let b = let exception QuitEarly  in raise QuitEarly
 let b = let a = 1 in let b = 2 in a + b
 let b = let _ = sideEffect () in ()
 let b = let _ = sideEffect () in ()
-let b = a (); b (); c ()
-let b = a (); b (); (let a = 1 in f a)
+let b = let () = a () in let () = b () in c ()
+let b = let () = a () in let () = b () in let a = 1 in f a
 let b = let a = 1 in let b = 2 in ()
 let b =
   let module Array = Belt.Array in
@@ -143,23 +143,27 @@ let b =
       let exception Terminate of int  in
         let a = 1 in
         let b = 2 in
-        sideEffect ();
-        (let x = (1 + 2) |. (fun x -> x + 1) in raise (Terminate x))
-let b = f (); g (); h (); (let arr = [|1;2;3|] in ())
+        let () = sideEffect () in
+        let x = (1 + 2) |. (fun x -> x + 1) in raise (Terminate x)
+let b =
+  let () = f () in
+  let () = g () in let () = h () in let arr = [|1;2;3|] in ()
 let res =
   let a = \\"a starts out as\\" in
-  (print_string a; (let a = 20 in print_int a)); print_string a
+  let () = let () = print_string a in let a = 20 in print_int a in
+  print_string a
 let res =
   let a = \\"first its a string\\" in
-  let a = 20 in print_int a; print_int a; print_int a
+  let a = 20 in let () = print_int a in let () = print_int a in print_int a
 let res =
   let a = \\"a is always a string\\" in
-  print_string a; (let b = 30 in print_int b)
+  let () = print_string a in let b = 30 in print_int b
 let nestedLet = let _ = 1 in ()
 let nestedLet = let _ = 1 in 2
-let init () = foo (1 == 1); [%assert let () = 1 == 2]
+let init () = let () = foo (1 == 1) in [%assert let () = 1 == 2]
 let init () =
-  [%assert let () = 1 == 2]; foo (1 == 1); [%assert let () = 1 == 2]
+  let () = [%assert let () = 1 == 2] in
+  let () = foo (1 == 1) in [%assert let () = 1 == 2]
 let f () = let x = 1 in fun _ -> ()"
 `;
 
@@ -172,7 +176,7 @@ let r = { a = expr; b = expr2 }
 let r = { f = (fun x -> x + b) }
 let e = a
 let e = a
-let e = a; b ()
+let e = let () = a in b ()
 let e = - a
 let e = a + b
 let e = ((if a then true else false)[@ns.ternary ])
@@ -184,7 +188,7 @@ let e = arr.(x) <- 20
 let e x = (x + 1) |> (doStuff config)
 let e = (fun x -> x + 1) |> (doStuff config)
 let e = ((if fun x -> x + 1 then true else false)[@ns.ternary ])
-let e = (fun x -> x + 1) |> sideEffect; logToAnalytics Shady.ml
+let e = let () = (fun x -> x + 1) |> sideEffect in logToAnalytics Shady.ml
 let f event = (event.target).value
 let f event = ((event.target).value : string)
 let x = let a = 1 in let b = 2 in a + b"
@@ -199,12 +203,11 @@ let x = \\"age\\"
 let x = \\"age\\".(0)
 let x = \\"age\\" |. Js.log
 let x = ((if \\"age\\" then true else false)[@ns.ternary ])
-let x = \\"age\\" |. Js.log; (let foo = 1 in let bar = 2 in foo + bar)
+let x = let () = \\"age\\" |. Js.log in let foo = 1 in let bar = 2 in foo + bar
 let x =
-  ((if \\"age\\" then true else false)
-  [@ns.ternary ]);
-  (let foo = 1 in let bar = 2 in foo + bar)
-let x = \\"age\\".(0); (let foo = 1 in let bar = 2 in foo + bar)"
+  let () = ((if \\"age\\" then true else false)[@ns.ternary ]) in
+  let foo = 1 in let bar = 2 in foo + bar
+let x = let () = \\"age\\".(0) in let foo = 1 in let bar = 2 in foo + bar"
 `;
 
 exports[`constants.js 1`] = `
@@ -260,7 +263,7 @@ let x = ' '
 let x = '\\\\017'
 let x = '\\\\170'
 let x = '\\\\179'
-let () = getResult (); (-10)"
+let () = let () = getResult () in (-10)"
 `;
 
 exports[`constructor.js 1`] = `
@@ -636,8 +639,8 @@ let _ =
       ~children:[] ())
   [@JSX ])
 let _ =
-  ((div ~onClick:(fun event -> Js.log event; handleChange event) ~children:[]
-      ())
+  ((div ~onClick:(fun event -> let () = Js.log event in handleChange event)
+      ~children:[] ())
   [@JSX ])
 let _ =
   ((StaticDiv.createElement
@@ -646,8 +649,8 @@ let _ =
                     fun baz ->
                       fun lineBreak ->
                         fun identifier ->
-                          doStuff foo bar baz; bar lineBreak identifier)
-      ~children:[] ())
+                          let () = doStuff foo bar baz in
+                          bar lineBreak identifier) ~children:[] ())
   [@JSX ])
 let _ =
   ((AttrDiv.createElement ~onClick:((fun event -> handleChange event)
@@ -668,10 +671,12 @@ let _ =
       ~children:[] ())
   [@JSX ])
 let _ =
-  ((div ~onClick:(fun e -> (doStuff (); bar foo : event)) ~children:[] ())
+  ((div ~onClick:(fun e -> (let () = doStuff () in bar foo : event))
+      ~children:[] ())
   [@JSX ])
 let _ =
-  ((div ~onClick:(fun e -> fun e2 -> (doStuff (); bar foo : event))
+  ((div
+      ~onClick:(fun e -> fun e2 -> (let () = doStuff () in bar foo : event))
       ~children:[] ())
   [@JSX ])
 let _ =
@@ -681,8 +686,9 @@ let _ =
                     fun baz ->
                       fun superLongIdent ->
                         fun breakLine ->
-                          (doStuff (); bar foo : (event * event2 * event3 *
-                                                   event4 * event5)))
+                          (let () = doStuff () in bar foo : (event * event2 *
+                                                              event3 * event4
+                                                              * event5)))
       ~children:[] ())
   [@JSX ])
 let _ =
@@ -884,6 +890,23 @@ let r = { (make () : myRecord) with foo = bar }
 let r = { (make () : myRecord) with foo = bar }"
 `;
 
+exports[`sideEffects.js 1`] = `
+"let () = foo ()
+let () = bar ()
+let () = let () = foo () in bar ()
+let () =
+  let x = 1 in
+  let () = sideEffect () in
+  let y = 2 in let () = sideEffect2 () in let z = 3 in sideEffect3 ()
+;;while true do
+    let () = sideEffect1 () in
+    let x = 1 in let () = sideEffect2 () in let y = 2 in sideEffect3 () done
+;;match color with
+  | Blue ->
+      let () = getResult () in
+      let () = sideEffect () in let x = 1 in sideEffect2 ()"
+`;
+
 exports[`switch.js 1`] = `
 ";;match x with | A -> () | B -> ()
 ;;match a + b with | _ -> ()
@@ -908,7 +931,7 @@ exports[`tupleVsDivision.js 1`] = `
 "let () = (foo ()) / 1
 let () = foo ()
 let () = (1, 2) |. printTuple
-let f () = (foo ()) / 1; foo (); (1, 2) |. printTuple"
+let f () = let () = (foo ()) / 1 in let () = foo () in (1, 2) |. printTuple"
 `;
 
 exports[`unary.js 1`] = `
@@ -965,6 +988,7 @@ let l2 =
 
 exports[`while.js 1`] = `
 ";;while not eofReached do
-    let a = 1 in let b = 2 in Lexbuf.next (); (a + b) |. Js.log done
-;;while (not (isLineEnding buf)) && true do foo (); next () done"
+    let a = 1 in let b = 2 in let () = Lexbuf.next () in (a + b) |. Js.log
+    done
+;;while (not (isLineEnding buf)) && true do let () = foo () in next () done"
 `;
