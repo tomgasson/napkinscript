@@ -944,6 +944,21 @@ let x = !box
 let sum = (- a) - (- b)"
 `;
 
+exports[`unaryOrBinary.js 1`] = `
+"let () = - x
+let width =
+  (((w -. innerLeft) -. imageWidth) -. imageRightGap) -. rowInnerRight
+let width = (((w - innerLeft) - imageWidth) - imageRightGap) - rowInnerRight
+let width =
+  let () = w in
+  let () = -. innerLeft in
+  let () = -. imageWidth in let () = -. imageRightGap in -. rowInnerRight
+let width =
+  let () = w in
+  let () = - innerLeft in
+  let () = - imageWidth in let () = - imageRightGap in - rowInnerRight"
+`;
+
 exports[`uncurried.js 1`] = `
 "let f = ((fun a -> fun b -> a + b)[@bs ])
 let f = ((fun a -> ((fun b -> a + b)[@bs ]))[@bs ])

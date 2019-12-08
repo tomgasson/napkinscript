@@ -2440,6 +2440,32 @@ module Scanner = struct
       Token.LessThanSlash
     else
       Token.LessThan
+
+  (* If an operator has whitespace around both sides, it's a binary operator *)
+  let isBinaryOp src startCnum endCnum =
+    if startCnum == 0 then false
+    else
+      let leftOk =
+        let c =
+          (startCnum - 1)
+          |> Bytes.get src
+          |> Char.code
+        in
+        c == CharacterCodes.space ||
+        c == CharacterCodes.tab ||
+        CharacterCodes.isLineBreak c
+      in
+      let rightOk =
+        let c =
+          if endCnum == Bytes.length src then -1
+          else endCnum |> Bytes.get src |> Char.code
+        in
+        c == CharacterCodes.space ||
+        c == CharacterCodes.tab ||
+        CharacterCodes.isLineBreak c ||
+        c == CharacterCodes.eof
+      in
+      leftOk && rightOk
 end
 
 (* AST for js externals *)
@@ -4315,12 +4341,25 @@ Solution: directly use `concat`."
          * The newline indicates the difference between the two.
          * Branching here has a performance impact.
          * TODO: totally different tuple syntax *)
-        if (token = Token.Forwardslash || token = Token.Minus || token = MinusDot) &&
-            p.startPos.pos_lnum > p.prevEndPos.pos_lnum
-        then
-          -1
-        else
-          Token.precedence token
+        match token with
+        | Token.Forwardslash when p.startPos.pos_lnum > p.prevEndPos.pos_lnum -> -1
+        (* Can the minus be interpreted as a binary operator? Or is it a unary?
+         * let w = {
+         *   x
+         *   -10
+         * }
+         * vs
+         * let w = {
+         *   width
+         *   - gap
+         * }
+         *
+         * First case is unary, second is a binary operator.
+         * See Scanner.isBinaryOp *)
+        | Minus | MinusDot when not (
+            Scanner.isBinaryOp p.scanner.src p.startPos.pos_cnum p.endPos.pos_cnum
+          ) -> -1
+        | token -> Token.precedence token
       in
       if tokenPrec < prec then a
       else begin
