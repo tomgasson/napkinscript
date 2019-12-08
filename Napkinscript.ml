@@ -2774,7 +2774,7 @@ module NapkinScript = struct
 
     let shouldAbortListParse p =
       let rec check breadcrumbs i =
-        if i > 100 then
+        if i > 10000 then
           raise (InfiniteLoop (p.Parser.startPos, p.token))
         else
         match breadcrumbs with
@@ -2796,11 +2796,11 @@ module NapkinScript = struct
         Parser.next p;
         Abort
       ) else (
-        while not (shouldAbortListParse p) && !counter < 100 do
+        while not (shouldAbortListParse p) && !counter < 10000 do
           let () = counter := !counter + 1 in
           Parser.next p
         done;
-        if !counter > 100 then
+        if !counter > 10000 then
           raise (InfiniteLoop (p.startPos, p.token))
         else (
           match p.Parser.token with
