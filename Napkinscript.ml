@@ -4225,12 +4225,8 @@ Solution: directly use `concat`."
    *
    *  The "operand" represents the expression that is operated on
    *)
-  and parsePrimaryExpr ?operand ?(noCall=false) p =
+  and parsePrimaryExpr ~operand ?(noCall=false) p =
     let startPos = p.Parser.startPos in
-    let e1 = match operand with
-      | Some e -> e
-      | None -> parseAtomicExpr p
-    in
     let rec loop p expr =
       match p.Parser.token with
       | Dot ->
@@ -4256,7 +4252,7 @@ Solution: directly use `concat`."
         loop p (parseCallExpr p expr)
       | _ -> expr
     in
-    let expr = loop p e1 in
+    let expr = loop p operand in
     {expr with pexp_loc = mkLoc startPos p.prevEndPos}
 
 
@@ -4278,7 +4274,7 @@ Solution: directly use `concat`."
       Parser.eatBreadcrumb p;
       unaryExpr
     | _ ->
-      parsePrimaryExpr p
+      parsePrimaryExpr ~operand:(parseAtomicExpr p) p
 
   (* Represents an "operand" in a binary expression.
    * If you have `a + b`, `a` and `b` both represent
@@ -4715,7 +4711,7 @@ Solution: directly use `concat`."
         Parser.next p;
         (* no punning *)
         let optional = Parser.optional p Question in
-        let attrExpr = parsePrimaryExpr p in
+        let attrExpr = parsePrimaryExpr ~operand:(parseAtomicExpr p) p in
         let label =
           if optional then Asttypes.Optional name else Asttypes.Labelled name
         in
@@ -4750,14 +4746,14 @@ Solution: directly use `concat`."
          * determines the correct token to disambiguate *)
         let token = Scanner.reconsiderLessThan p.scanner in
         if token = LessThan then
-          let child = parsePrimaryExpr ~noCall:true p in
+          let child = parsePrimaryExpr ~operand:(parseAtomicExpr p) ~noCall:true p in
           loop p (child::children)
         else (* LessThanSlash *)
           let () = p.token <- token in
           let () = Scanner.popMode p.scanner Jsx in
           List.rev children
       | token when Grammar.isJsxChildStart token ->
-        let child = parsePrimaryExpr ~noCall:true p in
+        let child = parsePrimaryExpr ~operand:(parseAtomicExpr p) ~noCall:true p in
         loop p (child::children)
       | _ ->
         Scanner.popMode p.scanner Jsx;
@@ -4766,7 +4762,7 @@ Solution: directly use `concat`."
     match p.Parser.token with
     | DotDotDot ->
       Parser.next p;
-      (true, [parsePrimaryExpr ~noCall:true p])
+      (true, [parsePrimaryExpr ~operand:(parseAtomicExpr p) ~noCall:true p])
     | _ -> (false, loop p [])
 
   and parseBracedOrRecordExpr p =
