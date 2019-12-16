@@ -951,8 +951,6 @@ module Token = struct
       else Lident str
 end
 
-exception InfiniteLoop of Lexing.position * Token.t
-
 module Grammar = struct
   type t =
     | OpenDescription (* open Belt *)
@@ -1071,7 +1069,7 @@ module Grammar = struct
     | Token.At
     | Let
     | Typ
-    | External | Import | Export
+    | External
     | Exception
     | Open
     | Include
@@ -1115,10 +1113,10 @@ module Grammar = struct
     | Token.True | False
     | Int _ | String _ | Float _ | Character _ | Backtick
     | Uident _ | Lident _
-    | Lparen | List | Lbracket | Lbrace | Forwardslash
+    | Lparen | List | Module | Lbracket | Lbrace | Forwardslash
     | LessThan
     | Minus | MinusDot | Plus | PlusDot | Bang | Band
-    | Percent | At | Module
+    | Percent | At
     | If | Switch | While | For | Assert | Lazy | Try -> true
     | _ -> false
 
@@ -2736,6 +2734,14 @@ module NapkinScript = struct
       | Retry
       | Abort
 
+    let fakeStructureItem =
+      let id = Location.mknoloc "napkinscript.fakeStructureItem" in
+      Ast_helper.Str.extension (id, PStr [])
+
+    let fakeSignatureItem =
+      let id = Location.mknoloc "napkinscript.fakeSignatureItem" in
+      Ast_helper.Sig.extension (id, PStr [])
+
     let defaultStructureItem () =
       let id = Location.mknoloc "napkinscript.strItemHole" in
       Ast_helper.Str.extension (id, PStr [])
@@ -2773,40 +2779,33 @@ module NapkinScript = struct
       | _ -> ()
 
     let shouldAbortListParse p =
-      let rec check breadcrumbs i =
-        if i > 10000 then
-          raise (InfiniteLoop (p.Parser.startPos, p.token))
-        else
+      let rec check breadcrumbs =
         match breadcrumbs with
         | [] -> false
         | (grammar, _)::rest ->
           if Grammar.isPartOfList grammar p.Parser.token then
             true
           else
-            check rest (i + 1)
+            check rest
       in
-      check p.breadcrumbs 0
+      check p.breadcrumbs
 
     let recoverLident p =
-      let counter = ref(0) in
-      if Token.isKeyword p.Parser.token
-         && p.Parser.prevEndPos.pos_lnum == p.startPos.pos_lnum
+      if (
+        Token.isKeyword p.Parser.token &&
+        p.Parser.prevEndPos.pos_lnum == p.startPos.pos_lnum
+      )
       then (
         Parser.err p (Diagnostics.lident p.Parser.token);
         Parser.next p;
         Abort
       ) else (
-        while not (shouldAbortListParse p) && !counter < 10000 do
-          let () = counter := !counter + 1 in
+        while not (shouldAbortListParse p) do
           Parser.next p
         done;
-        if !counter > 10000 then
-          raise (InfiniteLoop (p.startPos, p.token))
-        else (
-          match p.Parser.token with
-          | Lident _ -> Retry
-          | _ -> Abort
-        )
+        match p.Parser.token with
+        | Lident _ -> Retry
+        | _ -> Abort
       )
 
     let skipTokensAndMaybeRetry p ~isStartOfGrammar =
@@ -3368,37 +3367,31 @@ Solution: directly use `concat`."
     Parser.next p;
     constant
 
-  let parseCommaDelimitedList p ~grammar ~closing ~f =
+  let parseCommaDelimitedRegion p ~grammar ~closing ~f =
     Parser.leaveBreadcrumb p grammar;
     let rec loop nodes =
-      if Grammar.isListElement grammar p.Parser.token then (
-        let node = f p in
-        if Parser.optional p Comma then
+      match f p with
+      | Some node ->
+        begin match p.Parser.token with
+        | Comma ->
+          Parser.next p;
           loop (node::nodes)
-        else if p.token = closing || p.token = Eof then
+        | token when token = closing || token = Eof ->
           List.rev (node::nodes)
-        else (
-          Parser.expect Comma p;
+        | _ ->
+          if not (p.token = Eof || p.token = closing || Recover.shouldAbortListParse p) then
+            Parser.expect Comma p;
           if p.token = Semicolon then Parser.next p;
           loop (node::nodes)
-        )
-      ) else if p.token = Eof then (
-        List.rev nodes
-      ) else if p.token = closing then (
-        List.rev nodes
-      ) else (
-        if Recover.shouldAbortListParse p then (
-          (* TODO: is it ok to just randomly drop the expect , ???*)
-          Parser.dropLastDiagnostic p; (* we don't expect a `,` *)
+        end
+      | None ->
+        if p.token = Eof || p.token = closing || Recover.shouldAbortListParse p then
           List.rev nodes
-        ) else (
-          (* TODO: is it ok to just randomly drop the expect , ???*)
-          Parser.dropLastDiagnostic p; (* we don't expect a `,` *)
+        else (
           Parser.err p (Diagnostics.unexpected p.token p.breadcrumbs);
           Parser.next p;
           loop nodes
-        )
-      )
+        );
     in
     let nodes = loop [] in
     Parser.eatBreadcrumb p;
@@ -3407,75 +3400,70 @@ Solution: directly use `concat`."
   let parseCommaDelimitedReversedList p ~grammar ~closing ~f =
     Parser.leaveBreadcrumb p grammar;
     let rec loop nodes =
-      if Grammar.isListElement grammar p.Parser.token then (
-        let node = f p in
-        if Parser.optional p Comma then
+      match f p with
+      | Some node ->
+        begin match p.Parser.token with
+        | Comma ->
+          Parser.next p;
           loop (node::nodes)
-        else if p.token = closing || p.token = Eof then
-          node::nodes
-        else (
-          Parser.expect Comma p;
+        | token when token = closing || token = Eof ->
+          (node::nodes)
+        | _ ->
+          if not (p.token = Eof || p.token = closing || Recover.shouldAbortListParse p) then
+            Parser.expect Comma p;
           if p.token = Semicolon then Parser.next p;
           loop (node::nodes)
-        )
-      ) else if p.token = Eof then (
-        nodes
-      ) else if p.token = closing then (
-        nodes
-      )  else (
-        if Recover.shouldAbortListParse p then (
-          Parser.dropLastDiagnostic p; (* we don't expect a `,` *)
+        end
+      | None ->
+        if p.token = Eof || p.token = closing || Recover.shouldAbortListParse p then
           nodes
-        ) else (
+        else (
           Parser.err p (Diagnostics.unexpected p.token p.breadcrumbs);
           Parser.next p;
           loop nodes
-        )
-      )
+        );
     in
     let nodes = loop [] in
     Parser.eatBreadcrumb p;
     nodes
 
-  let parseDelimitedList p ~grammar ~closing ~f =
+  let parseDelimitedRegion p ~grammar ~closing ~f =
     Parser.leaveBreadcrumb p grammar;
     let rec loop nodes =
-      if p.Parser.token = Token.Eof || p.token = closing then
-        List.rev nodes
-      else if Grammar.isListElement grammar p.token then
-        let node = f p in
+      match f p with
+      | Some node ->
         loop (node::nodes)
-      else (* trouble *) (
-        if Recover.shouldAbortListParse p then
+      | None ->
+        if (
+          p.Parser.token = Token.Eof ||
+          p.token = closing ||
+          Recover.shouldAbortListParse p
+        ) then
           List.rev nodes
         else (
           Parser.err p (Diagnostics.unexpected p.token p.breadcrumbs);
           Parser.next p;
           loop nodes
         )
-      )
-    in
-    let nodes = loop [] in
-    Parser.eatBreadcrumb p;
-    nodes
+      in
+      let nodes = loop [] in
+      Parser.eatBreadcrumb p;
+      nodes
 
-  let parseList p ~grammar ~f =
+  let parseRegion p ~grammar ~f =
     Parser.leaveBreadcrumb p grammar;
     let rec loop nodes =
-      if p.Parser.token = Token.Eof then
-        List.rev nodes
-      else if Grammar.isListElement grammar p.token then
-        let node = f p in
+      match f p with
+      | Some node ->
         loop (node::nodes)
-      else (* trouble *) (
-        if Recover.shouldAbortListParse p then
+      | None ->
+        if p.Parser.token = Token.Eof || Recover.shouldAbortListParse p then
           List.rev nodes
         else (
           Parser.err p (Diagnostics.unexpected p.token p.breadcrumbs);
           Parser.next p;
           loop nodes
         )
-      )
     in
     let nodes = loop [] in
     Parser.eatBreadcrumb p;
@@ -3617,14 +3605,18 @@ Solution: directly use `concat`."
       Parser.next p;
     | _ -> ()
     in
-    let pat = parsePattern p in
     match p.Parser.token with
-    | Colon ->
-      Parser.next p;
-      let typ = parseTypExpr p in
-      let loc = mkLoc pat.ppat_loc.loc_start typ.Parsetree.ptyp_loc.loc_end in
-      Ast_helper.Pat.constraint_ ~loc pat typ
-    | _ -> pat
+    | token when Grammar.isPatternStart token ->
+      let pat = parsePattern p in
+      begin match p.Parser.token with
+      | Colon ->
+        Parser.next p;
+        let typ = parseTypExpr p in
+        let loc = mkLoc pat.ppat_loc.loc_start typ.Parsetree.ptyp_loc.loc_end in
+        Some (Ast_helper.Pat.constraint_ ~loc pat typ)
+      | _ -> Some pat
+      end
+    | _ -> None
 
   and parseConstrainedPattern p =
     let pat = parsePattern p in
@@ -3635,6 +3627,12 @@ Solution: directly use `concat`."
       let loc = mkLoc pat.ppat_loc.loc_start typ.Parsetree.ptyp_loc.loc_end in
       Ast_helper.Pat.constraint_ ~loc pat typ
     | _ -> pat
+
+  and parseConstrainedPatternListItem p =
+    match p.Parser.token with
+    | token when Grammar.isPatternStart token ->
+      Some (parseConstrainedPattern p)
+    | _ -> None
 
 	(* field ::=
 	 *   | longident
@@ -3677,14 +3675,14 @@ Solution: directly use `concat`."
     match p.Parser.token with
     | DotDotDot ->
       Parser.next p;
-      (true, PatField (parseRecordPatternField p))
+      Some (true, PatField (parseRecordPatternField p))
     | Uident _ | Lident _ ->
-      (false, PatField (parseRecordPatternField p))
+      Some (false, PatField (parseRecordPatternField p))
     | Underscore ->
       Parser.next p;
-      (false, PatUnderscore)
+      Some (false, PatUnderscore)
     | _ ->
-      (false, PatField (parseRecordPatternField p))
+      None
 
   and parseRecordPattern ~attrs p =
     let startPos = p.startPos in
@@ -3723,10 +3721,10 @@ Solution: directly use `concat`."
     let startPos = p.startPos in
     Parser.expect Forwardslash p;
     let patterns =
-      parseCommaDelimitedList p
+      parseCommaDelimitedRegion p
         ~grammar:Grammar.PatternList
         ~closing:Forwardslash
-        ~f:parseConstrainedPattern
+        ~f:parseConstrainedPatternListItem
     in
     Parser.expect Forwardslash p;
     let loc = mkLoc startPos p.prevEndPos in
@@ -3736,9 +3734,10 @@ Solution: directly use `concat`."
     match p.Parser.token with
     | DotDotDot ->
       Parser.next p;
-      (true, parseConstrainedPattern p)
-    | _ ->
-      (false, parseConstrainedPattern p)
+      Some (true, parseConstrainedPattern p)
+    | token when Grammar.isPatternStart token ->
+      Some (false, parseConstrainedPattern p)
+    | _ -> None
 
   and parseModulePattern ~attrs p =
     let startPos = p.Parser.startPos in
@@ -3803,7 +3802,7 @@ Solution: directly use `concat`."
     let startPos = p.startPos in
     Parser.expect Lbracket p;
     let patterns =
-      parseCommaDelimitedList
+      parseCommaDelimitedRegion
         p
         ~grammar:Grammar.PatternList
         ~closing:Rbracket
@@ -3817,8 +3816,8 @@ Solution: directly use `concat`."
     let lparen = p.startPos in
     Parser.expect Lparen p;
     let args = match
-      parseCommaDelimitedList
-        p ~grammar:Grammar.PatternList ~closing:Rparen ~f:parseConstrainedPattern
+      parseCommaDelimitedRegion
+        p ~grammar:Grammar.PatternList ~closing:Rparen ~f:parseConstrainedPatternListItem
     with
     | [pattern] -> Some pattern
     | patterns ->
@@ -3908,85 +3907,92 @@ Solution: directly use `concat`."
 	 * labelName ::= lident
    *)
   and parseParameter p =
-    let startPos = p.Parser.startPos in
-    let uncurried = Parser.optional p Token.Dot in
-    (* two scenarios:
-     *   attrs ~lbl ...
-     *   attrs pattern
-     * Attributes before a labelled arg, indicate that it's on the whole arrow expr
-     * Otherwise it's part of the pattern
-     *  *)
-    let attrs = parseAttributes p in
-    if p.Parser.token = Typ then (
-      Parser.next p;
-      let lidents = parseLidentList p in
-      TypeParameter (uncurried, attrs, lidents, startPos)
-    ) else (
-    let (attrs, lbl, pat) = match p.Parser.token with
-    | Tilde ->
-      Parser.next p;
-      let (lblName, _loc) = parseLident p in
-      begin match p.Parser.token with
-      | Comma | Equal | Rparen ->
-        let loc = mkLoc startPos p.prevEndPos in
-        (
-          attrs,
-          Asttypes.Labelled lblName,
-          Ast_helper.Pat.var ~loc (Location.mkloc lblName loc)
-        )
-      | Colon ->
-        let lblEnd = p.prevEndPos in
+    if (
+      p.Parser.token = Token.Typ ||
+      p.token = Tilde ||
+      p.token = Dot ||
+      Grammar.isPatternStart p.token
+    ) then (
+      let startPos = p.Parser.startPos in
+      let uncurried = Parser.optional p Token.Dot in
+      (* two scenarios:
+       *   attrs ~lbl ...
+       *   attrs pattern
+       * Attributes before a labelled arg, indicate that it's on the whole arrow expr
+       * Otherwise it's part of the pattern
+       *  *)
+      let attrs = parseAttributes p in
+      if p.Parser.token = Typ then (
         Parser.next p;
-        let typ = parseTypExpr p in
-        let loc = mkLoc startPos lblEnd in
-        let pat =
-          let pat = Ast_helper.Pat.var ~loc (Location.mkloc lblName loc) in
+        let lidents = parseLidentList p in
+        Some (TypeParameter (uncurried, attrs, lidents, startPos))
+      ) else (
+      let (attrs, lbl, pat) = match p.Parser.token with
+      | Tilde ->
+        Parser.next p;
+        let (lblName, _loc) = parseLident p in
+        begin match p.Parser.token with
+        | Comma | Equal | Rparen ->
           let loc = mkLoc startPos p.prevEndPos in
-          Ast_helper.Pat.constraint_ ~loc pat typ in
-        (attrs, Asttypes.Labelled lblName, pat)
-      | As ->
-        Parser.next p;
-        let pat = parseConstrainedPattern p in
-        (attrs, Asttypes.Labelled lblName, pat)
-      | t ->
-        Parser.err p (Diagnostics.unexpected t p.breadcrumbs);
-        let loc = mkLoc startPos p.prevEndPos in
-        (
-          attrs,
-          Asttypes.Labelled lblName,
-          Ast_helper.Pat.var ~loc (Location.mkloc lblName loc)
-        )
-      end
-    | _ ->
-      let pattern = parseConstrainedPattern p in
-      let attrs = List.concat [attrs; pattern.ppat_attributes] in
-      ([], Asttypes.Nolabel, {pattern with ppat_attributes = attrs})
-    in
-    let parameter = match p.Parser.token with
-    | Equal ->
-      Parser.next p;
-			let lbl = match lbl with
-			| Asttypes.Labelled lblName -> Asttypes.Optional lblName
-			| Asttypes.Optional _ as lbl -> lbl
-			| Asttypes.Nolabel -> Asttypes.Nolabel
-			in
-      begin match p.Parser.token with
-      | Question ->
-        Parser.next p;
-        (uncurried, attrs, lbl, None, pat, startPos)
+          (
+            attrs,
+            Asttypes.Labelled lblName,
+            Ast_helper.Pat.var ~loc (Location.mkloc lblName loc)
+          )
+        | Colon ->
+          let lblEnd = p.prevEndPos in
+          Parser.next p;
+          let typ = parseTypExpr p in
+          let loc = mkLoc startPos lblEnd in
+          let pat =
+            let pat = Ast_helper.Pat.var ~loc (Location.mkloc lblName loc) in
+            let loc = mkLoc startPos p.prevEndPos in
+            Ast_helper.Pat.constraint_ ~loc pat typ in
+          (attrs, Asttypes.Labelled lblName, pat)
+        | As ->
+          Parser.next p;
+          let pat = parseConstrainedPattern p in
+          (attrs, Asttypes.Labelled lblName, pat)
+        | t ->
+          Parser.err p (Diagnostics.unexpected t p.breadcrumbs);
+          let loc = mkLoc startPos p.prevEndPos in
+          (
+            attrs,
+            Asttypes.Labelled lblName,
+            Ast_helper.Pat.var ~loc (Location.mkloc lblName loc)
+          )
+        end
       | _ ->
-        let expr = parseExpr p in
-        (uncurried, attrs, lbl, Some expr, pat, startPos)
-      end
-    | _ ->
-      (uncurried, attrs, lbl, None, pat, startPos)
-    in
-    TermParameter parameter
-  )
+        let pattern = parseConstrainedPattern p in
+        let attrs = List.concat [attrs; pattern.ppat_attributes] in
+        ([], Asttypes.Nolabel, {pattern with ppat_attributes = attrs})
+      in
+      let parameter = match p.Parser.token with
+      | Equal ->
+        Parser.next p;
+        let lbl = match lbl with
+        | Asttypes.Labelled lblName -> Asttypes.Optional lblName
+        | Asttypes.Optional _ as lbl -> lbl
+        | Asttypes.Nolabel -> Asttypes.Nolabel
+        in
+        begin match p.Parser.token with
+        | Question ->
+          Parser.next p;
+          (uncurried, attrs, lbl, None, pat, startPos)
+        | _ ->
+          let expr = parseExpr p in
+          (uncurried, attrs, lbl, Some expr, pat, startPos)
+        end
+      | _ ->
+        (uncurried, attrs, lbl, None, pat, startPos)
+      in
+      Some (TermParameter parameter)
+    )
+    ) else None
 
   and parseParameterList p =
     let parameters =
-      parseCommaDelimitedList
+      parseCommaDelimitedRegion
         ~grammar:Grammar.ParameterList
         ~f:parseParameter
         ~closing:Rparen
@@ -4062,6 +4068,21 @@ Solution: directly use `concat`."
       let loc = mkLoc expr.pexp_loc.loc_start typ.ptyp_loc.loc_end in
       Ast_helper.Exp.constraint_ ~loc expr typ
     | _ -> expr
+
+
+  and parseConstrainedExprListItem p =
+    match p.Parser.token with
+    | token when Grammar.isExprStart token ->
+      let expr = parseExpr p in
+      begin match p.Parser.token with
+      | Colon ->
+        Parser.next p;
+        let typ = parseTypExpr p in
+        let loc = mkLoc expr.pexp_loc.loc_start typ.ptyp_loc.loc_end in
+        Some (Ast_helper.Exp.constraint_ ~loc expr typ)
+      | _ -> Some expr
+      end
+    | _ -> None
 
   (* Atomic expressions represent unambiguous expressions.
    * This means that regardless of the context, these expressions
@@ -4699,35 +4720,39 @@ Solution: directly use `concat`."
    *)
   and parseJsxProp p =
     Parser.leaveBreadcrumb p Grammar.JsxAttribute;
-    let optional = Parser.optional p Question in
-    let (name, _loc) = parseLident p in
-    (* optional punning: <foo ?a /> *)
-    if optional then
-      (Asttypes.Optional name, Ast_helper.Exp.ident (Location.mknoloc
-        (Longident.Lident name)))
-    else begin
-      match p.Parser.token with
-      | Equal ->
-        Parser.next p;
-        (* no punning *)
-        let optional = Parser.optional p Question in
-        let attrExpr = parsePrimaryExpr ~operand:(parseAtomicExpr p) p in
-        let label =
-          if optional then Asttypes.Optional name else Asttypes.Labelled name
-        in
-        (label, attrExpr)
-      | _ ->
-        let optional = Parser.optional p Question in
-        let attrExpr = Ast_helper.Exp.ident (Location.mknoloc (Longident.Lident
-        name)) in
-        let label =
-          if optional then Asttypes.Optional name else Asttypes.Labelled name
-        in
-        (label, attrExpr)
-    end
+    match p.Parser.token with
+    | Question | Lident _ ->
+      let optional = Parser.optional p Question in
+      let (name, _loc) = parseLident p in
+      (* optional punning: <foo ?a /> *)
+      if optional then
+        Some (Asttypes.Optional name, Ast_helper.Exp.ident (Location.mknoloc
+          (Longident.Lident name)))
+      else begin
+        match p.Parser.token with
+        | Equal ->
+          Parser.next p;
+          (* no punning *)
+          let optional = Parser.optional p Question in
+          let attrExpr = parsePrimaryExpr ~operand:(parseAtomicExpr p) p in
+          let label =
+            if optional then Asttypes.Optional name else Asttypes.Labelled name
+          in
+          Some (label, attrExpr)
+        | _ ->
+          let optional = Parser.optional p Question in
+          let attrExpr = Ast_helper.Exp.ident (Location.mknoloc (Longident.Lident
+          name)) in
+          let label =
+            if optional then Asttypes.Optional name else Asttypes.Labelled name
+          in
+          Some (label, attrExpr)
+      end
+    | _ ->
+      None
 
   and parseJsxProps p =
-    parseList
+    parseRegion
       ~grammar:Grammar.JsxAttribute
       ~f:parseJsxProp
       p
@@ -4887,22 +4912,20 @@ Solution: directly use `concat`."
     {expr with pexp_loc = mkLoc startPos p.prevEndPos}
 
   and parseRecordRowWithStringKey p =
-    let field = match p.Parser.token with
+    match p.Parser.token with
     | String s ->
       let loc = mkLoc p.startPos p.endPos in
       Parser.next p;
-      Location.mkloc (Longident.Lident s) loc
-    | t ->
-      Parser.err p (Diagnostics.unexpected t p.breadcrumbs);
-      Location.mknoloc (Longident.Lident "_")
-    in
-    match p.Parser.token with
-    | Colon ->
-      Parser.next p;
-      let fieldExpr = parseExpr p in
-      (field, fieldExpr)
-    | _ ->
-      (field, Ast_helper.Exp.ident ~loc:field.loc field)
+      let field = Location.mkloc (Longident.Lident s) loc in
+      begin match p.Parser.token with
+      | Colon ->
+        Parser.next p;
+        let fieldExpr = parseExpr p in
+        Some (field, fieldExpr)
+      | _ ->
+        Some (field, Ast_helper.Exp.ident ~loc:field.loc field)
+      end
+    | _ -> None
 
   and parseRecordRow p =
     let () = match p.Parser.token with
@@ -4911,18 +4934,22 @@ Solution: directly use `concat`."
       Parser.next p;
     | _ -> ()
     in
-    let field = parseValuePath p in
     match p.Parser.token with
-    | Colon ->
-      Parser.next p;
-      let fieldExpr = parseExpr p in
-      (field, fieldExpr)
-    | _ ->
-      (field, Ast_helper.Exp.ident ~loc:field.loc  field)
+    | Lident _ | Uident _ | List ->
+      let field = parseValuePath p in
+      begin match p.Parser.token with
+      | Colon ->
+        Parser.next p;
+        let fieldExpr = parseExpr p in
+        Some (field, fieldExpr)
+      | _ ->
+        Some (field, Ast_helper.Exp.ident ~loc:field.loc  field)
+      end
+    | _ -> None
 
   and parseRecordExprWithStringKeys firstRow p =
     let rows = firstRow::(
-      parseCommaDelimitedList ~grammar:Grammar.RecordRowsStringKey ~closing:Rbrace ~f:parseRecordRowWithStringKey p
+      parseCommaDelimitedRegion ~grammar:Grammar.RecordRowsStringKey ~closing:Rbrace ~f:parseRecordRowWithStringKey p
     ) in
     let loc = mkLoc ((fst firstRow).loc.loc_start) p.endPos in
     let recordStrExpr = Ast_helper.Str.eval ~loc (
@@ -4933,7 +4960,7 @@ Solution: directly use `concat`."
 
   and parseRecordExpr ?(spread=None) rows p =
     let exprs =
-      parseCommaDelimitedList
+      parseCommaDelimitedRegion
         ~grammar:Grammar.RecordRows
         ~closing:Rbrace
         ~f:parseRecordRow p
@@ -5183,27 +5210,31 @@ Solution: directly use `concat`."
 
   and parsePatternMatchCase p =
     Parser.leaveBreadcrumb p Grammar.PatternMatchCase;
-    Parser.expect Bar p;
-    let lhs = parsePattern p in
-    let guard = match p.Parser.token with
-    | When ->
+    match p.Parser.token with
+    | Token.Bar ->
       Parser.next p;
-      Some (parseExpr ~context:WhenExpr p)
+      let lhs = parsePattern p in
+      let guard = match p.Parser.token with
+      | When ->
+        Parser.next p;
+        Some (parseExpr ~context:WhenExpr p)
+      | _ ->
+        None
+      in
+      let () = match p.token with
+      | EqualGreater -> Parser.next p
+      | _ -> Recover.recoverEqualGreater p
+      in
+      let rhs = parseExprBlock p in
+      Parser.eatBreadcrumb p;
+      Some (Ast_helper.Exp.case lhs ?guard rhs)
     | _ ->
       None
-    in
-    let () = match p.token with
-    | EqualGreater -> Parser.next p
-    | _ -> Recover.recoverEqualGreater p
-    in
-    let rhs = parseExprBlock p in
-    Parser.eatBreadcrumb p;
-    Ast_helper.Exp.case lhs ?guard rhs
 
   and parsePatternMatching p =
     Parser.leaveBreadcrumb p Grammar.PatternMatching;
     let cases =
-      parseDelimitedList
+      parseDelimitedRegion
         ~grammar:Grammar.PatternMatching
         ~closing:Rbrace
         ~f:parsePatternMatchCase
@@ -5246,72 +5277,81 @@ Solution: directly use `concat`."
    *   | . argument
    *)
   and parseArgument p =
-    let uncurried = Parser.optional p Dot in
-    match p.Parser.token with
-    (* foo(_), do not confuse with foo(_ => x), TODO: performance *)
-    | Underscore when not (isEs6ArrowExpression ~inTernary:false p) ->
-      let loc = mkLoc p.startPos p.endPos in
-      Parser.next p;
-      let exp = Ast_helper.Exp.ident ~loc (
-        Location.mkloc (Longident.Lident "_") loc
-      ) in
-      (uncurried, Asttypes.Nolabel, exp)
-    | Tilde ->
-      Parser.next p;
-      (* TODO: nesting of pattern matches not intuitive for error recovery *)
-      begin match p.Parser.token with
-      | Lident ident ->
-        let startPos = p.startPos in
+    if (
+      p.Parser.token = Token.Tilde ||
+      p.token = Dot ||
+      p.token = Underscore ||
+      Grammar.isExprStart p.token
+    ) then (
+      let uncurried = Parser.optional p Dot in
+      match p.Parser.token with
+      (* foo(_), do not confuse with foo(_ => x), TODO: performance *)
+      | Underscore when not (isEs6ArrowExpression ~inTernary:false p) ->
+        let loc = mkLoc p.startPos p.endPos in
         Parser.next p;
-        let endPos = p.prevEndPos in
-        let loc = mkLoc startPos endPos in
-        let identExpr = Ast_helper.Exp.ident ~loc (
-          Location.mkloc (Longident.Lident ident) loc
+        let exp = Ast_helper.Exp.ident ~loc (
+          Location.mkloc (Longident.Lident "_") loc
         ) in
+        Some (uncurried, Asttypes.Nolabel, exp)
+      | Tilde ->
+        Parser.next p;
+        (* TODO: nesting of pattern matches not intuitive for error recovery *)
         begin match p.Parser.token with
-        | Question ->
+        | Lident ident ->
+          let startPos = p.startPos in
           Parser.next p;
-          (uncurried, Asttypes.Optional ident, identExpr)
-        | Equal ->
-          Parser.next p;
-          let label = match p.Parser.token with
+          let endPos = p.prevEndPos in
+          let loc = mkLoc startPos endPos in
+          let identExpr = Ast_helper.Exp.ident ~loc (
+            Location.mkloc (Longident.Lident ident) loc
+          ) in
+          begin match p.Parser.token with
           | Question ->
             Parser.next p;
-            Asttypes.Optional ident
-          | _ ->
-            Labelled ident
-          in
-          let expr = match p.Parser.token with
-          | Underscore ->
-            let loc = mkLoc p.startPos p.endPos in
+            Some (uncurried, Asttypes.Optional ident, identExpr)
+          | Equal ->
             Parser.next p;
-            Ast_helper.Exp.ident ~loc (
-              Location.mkloc (Longident.Lident "_") loc
-            )
-          | _ -> parseConstrainedExpr p
-          in
-          (uncurried, label, expr)
-        | _ ->
-          (uncurried, Labelled ident, identExpr)
+            let label = match p.Parser.token with
+            | Question ->
+              Parser.next p;
+              Asttypes.Optional ident
+            | _ ->
+              Labelled ident
+            in
+            let expr = match p.Parser.token with
+            | Underscore ->
+              let loc = mkLoc p.startPos p.endPos in
+              Parser.next p;
+              Ast_helper.Exp.ident ~loc (
+                Location.mkloc (Longident.Lident "_") loc
+              )
+            | _ -> parseConstrainedExpr p
+            in
+            Some (uncurried, label, expr)
+          | _ ->
+            Some (uncurried, Labelled ident, identExpr)
+          end
+        | t ->
+          Parser.err p (Diagnostics.lident t);
+          Some (uncurried, Nolabel, Recover.defaultExpr ())
         end
-      | t ->
-        Parser.err p (Diagnostics.lident t);
-        (uncurried, Nolabel, Recover.defaultExpr ())
-      end
-    (* apply(.) *)
-    | Rparen when uncurried ->
-      let unitExpr = Ast_helper.Exp.construct
-        (Location.mknoloc (Longident.Lident "()")) None
-      in
-      (uncurried, Nolabel, unitExpr)
-    | _ -> (uncurried, Nolabel, parseConstrainedExpr p)
+      (* apply(.) *)
+      | Rparen when uncurried ->
+        let unitExpr = Ast_helper.Exp.construct
+          (Location.mknoloc (Longident.Lident "()")) None
+        in
+        Some (uncurried, Nolabel, unitExpr)
+      | _ -> Some (uncurried, Nolabel, parseConstrainedExpr p)
+    ) else
+      None
+
 
   and parseCallExpr p funExpr =
     Parser.expect Lparen p;
     let startPos = p.Parser.startPos in
     Parser.leaveBreadcrumb p Grammar.ExprCall;
     let args =
-      parseCommaDelimitedList
+      parseCommaDelimitedRegion
         ~grammar:Grammar.ArgumentList
         ~closing:Rparen
         ~f:parseArgument p
@@ -5405,8 +5445,8 @@ Solution: directly use `concat`."
     let lparen = p.Parser.startPos in
     Parser.expect Lparen p;
     let args =
-      parseCommaDelimitedList
-        ~grammar:Grammar.ExprList ~f:parseConstrainedExpr ~closing:Rparen p
+      parseCommaDelimitedRegion
+        ~grammar:Grammar.ExprList ~f:parseConstrainedExprListItem ~closing:Rparen p
     in
     Parser.expect Rparen p;
     match args with
@@ -5421,20 +5461,21 @@ Solution: directly use `concat`."
     Parser.expect Forwardslash p;
     Scanner.setTupleMode p.scanner;
     let exprs =
-      parseCommaDelimitedList
-        p ~grammar:Grammar.ExprList ~closing:TupleEnding ~f:parseConstrainedExpr
+      parseCommaDelimitedRegion
+        p ~grammar:Grammar.ExprList ~closing:TupleEnding ~f:parseConstrainedExprListItem
     in
     Parser.expect TupleEnding p;
     Ast_helper.Exp.tuple ~loc:(mkLoc startPos p.prevEndPos) exprs
 
-  and parseListExprItem p =
+  and parseRegionExpr p =
     match p.Parser.token with
     | DotDotDot ->
       Parser.next p;
       let expr = parseConstrainedExpr p in
-      (true, expr)
-    | _ ->
-      (false, parseConstrainedExpr p)
+      Some (true, expr)
+    | token when Grammar.isExprStart token ->
+      Some (false, parseConstrainedExpr p)
+    | _ -> None
 
   and parseListExpr p =
     let startPos = p.Parser.startPos in
@@ -5442,7 +5483,7 @@ Solution: directly use `concat`."
     Parser.expect Lparen p;
     let listExprs =
       parseCommaDelimitedReversedList
-      p ~grammar:Grammar.ListExpr ~closing:Rparen ~f:parseListExprItem
+      p ~grammar:Grammar.ListExpr ~closing:Rparen ~f:parseRegionExpr
     in
     Parser.expect Rparen p;
     let loc = mkLoc startPos p.prevEndPos in
@@ -5473,20 +5514,24 @@ Solution: directly use `concat`."
       Parser.next p;
     | _ -> ()
     in
-    let expr = parseExpr p in
     match p.Parser.token with
-    | Colon ->
-      Parser.next p;
-      let typ = parseTypExpr p in
-      let loc = mkLoc expr.pexp_loc.loc_start typ.ptyp_loc.loc_end in
-      Ast_helper.Exp.constraint_ ~loc expr typ
-    | _ -> expr
+    | token when Grammar.isExprStart token ->
+      let expr = parseExpr p in
+      begin match p.Parser.token with
+      | Colon ->
+        Parser.next p;
+        let typ = parseTypExpr p in
+        let loc = mkLoc expr.pexp_loc.loc_start typ.ptyp_loc.loc_end in
+        Some (Ast_helper.Exp.constraint_ ~loc expr typ)
+      | _ -> Some expr
+      end
+    | _ -> None
 
   and parseArrayExp p =
     let startPos = p.Parser.startPos in
     Parser.expect Lbracket p;
     let exprs =
-      parseCommaDelimitedList
+      parseCommaDelimitedRegion
         p
         ~grammar:Grammar.ExprList
         ~closing:Rbracket
@@ -5631,22 +5676,31 @@ Solution: directly use `concat`."
 
   (* package-constraint  { and package-constraint } *)
   and parsePackageConstraints p =
-    let first = parsePackageConstraint p in
-    let rest = parseList
+    let first =
+      Parser.expect Typ p;
+      let typeConstr = parseValuePath p in
+      Parser.expect Equal p;
+      let typ = parseTypExpr p in
+      (typeConstr, typ)
+    in
+    let rest = parseRegion
       ~grammar:Grammar.PackageConstraint
       ~f:parsePackageConstraint
       p
     in
     first::rest
 
-  (* type typeconstr = typexpr *)
+  (* and type typeconstr = typexpr *)
   and parsePackageConstraint p =
-    let _ = Parser.optional p And in
-    Parser.expect Typ p;
-    let typeConstr = parseValuePath p in
-    Parser.expect Equal p;
-    let typ = parseTypExpr p in
-    (typeConstr, typ)
+    match p.Parser.token with
+    | And ->
+      Parser.next p;
+      Parser.expect Typ p;
+      let typeConstr = parseValuePath p in
+      Parser.expect Equal p;
+      let typ = parseTypExpr p in
+      Some (typeConstr, typ)
+    | _ -> None
 
   and parseBsObjectType ~attrs p =
     let startPos = p.Parser.startPos in
@@ -5656,7 +5710,7 @@ Solution: directly use `concat`."
       Parser.next p;
       let closedFlag = Asttypes.Open in
       let fields =
-        parseCommaDelimitedList
+        parseCommaDelimitedRegion
           ~grammar:Grammar.StringFieldDeclarations
           ~closing:Rbrace
           ~f:parseStringFieldDeclaration
@@ -5668,7 +5722,7 @@ Solution: directly use `concat`."
     | _ ->
       let closedFlag = Asttypes.Closed in
       let fields =
-        parseCommaDelimitedList
+        parseCommaDelimitedRegion
           ~grammar:Grammar.StringFieldDeclarations
           ~closing:Rbrace
           ~f:parseStringFieldDeclaration
@@ -5705,27 +5759,34 @@ Solution: directly use `concat`."
     *  | . type_parameter
     *)
   and parseTypeParameter p =
-    let startPos = p.Parser.startPos in
-    let uncurried = Parser.optional p Dot in
-    let attrs = parseAttributes p in
-    match p.Parser.token with
-    | Tilde ->
-      Parser.next p;
-      let (name, _loc) = parseLident p in
-      Parser.expect Colon p;
-      let typ = parseTypExpr p in
-      begin match p.Parser.token with
-      | Equal ->
+    if (
+      p.Parser.token = Token.Tilde ||
+      p.token = Dot ||
+      Grammar.isTypExprStart p.token
+    ) then (
+      let startPos = p.Parser.startPos in
+      let uncurried = Parser.optional p Dot in
+      let attrs = parseAttributes p in
+      match p.Parser.token with
+      | Tilde ->
         Parser.next p;
-        Parser.expect Question p;
-        (uncurried, attrs, Asttypes.Optional name, typ, startPos)
+        let (name, _loc) = parseLident p in
+        Parser.expect Colon p;
+        let typ = parseTypExpr p in
+        begin match p.Parser.token with
+        | Equal ->
+          Parser.next p;
+          Parser.expect Question p;
+          Some (uncurried, attrs, Asttypes.Optional name, typ, startPos)
+        | _ ->
+          Some (uncurried, attrs, Asttypes.Labelled name, typ, startPos)
+        end
       | _ ->
-        (uncurried, attrs, Asttypes.Labelled name, typ, startPos)
-      end
-    | _ ->
-      let typ = parseTypExpr p in
-      let typWithAttributes = {typ with ptyp_attributes = List.concat[attrs; typ.ptyp_attributes]} in
-      (uncurried, [], Asttypes.Nolabel, typWithAttributes, startPos)
+        let typ = parseTypExpr p in
+        let typWithAttributes = {typ with ptyp_attributes = List.concat[attrs; typ.ptyp_attributes]} in
+        Some (uncurried, [], Asttypes.Nolabel, typWithAttributes, startPos)
+    ) else
+      None
 
   (* (int, ~x:string, float) *)
   and parseTypeParameters p =
@@ -5740,7 +5801,7 @@ Solution: directly use `concat`."
       [(false, [], Asttypes.Nolabel, typ, startPos)]
     | _ ->
       let params =
-        parseCommaDelimitedList ~grammar:Grammar.TypeParameters ~closing:Rparen ~f:parseTypeParameter p
+        parseCommaDelimitedRegion ~grammar:Grammar.TypeParameters ~closing:Rparen ~f:parseTypeParameter p
       in
       Parser.expect Rparen p;
       params
@@ -5818,11 +5879,17 @@ Solution: directly use `concat`."
     (* Parser.eatBreadcrumb p; *)
     typ
 
+  and parseTypExprRegion p =
+    if Grammar.isTypExprStart p.Parser.token then
+      Some (parseTypExpr p)
+    else
+      None
+
   and parseTupleType ~attrs p =
     let startPos = p.Parser.startPos in
     Parser.expect Forwardslash p;
     let types =
-      parseCommaDelimitedList ~grammar:Grammar.TypExprList ~closing:Forwardslash ~f:parseTypExpr p
+      parseCommaDelimitedRegion ~grammar:Grammar.TypExprList ~closing:Forwardslash ~f:parseTypExprRegion p
     in
     Parser.expect Forwardslash p;
     Ast_helper.Typ.tuple ~attrs ~loc:(mkLoc startPos p.prevEndPos) types
@@ -5832,6 +5899,12 @@ Solution: directly use `concat`."
     if p.Parser.token = Token.LessThan then Parser.next p;
     let typ = parseTypExpr p in
     typ
+
+  and parseTypeConstructorArgListItem p =
+    if Grammar.isTypExprStart p.Parser.token then
+      Some (parseTypExpr p)
+    else
+      None
 
   (* Js.Nullable.value<'a> *)
   and parseTypeConstructorArgs p =
@@ -5846,7 +5919,7 @@ Solution: directly use `concat`."
       Parser.next p;
       let typeArgs =
         (* TODO: change Grammar.TypExprList to TypArgList!!! *)
-        parseCommaDelimitedList ~grammar:Grammar.TypExprList ~closing:GreaterThan ~f:parseTypeConstructorArg p
+        parseCommaDelimitedRegion ~grammar:Grammar.TypExprList ~closing:GreaterThan ~f:parseTypeConstructorArgListItem p
       in
       let () = match p.token with
       | Rparen when opening = Token.Lparen ->
@@ -5862,7 +5935,7 @@ Solution: directly use `concat`."
 		Scanner.setDiamondMode p.Parser.scanner;
 		Parser.expect LessThan p;
 		let typeArgs =
-      parseCommaDelimitedList ~grammar:Grammar.TypExprList ~closing:GreaterThan ~f:parseTypExpr p
+      parseCommaDelimitedRegion ~grammar:Grammar.TypExprList ~closing:GreaterThan ~f:parseTypExprRegion p
 		in
 		Parser.expect GreaterThan p;
 		Scanner.popMode p.scanner Diamond;
@@ -5873,19 +5946,17 @@ Solution: directly use `concat`."
    *  | attributes string-field-decl *)
   and parseStringFieldDeclaration p =
     let attrs = parseAttributes p in
-    let fieldName = match p.Parser.token with
+    match p.Parser.token with
     | String name ->
       let nameStartPos = p.startPos in
       let nameEndPos = p.endPos in
       Parser.next p;
-      Location.mkloc name (mkLoc nameStartPos nameEndPos)
+      let fieldName = Location.mkloc name (mkLoc nameStartPos nameEndPos) in
+      Parser.expect ~grammar:Grammar.TypeExpression Colon p;
+      let typ = parsePolyTypeExpr p in
+      Some(Parsetree.Otag (fieldName, attrs, typ))
     | token ->
-      Parser.err p (Diagnostics.unexpected token p.breadcrumbs);
-      Location.mknoloc "_"
-    in
-    Parser.expect ~grammar:Grammar.TypeExpression Colon p;
-    let typ = parsePolyTypeExpr p in
-    Parsetree.Otag (fieldName, attrs, typ)
+      None
 
   (* field-decl	::=
    *  | [mutable] field-name : poly-typexpr
@@ -5910,6 +5981,31 @@ Solution: directly use `concat`."
     let loc = mkLoc startPos typ.ptyp_loc.loc_end in
     Ast_helper.Type.field ~attrs ~loc ~mut name typ
 
+
+  and parseFieldDeclarationRegion p =
+    let attrs = parseAttributes p in
+    let startPos = p.Parser.startPos in
+    let mut = if Parser.optional p Token.Mutable then
+      Asttypes.Mutable
+    else
+      Asttypes.Immutable
+    in
+    match p.token with
+    | Lident _ ->
+      let (lident, loc) = parseLident p in
+      let name = Location.mkloc lident loc in
+      let typ = match p.Parser.token with
+      | Colon ->
+        Parser.next p;
+        parsePolyTypeExpr p
+      | _ ->
+        Ast_helper.Typ.constr ~loc:name.loc {name with txt = Lident name.txt} []
+      in
+      let loc = mkLoc startPos typ.ptyp_loc.loc_end in
+      Some(Ast_helper.Type.field ~attrs ~loc ~mut name typ)
+    | _ ->
+      None
+
   (* record-decl ::=
    *  | { field-decl }
    *  | { field-decl, field-decl }
@@ -5919,10 +6015,10 @@ Solution: directly use `concat`."
     Parser.leaveBreadcrumb p Grammar.RecordDecl;
     Parser.expect Lbrace p;
     let rows =
-      parseCommaDelimitedList
+      parseCommaDelimitedRegion
         ~grammar:Grammar.RecordDecl
         ~closing:Rbrace
-        ~f:parseFieldDeclaration
+        ~f:parseFieldDeclarationRegion
         p
     in
     Parser.expect Rbrace p;
@@ -5952,7 +6048,7 @@ Solution: directly use `concat`."
           Parser.next p;
           let closedFlag = Asttypes.Open in
           let fields =
-            parseCommaDelimitedList
+            parseCommaDelimitedRegion
               ~grammar:Grammar.StringFieldDeclarations
               ~closing:Rbrace
               ~f:parseStringFieldDeclaration
@@ -5963,10 +6059,10 @@ Solution: directly use `concat`."
           let typ = makeBsObjType ~attrs:[] ~loc ~closed:closedFlag fields in
           Parser.optional p Comma |> ignore;
           let moreArgs =
-            parseCommaDelimitedList
+            parseCommaDelimitedRegion
             ~grammar:Grammar.TypExprList
             ~closing:Rparen
-            ~f:parseTypExpr
+            ~f:parseTypExprRegion
             p
           in
           Parser.expect Rparen p;
@@ -5978,7 +6074,7 @@ Solution: directly use `concat`."
             let closedFlag = Asttypes.Closed in
             let fields = match attrs with
             | [] ->
-              parseCommaDelimitedList
+              parseCommaDelimitedRegion
                 ~grammar:Grammar.StringFieldDeclarations
                 ~closing:Rbrace
                 ~f:parseStringFieldDeclaration
@@ -5986,7 +6082,10 @@ Solution: directly use `concat`."
             | attrs ->
               let first =
                 Parser.leaveBreadcrumb p Grammar.StringFieldDeclarations;
-                let field = parseStringFieldDeclaration p in
+                let field = match parseStringFieldDeclaration p with
+                | Some field -> field
+                | None -> assert false
+                in
                 (* parse comma after first *)
                 let () = match p.Parser.token with
                 | Rbrace | Eof -> ()
@@ -6000,7 +6099,7 @@ Solution: directly use `concat`."
                 end
               in
               first::(
-                parseCommaDelimitedList
+                parseCommaDelimitedRegion
                   ~grammar:Grammar.StringFieldDeclarations
                   ~closing:Rbrace
                   ~f:parseStringFieldDeclaration
@@ -6011,20 +6110,20 @@ Solution: directly use `concat`."
               let typ = makeBsObjType ~attrs:[]  ~loc ~closed:closedFlag fields in
               Parser.optional p Comma |> ignore;
               let moreArgs =
-                parseCommaDelimitedList
+                parseCommaDelimitedRegion
                   ~grammar:Grammar.TypExprList
                   ~closing:Rparen
-                  ~f:parseTypExpr p
+                  ~f:parseTypExprRegion p
               in
               Parser.expect Rparen p;
               Parsetree.Pcstr_tuple (typ::moreArgs)
             | _ ->
               let fields = match attrs with
               | [] ->
-                parseCommaDelimitedList
+                parseCommaDelimitedRegion
                   ~grammar:Grammar.FieldDeclarations
                   ~closing:Rbrace
-                  ~f:parseFieldDeclaration
+                  ~f:parseFieldDeclarationRegion
                   p
               | attrs ->
                 let first =
@@ -6033,10 +6132,10 @@ Solution: directly use `concat`."
                   {field with Parsetree.pld_attributes = attrs}
                 in
                 first::(
-                  parseCommaDelimitedList
+                  parseCommaDelimitedRegion
                     ~grammar:Grammar.FieldDeclarations
                     ~closing:Rbrace
-                    ~f:parseFieldDeclaration
+                    ~f:parseFieldDeclarationRegion
                     p
                 )
               in
@@ -6048,10 +6147,10 @@ Solution: directly use `concat`."
         end
         | _ ->
           let args =
-            parseCommaDelimitedList
+            parseCommaDelimitedRegion
               ~grammar:Grammar.TypExprList
               ~closing:Rparen
-              ~f:parseTypExpr
+              ~f:parseTypExprRegion
               p
           in
           Parser.expect Rparen p;
@@ -6073,8 +6172,11 @@ Solution: directly use `concat`."
    *  | constr-name const-args
    *  | attrs constr-name const-args *)
    and parseTypeConstructorDeclarationWithBar p =
-    Parser.expect Bar p;
-    parseTypeConstructorDeclaration p
+    match p.Parser.token with
+    | Bar ->
+      Parser.next p;
+      Some (parseTypeConstructorDeclaration p)
+    | _ -> None
 
    and parseTypeConstructorDeclaration p =
      Parser.leaveBreadcrumb p Grammar.ConstructorDeclaration;
@@ -6101,7 +6203,7 @@ Solution: directly use `concat`."
       firstConstrDecl
     in
     firstConstrDecl::(
-      parseList
+      parseRegion
         ~grammar:Grammar.ConstructorDeclaration
         ~f:parseTypeConstructorDeclarationWithBar
         p
@@ -6151,27 +6253,23 @@ Solution: directly use `concat`."
    *   | (* empty *)
    *)
   and parseTypeParam p =
-    Parser.leaveBreadcrumb p Grammar.TypeParam;
+    Parser.optional p Token.LessThan |> ignore;
     let variance = match p.Parser.token with
     | Plus -> Parser.next p; Asttypes.Covariant
     | Minus -> Parser.next p; Contravariant
     | _ -> Invariant
     in
-    let param = match p.Parser.token with
+    match p.Parser.token with
     | SingleQuote ->
       Parser.next p;
       let (ident, loc) = parseLident p in
-      (Ast_helper.Typ.var ~loc ident, variance)
+      Some (Ast_helper.Typ.var ~loc ident, variance)
     | Underscore ->
       let loc = mkLoc p.startPos p.endPos in
       Parser.next p;
-      (Ast_helper.Typ.any ~loc (), variance)
+      Some (Ast_helper.Typ.any ~loc (), variance)
     | token ->
-      Parser.err p (Diagnostics.unexpected token p.breadcrumbs);
-      (Ast_helper.Typ.any (), variance)
-    in
-    Parser.eatBreadcrumb p;
-    param
+      None
 
   (* type-params	::=
    *  | <type-param>
@@ -6192,7 +6290,7 @@ Solution: directly use `concat`."
       );
       Parser.next p;
       let params =
-        parseCommaDelimitedList
+        parseCommaDelimitedRegion
           ~grammar:Grammar.TypeParams
           ~closing:GreaterThan
           ~f:parseTypeParam
@@ -6211,21 +6309,24 @@ Solution: directly use `concat`."
   (* type-constraint	::=	constraint ' ident =  typexpr *)
   and parseTypeConstraint p =
     let startPos = p.Parser.startPos in
-    Parser.expect Constraint p;
-    Parser.expect SingleQuote p;
-    begin match p.Parser.token with
-    | Lident ident ->
-      let identLoc = mkLoc startPos p.endPos in
+    match p.Parser.token with
+    | Token.Constraint ->
       Parser.next p;
-      Parser.expect Equal p;
-      let typ = parseTypExpr p in
-      let loc = mkLoc startPos p.prevEndPos in
-      (Ast_helper.Typ.var ~loc:identLoc ident, typ, loc)
-    | t ->
-      Parser.err p (Diagnostics.lident t);
-      let loc = mkLoc startPos p.prevEndPos in
-      (Ast_helper.Typ.any (), parseTypExpr p, loc)
-    end
+      Parser.expect SingleQuote p;
+      begin match p.Parser.token with
+      | Lident ident ->
+        let identLoc = mkLoc startPos p.endPos in
+        Parser.next p;
+        Parser.expect Equal p;
+        let typ = parseTypExpr p in
+        let loc = mkLoc startPos p.prevEndPos in
+        Some (Ast_helper.Typ.var ~loc:identLoc ident, typ, loc)
+      | t ->
+        Parser.err p (Diagnostics.lident t);
+        let loc = mkLoc startPos p.prevEndPos in
+        Some (Ast_helper.Typ.any (), parseTypExpr p, loc)
+      end
+    | _ -> None
 
   (* type-constraints ::=
    *  | (* empty *)
@@ -6234,7 +6335,7 @@ Solution: directly use `concat`."
    *  | type-constraint type-constraint type-constraint (* 0 or more *)
    *)
   and parseTypeConstraints p =
-    parseList
+    parseRegion
       ~grammar:Grammar.TypeConstraint
       ~f:parseTypeConstraint
       p
@@ -6293,7 +6394,7 @@ Solution: directly use `concat`."
       Parser.next p;
       let closedFlag = Asttypes.Open in
       let fields =
-        parseCommaDelimitedList
+        parseCommaDelimitedRegion
           ~grammar:Grammar.StringFieldDeclarations
           ~closing:Rbrace
           ~f:parseStringFieldDeclaration
@@ -6313,7 +6414,7 @@ Solution: directly use `concat`."
         let closedFlag = Asttypes.Closed in
         let fields = match attrs with
         | [] ->
-          parseCommaDelimitedList
+          parseCommaDelimitedRegion
             ~grammar:Grammar.StringFieldDeclarations
             ~closing:Rbrace
             ~f:parseStringFieldDeclaration
@@ -6321,7 +6422,10 @@ Solution: directly use `concat`."
         | attrs ->
           let first =
             Parser.leaveBreadcrumb p Grammar.StringFieldDeclarations;
-            let field = parseStringFieldDeclaration p in
+            let field = match parseStringFieldDeclaration p with
+            | Some field -> field
+            | None -> assert false
+            in
             (* parse comma after first *)
             let () = match p.Parser.token with
             | Rbrace | Eof -> ()
@@ -6335,7 +6439,7 @@ Solution: directly use `concat`."
             end
           in
           first::(
-            parseCommaDelimitedList
+            parseCommaDelimitedRegion
               ~grammar:Grammar.StringFieldDeclarations
               ~closing:Rbrace
               ~f:parseStringFieldDeclaration
@@ -6352,10 +6456,10 @@ Solution: directly use `concat`."
         Parser.leaveBreadcrumb p Grammar.RecordDecl;
         let fields = match attrs with
         | [] ->
-          parseCommaDelimitedList
+          parseCommaDelimitedRegion
             ~grammar:Grammar.FieldDeclarations
             ~closing:Rbrace
-            ~f:parseFieldDeclaration
+            ~f:parseFieldDeclarationRegion
             p
         | attrs ->
           let first =
@@ -6364,10 +6468,10 @@ Solution: directly use `concat`."
             {field with Parsetree.pld_attributes = attrs}
           in
           first::(
-            parseCommaDelimitedList
+            parseCommaDelimitedRegion
               ~grammar:Grammar.FieldDeclarations
               ~closing:Rbrace
-              ~f:parseFieldDeclaration
+              ~f:parseFieldDeclarationRegion
               p
           )
         in
@@ -6546,11 +6650,11 @@ Solution: directly use `concat`."
 
   and parsePrimitive p =
     match p.Parser.token with
-    | String s -> Parser.next p; s
-    | _ -> ""
+    | String s -> Parser.next p; Some s
+    | _ -> None
 
   and parsePrimitives p =
-    match (parseList ~grammar:Grammar.Primitive ~f:parsePrimitive p) with
+    match (parseRegion ~grammar:Grammar.Primitive ~f:parsePrimitive p) with
     | [] ->
       let msg = "An external definition should have at least one primitive. Example: \"setTimeout\"" in
       Parser.err p (Diagnostics.message msg);
@@ -6619,7 +6723,7 @@ Solution: directly use `concat`."
     Ast_helper.Te.constructor ~loc ~attrs name kind
 
   and parseStructure p : Parsetree.structure =
-    parseList p ~grammar:Grammar.Structure ~f:parseStructureItem
+    parseRegion p ~grammar:Grammar.Structure ~f:parseRegionStructureItem
 
   and parseStructureItem p =
     let startPos = p.Parser.startPos in
@@ -6673,10 +6777,71 @@ Solution: directly use `concat`."
     let loc = mkLoc startPos p.prevEndPos in
     {item with pstr_loc = loc}
 
+  and parseRegionStructureItem p =
+    let startPos = p.Parser.startPos in
+    let attrs = parseAttributes p in
+    let item = match p.Parser.token with
+    | Open ->
+      Ast_helper.Str.open_ (parseOpenDescription ~attrs p)
+    | Let ->
+      let (recFlag, letBindings) = parseLetBindings ~attrs p in
+      Ast_helper.Str.value recFlag letBindings
+    | Typ ->
+      begin match parseTypeDefinitionOrExtension ~attrs p with
+      | TypeDef(recFlag, types) ->
+        Ast_helper.Str.type_ recFlag types
+      | TypeExt(ext) ->
+        Ast_helper.Str.type_extension ext
+      end
+    | External ->
+      Ast_helper.Str.primitive (parseExternalDef ~attrs p)
+    | Import ->
+      let importDescr = parseJsImport ~startPos ~attrs p in
+      JsFfi.toParsetree importDescr
+    | Exception ->
+      Ast_helper.Str.exception_ (parseExceptionDef ~attrs p)
+    | Include ->
+      Ast_helper.Str.include_ (parseIncludeStatement ~attrs p)
+    | Export ->
+      parseJsExport ~startPos ~attrs p
+    | Module -> parseModuleOrModuleTypeImpl ~attrs p
+    | AtAt ->
+      let (loc, attr) = parseStandaloneAttribute p in
+      Ast_helper.Str.attribute ~loc attr
+    | PercentPercent ->
+      let (loc, extension) = parseExtension ~moduleLanguage: true p in
+      Ast_helper.Str.extension ~attrs ~loc extension
+    | token when Grammar.isExprStart token ->
+      let exp = parseExpr p in
+      begin match exp.pexp_desc with
+      | Pexp_apply _ ->
+          let fakeUnitPat =
+            let unitLid = Location.mknoloc (Longident.Lident "()") in
+            Ast_helper.Pat.construct unitLid None
+          in
+          let vb = Ast_helper.Vb.mk ~attrs fakeUnitPat exp in
+          Ast_helper.Str.value Asttypes.Nonrecursive [vb]
+       | _ ->
+         Ast_helper.Str.eval ~attrs exp
+      end
+    | _ -> Recover.fakeStructureItem
+    in
+    if item != Recover.fakeStructureItem then (
+      Parser.optional p Semicolon |> ignore;
+      let loc = mkLoc startPos p.prevEndPos in
+      Some {item with pstr_loc = loc}
+    ) else
+      None
+
   and parseJsImport ~startPos ~attrs p =
     Parser.expect Token.Import p;
     let importSpec = match p.Parser.token with
-    | Token.Lident _ | Token.At -> JsFfi.Default(parseJsFfiDeclaration p)
+    | Token.Lident _ | Token.At ->
+      let decl = match parseJsFfiDeclaration p with
+      | Some decl -> decl
+      | None -> assert false
+      in
+      JsFfi.Default decl
     | _ -> JsFfi.Spec(parseJsFfiDeclarations p)
     in
     let scope = parseJsFfiScope p in
@@ -6716,7 +6881,7 @@ Solution: directly use `concat`."
 
   and parseJsFfiDeclarations p =
     Parser.expect Token.Lbrace p;
-    let decls = parseCommaDelimitedList
+    let decls = parseCommaDelimitedRegion
       ~grammar:Grammar.JsFfiImport
       ~closing:Rbrace
       ~f:parseJsFfiDeclaration
@@ -6728,19 +6893,22 @@ Solution: directly use `concat`."
   and parseJsFfiDeclaration p =
     let startPos = p.Parser.startPos in
     let attrs = parseAttributes p in
-    let (ident, _) = parseLident p in
-    let alias = match p.token with
-    | As ->
-      Parser.next p;
+    match p.Parser.token with
+    | Lident _ ->
       let (ident, _) = parseLident p in
-      ident
-    | _ ->
-      ident
-    in
-    Parser.expect Token.Colon p;
-    let typ = parseTypExpr p in
-    let loc = mkLoc startPos p.prevEndPos in
-    JsFfi.decl ~loc ~alias ~attrs ~name:ident ~typ
+      let alias = match p.token with
+      | As ->
+        Parser.next p;
+        let (ident, _) = parseLident p in
+        ident
+      | _ ->
+        ident
+      in
+      Parser.expect Token.Colon p;
+      let typ = parseTypExpr p in
+      let loc = mkLoc startPos p.prevEndPos in
+      Some (JsFfi.decl ~loc ~alias ~attrs ~name:ident ~typ)
+    | _ -> None
 
   (* include-statement ::= include module-expr *)
   and parseIncludeStatement ~attrs p =
@@ -6759,10 +6927,10 @@ Solution: directly use `concat`."
     | Lbrace ->
       Parser.next p;
       let structure = Ast_helper.Mod.structure (
-        parseDelimitedList
+        parseDelimitedRegion
           ~grammar:Grammar.Structure
           ~closing:Rbrace
-          ~f:parseStructureItem
+          ~f:parseRegionStructureItem
           p
       ) in
       Parser.expect Rbrace p;
@@ -6849,7 +7017,7 @@ Solution: directly use `concat`."
         let moduleType = parseModuleType p in
         let loc = mkLoc startPos uidentEndPos in
         let argName = Location.mkloc ident loc in
-        (attrs, argName, Some moduleType, startPos)
+        Some (attrs, argName, Some moduleType, startPos)
       | Dot ->
         Parser.next p;
         let moduleType =
@@ -6858,30 +7026,28 @@ Solution: directly use `concat`."
           Ast_helper.Mty.ident ~loc:moduleLongIdent.loc moduleLongIdent
         in
         let argName = Location.mknoloc "_" in
-        (attrs, argName, Some moduleType, startPos)
+        Some (attrs, argName, Some moduleType, startPos)
       | _ ->
         let loc = mkLoc startPos uidentEndPos in
         let modIdent = Location.mkloc (Longident.Lident ident) loc in
         let moduleType = Ast_helper.Mty.ident ~loc modIdent in
         let argName = Location.mknoloc "_" in
-        (attrs, argName, Some moduleType, startPos)
+        Some (attrs, argName, Some moduleType, startPos)
       end
     | Underscore ->
       Parser.next p;
       let argName = Location.mkloc "_" (mkLoc startPos p.prevEndPos) in
       Parser.expect Colon p;
       let moduleType = parseModuleType p in
-      (attrs, argName, Some moduleType, startPos)
+      Some (attrs, argName, Some moduleType, startPos)
     | _ ->
-      let moduleType = parseModuleType p in
-      let argName = Location.mknoloc "_" in
-      (attrs, argName, Some moduleType, startPos)
+      None
 
   and parseFunctorArgs p =
     let startPos = p.Parser.startPos in
     Parser.expect Lparen p;
     let args =
-      parseCommaDelimitedList
+      parseCommaDelimitedRegion
         ~grammar:Grammar.FunctorArgs
         ~closing:Rparen
         ~f:parseFunctorArg
@@ -6947,11 +7113,17 @@ Solution: directly use `concat`."
       Ast_helper.Mod.constraint_ ~loc modExpr modType
     | _ -> modExpr
 
+  and parseConstrainedModExprListItem p =
+    if Grammar.isModExprStart p.Parser.token then
+      Some (parseConstrainedModExpr p)
+    else
+      None
+
   and parseModuleApplication p modExpr =
     let startPos = p.Parser.startPos in
     Parser.expect Lparen p;
     let args =
-      parseCommaDelimitedList ~grammar:Grammar.ModExprList ~closing:Rparen ~f:parseConstrainedModExpr p
+      parseCommaDelimitedRegion ~grammar:Grammar.ModExprList ~closing:Rparen ~f:parseConstrainedModExprListItem p
     in
     Parser.expect Rparen p;
     let args = match args with
@@ -7235,13 +7407,17 @@ Solution: directly use `concat`."
   and parseSpecification p =
     Parser.expect Lbrace p;
     let spec =
-      parseDelimitedList ~grammar:Grammar.Signature ~closing:Rbrace ~f:parseSignatureItem p
+      parseDelimitedRegion
+        ~grammar:Grammar.Signature
+        ~closing:Rbrace
+        ~f:parseSignatureItemRegion
+        p
     in
     Parser.expect Rbrace p;
     Ast_helper.Mty.signature spec
 
   and parseSignature p =
-    parseList ~grammar:Grammar.Signature ~f:parseSignatureItem p
+    parseRegion ~grammar:Grammar.Signature ~f:parseSignatureItemRegion p
 
   and parseSignatureItem p =
     let startPos = p.Parser.startPos in
@@ -7294,6 +7470,63 @@ Solution: directly use `concat`."
     in
     Parser.optional p Semicolon |> ignore;
     {item with psig_loc = mkLoc startPos p.prevEndPos}
+
+  and parseSignatureItemRegion p =
+    let startPos = p.Parser.startPos in
+    let attrs = parseAttributes p in
+    let item = match p.Parser.token with
+    | Let ->
+      parseSignLetDesc ~attrs p
+    | Typ ->
+      begin match parseTypeDefinitionOrExtension ~attrs p with
+      | TypeDef(recFlag, types) ->
+        Ast_helper.Sig.type_ recFlag types
+      | TypeExt(ext) ->
+        Ast_helper.Sig.type_extension ext
+      end
+    | External ->
+      Ast_helper.Sig.value (parseExternalDef ~attrs p)
+    | Exception ->
+      Ast_helper.Sig.exception_ (parseExceptionDef ~attrs p)
+    | Open ->
+      Ast_helper.Sig.open_ (parseOpenDescription ~attrs p)
+    | Include ->
+      Parser.next p;
+      let moduleType = parseModuleType p in
+      let includeDescription = Ast_helper.Incl.mk ~attrs moduleType in
+      Ast_helper.Sig.include_ includeDescription
+    | Module ->
+      Parser.next p;
+      begin match p.Parser.token with
+      | Uident _ ->
+        parseModuleDeclarationOrAlias ~attrs p
+      | Rec ->
+        Ast_helper.Sig.rec_module (
+          parseRecModuleSpec ~attrs p
+        )
+      | Typ ->
+        parseModuleTypeDeclaration ~attrs p
+      | t ->
+        Parser.err p (Diagnostics.uident t);
+        parseModuleDeclarationOrAlias ~attrs p
+      end
+    | AtAt ->
+      let (loc, attr) = parseStandaloneAttribute p in
+      Ast_helper.Sig.attribute ~loc attr
+    | PercentPercent ->
+      let (loc, extension) = parseExtension ~moduleLanguage:true p in
+      Ast_helper.Sig.extension ~attrs ~loc extension
+    | Import ->
+      Parser.next p;
+      parseSignatureItem p
+    | _ ->
+      Recover.fakeSignatureItem
+    in
+    if item != Recover.fakeSignatureItem then (
+      Parser.optional p Semicolon |> ignore;
+      Some {item with psig_loc = mkLoc startPos p.prevEndPos}
+    ) else
+      None
 
   (* module rec module-name :  module-type  { and module-name:  module-type } *)
   and parseRecModuleSpec ~attrs p =
@@ -7437,13 +7670,16 @@ Solution: directly use `concat`."
 
   (* type attribute = string loc * payload *)
   and parseAttribute p =
-    Parser.expect At p;
-    let attrId = parseAttributeId p in
-    let payload = parsePayload p in
-    (attrId, payload)
+    match p.Parser.token with
+    | At ->
+      Parser.next p;
+      let attrId = parseAttributeId p in
+      let payload = parsePayload p in
+      Some(attrId, payload)
+    | _ -> None
 
   and parseAttributes p =
-    parseList p
+    parseRegion p
       ~grammar:Grammar.Attribute
       ~f:parseAttribute
 
@@ -11582,22 +11818,6 @@ end = struct
       | ProcessInterface ->
         process parseInterface (printInterface ~target filename) recover filename
     with
-    | InfiniteLoop(pos, _token) ->
-      let locationInfo =
-        Printf.sprintf (* ReasonLanguageServer requires the following format *)
-          "File \"%s\", line %d, characters %d-%d:"
-          filename
-          pos.pos_lnum
-          (pos.pos_cnum - pos.pos_bol)
-          (pos.pos_cnum - pos.pos_bol)
-      in
-      let msg =
-        Format.sprintf
-          "%s\n\nPossible infinite loop detected\n\n"
-          locationInfo
-      in
-      prerr_string msg;
-      exit 1
     | Failure txt ->
       prerr_string txt;
       prerr_newline();
