@@ -24,6 +24,10 @@ npm install https://github.com/IwanKaramazow/napkinscript
 #### Editor (vscode)
 * use reason-vscode extension 1.7.1
 * make sure ocaml vscode extension is disabled
+* If you run reason-vscode master, set the config `Reason_language_server: Mlfmt` for the experimental formatter
+```
+/full/path/to/napkinscript.exe -print ns
+```
 
 ## Dev Setup
 
