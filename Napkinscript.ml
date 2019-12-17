@@ -470,6 +470,7 @@ end
 
 module IO: sig
   val readFile: string -> string
+  val readStdin: unit -> string
   val writeFile: string -> string -> unit
 end = struct
   (* random chunk size: 2^15, TODO: why do we guess randomly? *)
@@ -483,6 +484,21 @@ end = struct
       let len = input chan chunk 0 chunkSize in
       if len == 0 then (
         close_in chan;
+        Buffer.contents buffer
+      ) else (
+        Buffer.add_subbytes buffer chunk 0 len;
+        loop ()
+      )
+    in
+    loop ()
+
+  let readStdin () =
+    let buffer = Buffer.create chunkSize in
+    let chunk = Bytes.create chunkSize in
+    let rec loop () =
+      let len = input stdin chunk 0 chunkSize in
+      if len == 0 then (
+        close_in stdin;
         Buffer.contents buffer
       ) else (
         Buffer.add_subbytes buffer chunk 0 len;
@@ -11510,7 +11526,11 @@ end = struct
     | Signature -> NapkinScript.parseSignature p
 
   let parseFile kind filename =
-    let src = IO.readFile filename in
+    let src = if String.length filename > 0 then
+      IO.readFile filename
+    else
+      IO.readStdin ()
+    in
     let p = Parser.make src filename in
     let ast = parse kind p in
     let report = match p.diagnostics with
@@ -11678,9 +11698,18 @@ end
 
 let () =
   Clflags.parse ();
-  List.iter (fun filename ->
-    Driver.processFile ~recover:!Clflags.recover ~target:!Clflags.print filename
-  ) !Clflags.files;
+  if !Clflags.bench then (
+    Benchmarks.run();
+    exit 0;
+  );
+  let () = match !Clflags.files with
+  | (file::_) as files ->
+    List.iter (fun filename ->
+      Driver.processFile ~recover:!Clflags.recover ~target:!Clflags.print filename
+    ) files;
+  | [] ->
+    Driver.processFile ~recover:!Clflags.recover ~target:!Clflags.print ""
+  in
   if !Clflags.profile then Profile.print();
   if !Clflags.bench then Benchmarks.run();
   exit 0
