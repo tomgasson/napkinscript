@@ -26,6 +26,27 @@ let () =
     (fun elements -> fun providerId -> let x = 1 in let b = 2 in x + b)
 =====Errors=============================================
 
+File \\"/napkinscript/tests/parsing/errors/expressions/arrow.js\\", line 1, characters 51-52:
+
+
+[31m1[0m │  Object.keys(providers).reduce((elements, providerId] => {          
+                                                         [31m^[0m
+2 │    let x = 1
+3 │    let b = 2
+
+Did you forget a \`,\` here? 
+
+
+File \\"/napkinscript/tests/parsing/errors/expressions/arrow.js\\", line 1, characters 51-52:
+
+
+[31m1[0m │  Object.keys(providers).reduce((elements, providerId[31m][0m => {
+2 │    let x = 1
+3 │    let b = 2
+
+I'm not sure what to parse here when looking at \\"]\\".
+
+
 File \\"/napkinscript/tests/parsing/errors/expressions/arrow.js\\", line 1, characters 52-55:
 
 
@@ -89,6 +110,18 @@ File \\"/napkinscript/tests/parsing/errors/expressions/block.js\\", line 18, cha
 20 │  
 
 Did you forget a \`)\` here? 
+
+
+File \\"/napkinscript/tests/parsing/errors/expressions/block.js\\", line 22, characters 10-12:
+
+
+20 │  
+21 │  switch stack {
+[31m22[0m │  | Empty =>
+23 │  | Cons(doc, rest) => ()
+24 │  | Join(doc1, doc2) =>
+
+Looks like there might be an expression missing here
 
 
 File \\"/napkinscript/tests/parsing/errors/expressions/block.js\\", line 26, characters 6-8:
@@ -217,19 +250,6 @@ File \\"/napkinscript/tests/parsing/errors/expressions/record.js\\", line 8, cha
 10 │  }
 
 Did you forget a \`:\` here? 
-
-
-File \\"/napkinscript/tests/parsing/errors/expressions/record.js\\", line 8, characters 18-26:
-
-
-6 │  
-7 │  let newWrapper = {
-[31m8[0m │    updateF updateF2          
-                        [31m^[0m
-9 │    value: f(xWrapper.currentValue),
-10 │  }
-
-Did you forget a \`,\` here? 
 
 
 
