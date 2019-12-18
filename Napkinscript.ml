@@ -3573,7 +3573,8 @@ Solution: directly use `concat`."
     | Module ->
       parseModulePattern ~attrs p
     | Percent ->
-      let (loc, extension) = parseExtension p in
+      let extension = parseExtension p in
+      let loc = mkLoc startPos p.prevEndPos in
       Ast_helper.Pat.extension ~loc ~attrs extension
     | token ->
       Parser.err p (Diagnostics.unexpected token p.breadcrumbs);
@@ -4147,7 +4148,8 @@ Solution: directly use `concat`."
       | LessThan ->
         parseJsx p
       | Percent ->
-        let (loc, extension) = parseExtension p in
+        let extension = parseExtension p in
+        let loc = mkLoc startPos p.prevEndPos in
         Ast_helper.Exp.extension ~loc extension
       | token ->
         let errPos = p.prevEndPos in
@@ -5656,7 +5658,8 @@ Solution: directly use `concat`."
       Parser.expect Rparen p;
       packageType
     | Percent ->
-      let (loc, extension) = parseExtension p in
+      let extension = parseExtension p in
+      let loc = mkLoc startPos p.prevEndPos in
       Ast_helper.Typ.extension ~attrs ~loc extension
     | Lbrace ->
       parseBsObjectType ~attrs p
@@ -6745,114 +6748,90 @@ Solution: directly use `concat`."
 
   and parseStructure p : Parsetree.structure =
     parseRegion p ~grammar:Grammar.Structure ~f:parseStructureItemRegion
-
-  and parseStructureItem p =
-    let startPos = p.Parser.startPos in
-    let attrs = parseAttributes p in
-    let item = match p.Parser.token with
-    | Open ->
-      Ast_helper.Str.open_ (parseOpenDescription ~attrs p)
-    | Let ->
-      let (recFlag, letBindings) = parseLetBindings ~attrs p in
-      Ast_helper.Str.value recFlag letBindings
-    | Typ ->
-      begin match parseTypeDefinitionOrExtension ~attrs p with
-      | TypeDef(recFlag, types) ->
-        Ast_helper.Str.type_ recFlag types
-      | TypeExt(ext) ->
-        Ast_helper.Str.type_extension ext
-      end
-    | External ->
-      Ast_helper.Str.primitive (parseExternalDef ~attrs p)
-    | Import ->
-      let importDescr = parseJsImport ~startPos ~attrs p in
-      JsFfi.toParsetree importDescr
-    | Exception ->
-      Ast_helper.Str.exception_ (parseExceptionDef ~attrs p)
-    | Include ->
-      Ast_helper.Str.include_ (parseIncludeStatement ~attrs p)
-    | Export ->
-      parseJsExport ~startPos ~attrs p
-    | Module -> parseModuleOrModuleTypeImpl ~attrs p
-    | AtAt ->
-      let (loc, attr) = parseStandaloneAttribute p in
-      Ast_helper.Str.attribute ~loc attr
-    | PercentPercent ->
-      let (loc, extension) = parseExtension ~moduleLanguage: true p in
-      Ast_helper.Str.extension ~attrs ~loc extension
-    | _ ->
-      let exp = parseExpr p in
-      begin match exp.pexp_desc with
-      | Pexp_apply _ ->
-          let fakeUnitPat =
-            let unitLid = Location.mknoloc (Longident.Lident "()") in
-            Ast_helper.Pat.construct unitLid None
-          in
-          let vb = Ast_helper.Vb.mk ~attrs fakeUnitPat exp in
-          Ast_helper.Str.value Asttypes.Nonrecursive [vb]
-       | _ ->
-         Ast_helper.Str.eval ~attrs exp
-      end
-    in
-    Parser.optional p Semicolon |> ignore;
-    let loc = mkLoc startPos p.prevEndPos in
-    {item with pstr_loc = loc}
+    (* [@@progress (Parser.next, Parser.expect, Recover.recoverLident, Recover.skipTokensAndMaybeRetry)] *)
 
   and parseStructureItemRegion p =
     let startPos = p.Parser.startPos in
     let attrs = parseAttributes p in
-    let item = match p.Parser.token with
+    match p.Parser.token with
     | Open ->
-      Ast_helper.Str.open_ (parseOpenDescription ~attrs p)
+      let openDescription = parseOpenDescription ~attrs p in
+      Parser.optional p Semicolon |> ignore;
+      let loc = mkLoc startPos p.prevEndPos in
+      Some (Ast_helper.Str.open_ ~loc openDescription)
     | Let ->
       let (recFlag, letBindings) = parseLetBindings ~attrs p in
-      Ast_helper.Str.value recFlag letBindings
+      Parser.optional p Semicolon |> ignore;
+      let loc = mkLoc startPos p.prevEndPos in
+      Some (Ast_helper.Str.value ~loc recFlag letBindings)
     | Typ ->
       begin match parseTypeDefinitionOrExtension ~attrs p with
       | TypeDef(recFlag, types) ->
-        Ast_helper.Str.type_ recFlag types
+        Parser.optional p Semicolon |> ignore;
+        let loc = mkLoc startPos p.prevEndPos in
+        Some (Ast_helper.Str.type_ ~loc recFlag types)
       | TypeExt(ext) ->
-        Ast_helper.Str.type_extension ext
+        Parser.optional p Semicolon |> ignore;
+        let loc = mkLoc startPos p.prevEndPos in
+        Some (Ast_helper.Str.type_extension ~loc ext)
       end
     | External ->
-      Ast_helper.Str.primitive (parseExternalDef ~attrs p)
-    | Import ->
-      let importDescr = parseJsImport ~startPos ~attrs p in
-      JsFfi.toParsetree importDescr
-    | Exception ->
-      Ast_helper.Str.exception_ (parseExceptionDef ~attrs p)
-    | Include ->
-      Ast_helper.Str.include_ (parseIncludeStatement ~attrs p)
-    | Export ->
-      parseJsExport ~startPos ~attrs p
-    | Module -> parseModuleOrModuleTypeImpl ~attrs p
-    | AtAt ->
-      let (loc, attr) = parseStandaloneAttribute p in
-      Ast_helper.Str.attribute ~loc attr
-    | PercentPercent ->
-      let (loc, extension) = parseExtension ~moduleLanguage: true p in
-      Ast_helper.Str.extension ~attrs ~loc extension
-    | token when Grammar.isExprStart token ->
-      let exp = parseExpr p in
-      begin match exp.pexp_desc with
-      | Pexp_apply _ ->
-          let fakeUnitPat =
-            let unitLid = Location.mknoloc (Longident.Lident "()") in
-            Ast_helper.Pat.construct unitLid None
-          in
-          let vb = Ast_helper.Vb.mk ~attrs fakeUnitPat exp in
-          Ast_helper.Str.value Asttypes.Nonrecursive [vb]
-       | _ ->
-         Ast_helper.Str.eval ~attrs exp
-      end
-    | _ -> Recover.fakeStructureItem
-    in
-    if item != Recover.fakeStructureItem then (
+      let externalDef = parseExternalDef ~attrs p in
       Parser.optional p Semicolon |> ignore;
       let loc = mkLoc startPos p.prevEndPos in
-      Some {item with pstr_loc = loc}
-    ) else
-      None
+      Some (Ast_helper.Str.primitive ~loc externalDef)
+    | Import ->
+      let importDescr = parseJsImport ~startPos ~attrs p in
+      Parser.optional p Semicolon |> ignore;
+      let loc = mkLoc startPos p.prevEndPos in
+      let structureItem = JsFfi.toParsetree importDescr in
+      Some {structureItem with pstr_loc = loc}
+    | Exception ->
+      let exceptionDef = parseExceptionDef ~attrs p in
+      Parser.optional p Semicolon |> ignore;
+      let loc = mkLoc startPos p.prevEndPos in
+      Some (Ast_helper.Str.exception_ ~loc exceptionDef)
+    | Include ->
+      let includeStatement = parseIncludeStatement ~attrs p in
+      Parser.optional p Semicolon |> ignore;
+      let loc = mkLoc startPos p.prevEndPos in
+      Some (Ast_helper.Str.include_ ~loc includeStatement)
+    | Export ->
+      let structureItem = parseJsExport ~startPos ~attrs p in
+      Parser.optional p Semicolon |> ignore;
+      let loc = mkLoc startPos p.prevEndPos in
+      Some {structureItem with pstr_loc = loc}
+    | Module ->
+      let structureItem = parseModuleOrModuleTypeImpl ~attrs p in
+      Parser.optional p Semicolon |> ignore;
+      let loc = mkLoc startPos p.prevEndPos in
+      Some {structureItem with pstr_loc = loc}
+    | AtAt ->
+      let attr = parseStandaloneAttribute p in
+      Parser.optional p Semicolon |> ignore;
+      let loc = mkLoc startPos p.prevEndPos in
+      Some (Ast_helper.Str.attribute ~loc attr)
+    | PercentPercent ->
+      let extension = parseExtension ~moduleLanguage:true p in
+      Parser.optional p Semicolon |> ignore;
+      let loc = mkLoc startPos p.prevEndPos in
+      Some (Ast_helper.Str.extension ~attrs ~loc extension)
+    | token when Grammar.isExprStart token ->
+      let exp = parseExpr p in
+      Parser.optional p Semicolon |> ignore;
+      let loc = mkLoc startPos p.prevEndPos in
+      begin match exp.pexp_desc with
+      | Pexp_apply _ ->
+        let fakeUnitPat =
+          let unitLid = Location.mknoloc (Longident.Lident "()") in
+          Ast_helper.Pat.construct unitLid None
+        in
+        let vb = Ast_helper.Vb.mk ~attrs fakeUnitPat exp in
+        Some (Ast_helper.Str.value ~loc Asttypes.Nonrecursive [vb])
+       | _ ->
+       Some (Ast_helper.Str.eval ~loc ~attrs exp)
+      end
+    | _ -> None
 
   and parseJsImport ~startPos ~attrs p =
     Parser.expect Token.Import p;
@@ -6984,7 +6963,8 @@ Solution: directly use `concat`."
         Ast_helper.Mod.unpack ~loc expr
       end
     | Percent ->
-      let (loc, extension) = parseExtension p in
+      let extension = parseExtension p in
+      let loc = mkLoc startPos p.prevEndPos in
       Ast_helper.Mod.extension ~loc extension
     | token ->
       Parser.err p (Diagnostics.unexpected token p.breadcrumbs);
@@ -7269,7 +7249,8 @@ Solution: directly use `concat`."
     | Module -> (* TODO: check if this is still atomic when implementing first class modules*)
       parseModuleTypeOf p
     | Percent ->
-      let (loc, extension) = parseExtension p in
+      let extension = parseExtension p in
+      let loc = mkLoc startPos p.prevEndPos in
       Ast_helper.Mty.extension ~loc extension
     | token ->
       Parser.err p (Diagnostics.unexpected token p.breadcrumbs);
@@ -7443,114 +7424,89 @@ Solution: directly use `concat`."
 
   and parseSignature p =
     parseRegion ~grammar:Grammar.Signature ~f:parseSignatureItemRegion p
-
-  and parseSignatureItem p =
-    let startPos = p.Parser.startPos in
-    let attrs = parseAttributes p in
-    let item = match p.Parser.token with
-    | Let ->
-      parseSignLetDesc ~attrs p
-    | Typ ->
-      begin match parseTypeDefinitionOrExtension ~attrs p with
-      | TypeDef(recFlag, types) ->
-        Ast_helper.Sig.type_ recFlag types
-      | TypeExt(ext) ->
-        Ast_helper.Sig.type_extension ext
-      end
-    | External ->
-      Ast_helper.Sig.value (parseExternalDef ~attrs p)
-    | Exception ->
-      Ast_helper.Sig.exception_ (parseExceptionDef ~attrs p)
-    | Open ->
-      Ast_helper.Sig.open_ (parseOpenDescription ~attrs p)
-    | Include ->
-      Parser.next p;
-      let moduleType = parseModuleType p in
-      let includeDescription = Ast_helper.Incl.mk ~attrs moduleType in
-      Ast_helper.Sig.include_ includeDescription
-    | Module ->
-      Parser.next p;
-      begin match p.Parser.token with
-      | Uident _ ->
-        parseModuleDeclarationOrAlias ~attrs p
-      | Rec ->
-        Ast_helper.Sig.rec_module (
-          parseRecModuleSpec ~attrs p
-        )
-      | Typ ->
-        parseModuleTypeDeclaration ~attrs p
-      | t ->
-        Parser.err p (Diagnostics.uident t);
-        parseModuleDeclarationOrAlias ~attrs p
-      end
-    | AtAt ->
-      let (loc, attr) = parseStandaloneAttribute p in
-      Ast_helper.Sig.attribute ~loc attr
-    | PercentPercent ->
-      let (loc, extension) = parseExtension ~moduleLanguage:true p in
-      Ast_helper.Sig.extension ~attrs ~loc extension
-    | token ->
-      Parser.err p (Diagnostics.unexpected token p.breadcrumbs);
-      Recover.defaultSignatureItem()
-    in
-    Parser.optional p Semicolon |> ignore;
-    {item with psig_loc = mkLoc startPos p.prevEndPos}
+    [@@progress (Parser.next, Parser.expect, Recover.recoverLident, Recover.skipTokensAndMaybeRetry)]
 
   and parseSignatureItemRegion p =
     let startPos = p.Parser.startPos in
     let attrs = parseAttributes p in
-    let item = match p.Parser.token with
+    match p.Parser.token with
     | Let ->
-      parseSignLetDesc ~attrs p
+      let valueDesc = parseSignLetDesc ~attrs p in
+      Parser.optional p Semicolon |> ignore;
+      let loc = mkLoc startPos p.prevEndPos in
+      Some (Ast_helper.Sig.value ~loc valueDesc)
     | Typ ->
       begin match parseTypeDefinitionOrExtension ~attrs p with
       | TypeDef(recFlag, types) ->
-        Ast_helper.Sig.type_ recFlag types
+        Parser.optional p Semicolon |> ignore;
+        let loc = mkLoc startPos p.prevEndPos in
+        Some (Ast_helper.Sig.type_ ~loc recFlag types)
       | TypeExt(ext) ->
-        Ast_helper.Sig.type_extension ext
+        Parser.optional p Semicolon |> ignore;
+        let loc = mkLoc startPos p.prevEndPos in
+        Some (Ast_helper.Sig.type_extension ~loc ext)
       end
     | External ->
-      Ast_helper.Sig.value (parseExternalDef ~attrs p)
+      let externalDef = parseExternalDef ~attrs p in
+      Parser.optional p Semicolon |> ignore;
+      let loc = mkLoc startPos p.prevEndPos in
+      Some (Ast_helper.Sig.value ~loc externalDef)
     | Exception ->
-      Ast_helper.Sig.exception_ (parseExceptionDef ~attrs p)
+      let exceptionDef = parseExceptionDef ~attrs p in
+      Parser.optional p Semicolon |> ignore;
+      let loc = mkLoc startPos p.prevEndPos in
+      Some (Ast_helper.Sig.exception_ ~loc exceptionDef)
     | Open ->
-      Ast_helper.Sig.open_ (parseOpenDescription ~attrs p)
+      let openDescription = parseOpenDescription ~attrs p in
+      Parser.optional p Semicolon |> ignore;
+      let loc = mkLoc startPos p.prevEndPos in
+      Some (Ast_helper.Sig.open_ ~loc openDescription)
     | Include ->
       Parser.next p;
       let moduleType = parseModuleType p in
-      let includeDescription = Ast_helper.Incl.mk ~attrs moduleType in
-      Ast_helper.Sig.include_ includeDescription
+      let includeDescription = Ast_helper.Incl.mk
+        ~loc:(mkLoc startPos p.prevEndPos)
+        ~attrs
+        moduleType
+      in
+      Parser.optional p Semicolon |> ignore;
+      let loc = mkLoc startPos p.prevEndPos in
+      Some (Ast_helper.Sig.include_ ~loc includeDescription)
     | Module ->
       Parser.next p;
       begin match p.Parser.token with
       | Uident _ ->
-        parseModuleDeclarationOrAlias ~attrs p
+        let modDecl = parseModuleDeclarationOrAlias ~attrs p in
+        Parser.optional p Semicolon |> ignore;
+        let loc = mkLoc startPos p.prevEndPos in
+        Some (Ast_helper.Sig.module_ ~loc modDecl)
       | Rec ->
-        Ast_helper.Sig.rec_module (
-          parseRecModuleSpec ~attrs p
-        )
+        let recModule = parseRecModuleSpec ~attrs p in
+        Parser.optional p Semicolon |> ignore;
+        let loc = mkLoc startPos p.prevEndPos in
+        Some (Ast_helper.Sig.rec_module ~loc recModule)
       | Typ ->
-        parseModuleTypeDeclaration ~attrs p
+        Some (parseModuleTypeDeclaration ~attrs p)
       | t ->
-        Parser.err p (Diagnostics.uident t);
-        parseModuleDeclarationOrAlias ~attrs p
+        let modDecl = parseModuleDeclarationOrAlias ~attrs p in
+        Parser.optional p Semicolon |> ignore;
+        let loc = mkLoc startPos p.prevEndPos in
+        Some (Ast_helper.Sig.module_ ~loc modDecl)
       end
     | AtAt ->
-      let (loc, attr) = parseStandaloneAttribute p in
-      Ast_helper.Sig.attribute ~loc attr
+      let attr = parseStandaloneAttribute p in
+      Parser.optional p Semicolon |> ignore;
+      let loc = mkLoc startPos p.prevEndPos in
+      Some (Ast_helper.Sig.attribute ~loc attr)
     | PercentPercent ->
-      let (loc, extension) = parseExtension ~moduleLanguage:true p in
-      Ast_helper.Sig.extension ~attrs ~loc extension
+      let extension = parseExtension ~moduleLanguage:true p in
+      Parser.optional p Semicolon |> ignore;
+      let loc = mkLoc startPos p.prevEndPos in
+      Some (Ast_helper.Sig.extension ~attrs ~loc extension)
     | Import ->
       Parser.next p;
-      parseSignatureItem p
+      parseSignatureItemRegion p
     | _ ->
-      Recover.fakeSignatureItem
-    in
-    if item != Recover.fakeSignatureItem then (
-      Parser.optional p Semicolon |> ignore;
-      Some {item with psig_loc = mkLoc startPos p.prevEndPos}
-    ) else
       None
 
   (* module rec module-name :  module-type  { and module-name:  module-type } *)
@@ -7591,6 +7547,7 @@ Solution: directly use `concat`."
     Ast_helper.Md.mk ~attrs name modType
 
   and parseModuleDeclarationOrAlias ~attrs p =
+    let startPos = p.Parser.startPos in
     let moduleName = match p.Parser.token with
     | Uident ident ->
       Parser.next p;
@@ -7611,7 +7568,8 @@ Solution: directly use `concat`."
       Parser.err p (Diagnostics.unexpected token p.breadcrumbs);
       Recover.defaultModuleType()
     in
-    Ast_helper.Sig.module_ (Ast_helper.Md.mk ~attrs moduleName body)
+    let loc = mkLoc startPos p.prevEndPos in
+    Ast_helper.Md.mk ~loc ~attrs moduleName body
 
   and parseModuleTypeDeclaration ~attrs p =
     let startPos = p.Parser.startPos in
@@ -7635,13 +7593,14 @@ Solution: directly use `concat`."
     Ast_helper.Sig.modtype ~loc:(mkLoc startPos p.prevEndPos) moduleDecl
 
   and parseSignLetDesc ~attrs p =
+    let startPos = p.Parser.startPos in
     Parser.expect Let p;
     let (name, loc) = parseLident p in
     let name = Location.mkloc name loc in
     Parser.expect Colon p;
     let typExpr = parsePolyTypeExpr p in
-    let valueDesc = Ast_helper.Val.mk ~attrs name typExpr in
-    Ast_helper.Sig.value valueDesc
+    let loc = mkLoc startPos p.prevEndPos in
+    Ast_helper.Val.mk ~loc ~attrs name typExpr
 
 (*    attr-id	::=	lowercase-ident
  	∣	  capitalized-ident
@@ -7686,9 +7645,14 @@ Solution: directly use `concat`."
     let structure = match p.Parser.token with
     | Lparen when p.startPos.pos_cnum = p.prevEndPos.pos_cnum  ->
       Parser.next p;
-      let item = parseStructureItem p in
+      let items = parseDelimitedRegion
+        ~grammar:Grammar.Structure
+        ~closing:Rparen
+        ~f:parseStructureItemRegion
+        p
+      in
       Parser.expect Rparen p;
-      [item]
+      items
     | _ -> []
     in
     Parsetree.PStr structure
@@ -7714,13 +7678,10 @@ Solution: directly use `concat`."
    *  | @@ attribute-id ( structure-item )
    *)
   and parseStandaloneAttribute p =
-    let startPos = p.Parser.startPos in
     Parser.expect AtAt p;
     let attrId = parseAttributeId p in
     let payload = parsePayload p in
-    let attribute = (attrId, payload) in
-    let loc = mkLoc startPos p.prevEndPos in
-    (loc, attribute)
+    (attrId, payload)
 
   (* extension	::=	% attr-id  attr-payload
    *              | %% attr-id(
@@ -7756,15 +7717,13 @@ Solution: directly use `concat`."
    *  ~moduleLanguage represents whether we're on the module level or not
    *)
   and parseExtension ?(moduleLanguage=false) p =
-    let startPos = p.Parser.startPos in
     if moduleLanguage then
       Parser.expect PercentPercent p
     else
       Parser.expect Percent p;
     let attrId = parseAttributeId p in
     let payload = parsePayload p in
-    let loc = mkLoc startPos p.prevEndPos in
-    (loc, (attrId, payload))
+    (attrId, payload)
 end
 
 (* Collection of utilities to view the ast in a more a convenient form,
