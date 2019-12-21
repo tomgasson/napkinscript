@@ -1,0 +1,16 @@
+let x = 1
+// trailing first value-binding
+
+// leading snd value-binding
+and y = 2
+/* leading snd value-binding */
+
+// some comment
+
+/* leading 3th value-binding */ /* test */
+and z = 3
+/* cmt a */
+/* cmt b */
+/* cmt c */
+and z2 = 4
+// trailing structure

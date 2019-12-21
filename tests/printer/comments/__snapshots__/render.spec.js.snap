@@ -88,6 +88,7 @@ node.left->peekMinNode
 let x = -a.bar
 
 let a = 1
+
 /* test */
 let b = 2
 // a
@@ -118,6 +119,49 @@ exports[`structure4.ns 1`] = `
  */ /**
  * A single unit of data exchanged between the peers of a \`ReactiveSocket\`.
  */
+
+"
+`;
+
+exports[`valueBindings.ns 1`] = `
+"let x = 1
+// trailing first value-binding
+
+// leading snd value-binding
+and y = 2
+/* leading snd value-binding */
+
+// some comment
+
+/* leading 3th value-binding */ /* test */
+and z = 3
+/* cmt a */
+/* cmt b */
+/* cmt c */
+and z2 = 4
+// trailing structure
+
+"
+`;
+
+exports[`whitespaceTrailingLeading.ns 1`] = `
+"let a = 1 // single line trailing
+// leading
+let b = 2
+
+let a = 1 /* comment */
+// leading
+let b = 2
+
+let a = 1 // single line trailing
+
+// leading
+let b = 2
+
+let a = 1 /* comment */
+
+// leading
+let b = 2
 
 "
 `;

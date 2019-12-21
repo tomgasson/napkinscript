@@ -837,7 +837,8 @@ let rec peekMinNode = node =>
     }
   }
 
-let constructor = @attr Blue
+let constructor =
+  @attr Blue
 
 let x = switch x {
 | Bar =>
@@ -1915,9 +1916,11 @@ config.shouldSkip =
   !filePath.includes(allMlSuffixesCategory) &&
   !filePath.endsWith(allScriptDirectoriesCategory)
 
-let () = @attr user.name = \\"steve\\"
+let () =
+  @attr user.name = \\"steve\\"
 
-let () = @attr user.name = \\"steve\\" |> @attr user.name = \\"steve\\"
+let () =
+  @attr user.name = \\"steve\\" |> @attr user.name = \\"steve\\"
 
 user.name = steve[\\"name\\"]
 user.address = addresses[2]

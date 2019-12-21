@@ -8641,10 +8641,37 @@ module CommentInterleaver = struct
       match si.Parsetree.pstr_desc with
       | Pstr_open openDescription ->
         walkOpenDescription openDescription t comments
-      (* | Pstr_value (_, valueBindings) -> *)
-
+      | Pstr_value (_, valueBindings) ->
+        walkValueBindings valueBindings t comments
       (* | Pstr *)
       | _ -> ()
+
+    and walkValueBindings vbs t comments =
+      let rec loop vbs ?prevLoc comments =
+        let open Location in
+        match vbs with
+        | _ when comments = [] -> ()
+        | [] -> ()
+        | vb::rest ->
+          let currLoc = vb.Parsetree.pvb_loc in
+          let (leading, inside, trailing) = partitionByLoc comments currLoc in
+          begin match prevLoc with
+          | None -> (* first value binding, all leading comments attach here *)
+            attach t.leading currLoc leading
+          | Some prevLoc ->
+            (* Same line *)
+            if prevLoc.loc_end.pos_lnum == currLoc.loc_start.pos_lnum then
+              ()
+            else
+              let (onSameLineAsPrev, afterPrev) = partitionByOnSameLine prevLoc leading in
+              let () = attach t.trailing prevLoc onSameLineAsPrev in
+              let (leading, _inside, _trailing) = partitionByLoc afterPrev currLoc in
+              let () = attach t.leading currLoc leading in
+              ()
+          end;
+          loop rest ~prevLoc:currLoc trailing
+      in
+      loop vbs comments
 
     and walkOpenDescription openDescription t comments =
       let loc = openDescription.popen_lid.loc in
@@ -8683,6 +8710,12 @@ module Printer = struct
     match Hashtbl.find tbl.CommentInterleaver.leading loc with
     | comment::_ -> Some comment
     | [] -> None
+    | exception Not_found -> None
+
+  let getLastTrailingComment tbl loc =
+    match Hashtbl.find tbl.CommentInterleaver.trailing loc with
+    | [] -> None
+    | comments -> Some (List.hd (List.rev comments))
     | exception Not_found -> None
 
   let printMultilineCommentContent txt =
@@ -8842,55 +8875,129 @@ module Printer = struct
       in
       (Some lastComment, doc)
 
-  let printCommentsRaw node tbl loc =
-    let (lastLeadingComment, doc) = printLeadingComments node tbl.CommentInterleaver.leading loc in
-    let (lastTrailingComment, doc) = printTrailingComments doc tbl.CommentInterleaver.trailing loc in
-    let lastComment = match (lastLeadingComment, lastTrailingComment) with
-    | (_, ((Some comment) as last)) -> last
-    | (_, _) -> None
-    in
-    (lastComment, doc)
-
   let printComments node tbl loc =
-    let (_, doc) = printCommentsRaw node tbl loc in
+    let (_, doc) =
+      printLeadingComments node tbl.CommentInterleaver.leading loc
+    in
+    let (_, doc) =
+      printTrailingComments doc tbl.CommentInterleaver.trailing loc
+    in
     doc
 
-      (* let leadingNewLine = match getFirstLeadingComment t firstLoc with *)
-      (* | Some comment when *)
-          (* let loc = Comment.loc comment in *)
-          (* prevLoc.Location.loc_end.pos_lnum < loc.Location.loc_start.pos_lnum - 1 *)
-        (* -> Doc.line *)
-      (* | _ -> Doc.nil *)
-      (* in *)
   let printList ~getLoc ~nodes ~print ?(forceBreak=false) t =
     let rec loop prevLoc acc nodes =
       match nodes with
       | [] -> (prevLoc, Doc.concat (List.rev acc))
       | node::nodes ->
         let loc = getLoc node in
-        let (lastComment, doc) = printCommentsRaw (print node t) t loc in
-        let prevLoc = match lastComment with
-        | Some comment -> Comment.loc comment
-        | None -> prevLoc
+        let doc = printComments (print node t) t loc in
+        let sep = match (
+          getFirstLeadingComment t loc,
+          getLastTrailingComment t prevLoc
+        ) with
+        | (Some leadingComment, Some prevTrailingComment) ->
+          let loc = Comment.loc leadingComment in
+          let prevLoc = Comment.loc prevTrailingComment in
+          if Comment.isSingleLineComment prevTrailingComment then (
+            if loc.Location.loc_start.pos_lnum - prevLoc.Location.loc_end.pos_lnum > 1 then
+              Doc.hardLine
+            else
+              Doc.nil
+          ) else if loc.Location.loc_start.pos_lnum - prevLoc.Location.loc_end.pos_lnum > 1 then
+            Doc.concat [Doc.hardLine; Doc.hardLine]
+          else
+            Doc.hardLine
+        | (Some leadingComment, None) ->
+          let cmtLoc = Comment.loc leadingComment in
+          if cmtLoc.Location.loc_start.pos_lnum - prevLoc.Location.loc_end.pos_lnum > 1 then
+            Doc.concat [Doc.hardLine; Doc.hardLine]
+          else
+            Doc.hardLine
+        | (None, Some prevTrailingComment) ->
+          let prevLoc = Comment.loc prevTrailingComment in
+          if Comment.isSingleLineComment prevTrailingComment then (
+            if loc.Location.loc_start.pos_lnum - prevLoc.Location.loc_end.pos_lnum > 2 then
+              Doc.hardLine
+            else
+              Doc.nil
+          ) else if loc.Location.loc_start.pos_lnum - prevLoc.Location.loc_end.pos_lnum > 1 then
+            Doc.concat [Doc.hardLine; Doc.hardLine]
+          else
+            Doc.hardLine
+        | (None, None) ->
+          if loc.Location.loc_start.pos_lnum - prevLoc.Location.loc_end.pos_lnum > 1 then
+            Doc.concat [Doc.hardLine; Doc.hardLine]
+          else
+            Doc.hardLine
         in
-        let needsNewline = match getFirstLeadingComment t loc with
-        | Some comment ->
-          let cmtLoc = Comment.loc comment in
-          cmtLoc.Location.loc_start.pos_lnum - prevLoc.Location.loc_end.pos_lnum > 1
-        | None ->
-          loc.Location.loc_start.pos_lnum - prevLoc.Location.loc_end.pos_lnum > 1
-        in
-        if needsNewline then
-          loop loc (doc::Doc.hardLine::Doc.hardLine::acc) nodes
-        else
-          loop loc (doc::Doc.hardLine::acc) nodes
+        loop loc (doc::sep::acc) nodes
     in
     match nodes with
     | [] -> Doc.nil
     | node::nodes ->
       let firstLoc = getLoc node in
-      let (_, doc) = printCommentsRaw (print node t) t firstLoc in
+      let doc = printComments (print node t) t firstLoc in
       let (lastLoc, docs) = loop firstLoc [doc] nodes in
+      let forceBreak =
+        forceBreak ||
+        firstLoc.loc_start.pos_lnum != lastLoc.loc_end.pos_lnum
+      in
+      Doc.breakableGroup ~forceBreak docs
+
+  let printListi ~getLoc ~nodes ~print ?(forceBreak=false) t =
+    let rec loop i prevLoc acc nodes =
+      match nodes with
+      | [] -> (prevLoc, Doc.concat (List.rev acc))
+      | node::nodes ->
+        let loc = getLoc node in
+        let doc = printComments (print node t i) t loc in
+        let sep = match (
+          getFirstLeadingComment t loc,
+          getLastTrailingComment t prevLoc
+        ) with
+        | (Some leadingComment, Some prevTrailingComment) ->
+          let loc = Comment.loc leadingComment in
+          let prevLoc = Comment.loc prevTrailingComment in
+          if Comment.isSingleLineComment prevTrailingComment then (
+            if loc.Location.loc_start.pos_lnum - prevLoc.Location.loc_end.pos_lnum > 1 then
+              Doc.hardLine
+            else
+              Doc.nil
+          ) else if loc.Location.loc_start.pos_lnum - prevLoc.Location.loc_end.pos_lnum > 1 then
+            Doc.concat [Doc.hardLine; Doc.hardLine]
+          else
+            Doc.line
+        | (Some leadingComment, None) ->
+          let cmtLoc = Comment.loc leadingComment in
+          if cmtLoc.Location.loc_start.pos_lnum - prevLoc.Location.loc_end.pos_lnum > 1 then
+            Doc.concat [Doc.hardLine; Doc.hardLine]
+          else
+            Doc.line
+        | (None, Some prevTrailingComment) ->
+          let prevLoc = Comment.loc prevTrailingComment in
+          if Comment.isSingleLineComment prevTrailingComment then (
+            if loc.Location.loc_start.pos_lnum - prevLoc.Location.loc_end.pos_lnum > 2 then
+              Doc.hardLine
+            else
+              Doc.nil
+          ) else if loc.Location.loc_start.pos_lnum - prevLoc.Location.loc_end.pos_lnum > 1 then
+            Doc.concat [Doc.hardLine; Doc.hardLine]
+          else
+            Doc.line
+        | (None, None) ->
+          if loc.Location.loc_start.pos_lnum - prevLoc.Location.loc_end.pos_lnum > 1 then
+            Doc.concat [Doc.hardLine; Doc.hardLine]
+          else
+            Doc.line
+        in
+        loop (i + 1) loc (doc::sep::acc) nodes
+    in
+    match nodes with
+    | [] -> Doc.nil
+    | node::nodes ->
+      let firstLoc = getLoc node in
+      let doc = printComments (print node t 0) t firstLoc in
+      let (lastLoc, docs) = loop 1 firstLoc [doc] nodes in
       let forceBreak =
         forceBreak ||
         firstLoc.loc_start.pos_lnum != lastLoc.loc_end.pos_lnum
@@ -8977,7 +9084,7 @@ module Printer = struct
       ~getLoc:(fun s -> s.Parsetree.pstr_loc)
       ~nodes:s
       ~print:printStructureItem
-     t
+      t
 
   (* and printStructure2 s = *)
     (* interleaveWhitespace  ( *)
@@ -8991,7 +9098,7 @@ module Printer = struct
 			| Asttypes.Nonrecursive -> Doc.nil
 			| Asttypes.Recursive -> Doc.text "rec "
 			in
-      printValueBindings ~recFlag valueBindings
+      printValueBindings2 ~recFlag valueBindings p
     | Pstr_type(recFlag, typeDeclarations) ->
       let recFlag = match recFlag with
       | Asttypes.Nonrecursive -> Doc.nil
@@ -9432,6 +9539,20 @@ module Printer = struct
     ) vbs
     in
     interleaveWhitespace rows
+
+  and printValueBindings2 ~recFlag (vbs: Parsetree.value_binding list) ct =
+    printListi
+      ~getLoc:(fun vb -> vb.Parsetree.pvb_loc)
+      ~nodes:vbs
+      ~print:(printValueBinding2 ~recFlag)
+      ct
+
+    (* let rows = List.mapi (fun i vb -> *)
+      (* let doc = printValueBinding ~recFlag i vb in *)
+      (* (vb.Parsetree.pvb_loc, doc) *)
+    (* ) vbs *)
+    (* in *)
+    (* interleaveWhitespace rows *)
 
   (*
    * type value_description = {
@@ -10081,6 +10202,69 @@ module Printer = struct
   and printValueBinding ~recFlag i vb =
     let (hasGenType, attrs) = ParsetreeViewer.splitGenTypeAttr vb.pvb_attributes in
     let attrs = printAttributes ~loc:vb.pvb_loc attrs in
+    let isGhost = ParsetreeViewer.isGhostUnitBinding i vb in
+		let header = if isGhost then Doc.nil else
+			if i == 0 then
+        Doc.concat [
+          if hasGenType then Doc.text "export " else Doc.text "let ";
+          recFlag
+      ] else
+        Doc.concat [
+          Doc.text "and ";
+          if hasGenType then Doc.text "export " else Doc.nil
+        ]
+		in
+    let printedExpr =
+      let exprDoc = printExpression vb.pvb_expr in
+      let needsParens = match vb.pvb_expr.pexp_desc with
+      | Pexp_constraint(
+          {pexp_desc = Pexp_pack _},
+          {ptyp_desc = Ptyp_package _}
+        ) -> false
+      | Pexp_constraint _ -> true
+      | _ -> false
+      in
+      if needsParens then addParens exprDoc else exprDoc
+    in
+		if isGhost then
+			printedExpr
+		else
+      let shouldIndent =
+        ParsetreeViewer.isBinaryExpression vb.pvb_expr ||
+        (match vb.pvb_expr with
+        | {
+            pexp_attributes = [({Location.txt="ns.ternary"}, _)];
+            pexp_desc = Pexp_ifthenelse (ifExpr, _, _)
+          }  ->
+          ParsetreeViewer.isBinaryExpression ifExpr || ParsetreeViewer.hasAttributes ifExpr.pexp_attributes
+      | { pexp_desc = Pexp_newtype _} -> false
+      | e ->
+          ParsetreeViewer.hasAttributes e.pexp_attributes ||
+          ParsetreeViewer.isArrayAccess e
+        )
+      in
+			Doc.concat [
+        attrs;
+				header;
+				printPattern vb.pvb_pat;
+				Doc.text " =";
+        if shouldIndent then
+          Doc.indent (
+            Doc.concat [
+              Doc.line;
+              printedExpr;
+            ]
+          )
+        else
+          Doc.concat [
+            Doc.space;
+            printedExpr;
+          ]
+      ]
+
+  and printValueBinding2 ~recFlag vb ct i =
+    let (hasGenType, attrs) = ParsetreeViewer.splitGenTypeAttr vb.pvb_attributes in
+    let attrs = printAttributes attrs in
     let isGhost = ParsetreeViewer.isGhostUnitBinding i vb in
 		let header = if isGhost then Doc.nil else
 			if i == 0 then

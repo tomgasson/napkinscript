@@ -240,8 +240,7 @@ and y = 2
 
 and z = 3
 
-@react.component
-let make = () => <div />
+@react.component let make = () => <div />
 
 @react.component let make = () => <div />
 
