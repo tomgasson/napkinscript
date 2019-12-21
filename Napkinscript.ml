@@ -6748,7 +6748,7 @@ Solution: directly use `concat`."
 
   and parseStructure p : Parsetree.structure =
     parseRegion p ~grammar:Grammar.Structure ~f:parseStructureItemRegion
-    (* [@@progress (Parser.next, Parser.expect, Recover.recoverLident, Recover.skipTokensAndMaybeRetry)] *)
+    [@@progress (Parser.next, Parser.expect, Recover.recoverLident, Recover.skipTokensAndMaybeRetry)]
 
   and parseStructureItemRegion p =
     let startPos = p.Parser.startPos in

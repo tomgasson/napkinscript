@@ -2,20 +2,20 @@
   "name": "napkinscript",
   "version": "0.0.8-dev",
   "description": "",
-  "main": "./src/Lang.ml",
+  "main": "Napkinscript.ml",
   "bin": {
     "napkinscript": "./lib/napkinscript.exe"
   },
   "dependencies": {
-    "bs-platform": "^6.0.1",
-    "gentype": "^3.7.1"
   },
   "devDependencies": {
+    "gentype": "^3.8.0",
+    "bs-platform": "^6.0.1",
     "jest": "^24.8.0"
   },
   "scripts": {
     "test": "make test",
-    "termination": "/Users/mvalcke/Development/genType/_esy/default/build/install/default/bin/gentype.exe -termination-cmt ./Napkinscript.cmt"
+    "termination": "gentype -termination-cmt ./Napkinscript.cmt"
   },
   "repository": {
     "type": "git",

@@ -12,3 +12,7 @@ build-refmt:
 
 test: build-native
 	./node_modules/.bin/jest
+	./node_modules/.bin/gentype -termination-cmt ./Napkinscript.cmt
+
+termination:
+	./node_modules/.bin/gentype -termination-cmt ./Napkinscript.cmt
