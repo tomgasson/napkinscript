@@ -6,12 +6,11 @@
   "bin": {
     "napkinscript": "./lib/napkinscript.exe"
   },
-  "dependencies": {
-  },
+  "dependencies": {},
   "devDependencies": {
-    "gentype": "^3.8.0",
     "bs-platform": "^6.0.1",
-    "jest": "^24.8.0"
+    "gentype": "^3.8.1",
+    "jest": "^24.9.0"
   },
   "scripts": {
     "test": "make test",
