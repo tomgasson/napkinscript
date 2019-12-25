@@ -208,8 +208,8 @@ exports[`variant.js 1`] = `
 type color =
   | Red
   | Blue
-  | SuperLongColoooooooooourName
-  | AnotherSuuuuuuuuuperLongName
+  | SuperLongColooooooooooooooourName
+  | AnotherSuuuuuuuuuuuuuuperLongName
 
 type color = private Red | Blue
 type color =
@@ -221,8 +221,8 @@ type color =
   private
   | Red
   | Blue
-  | SuperLongColoooooooooourName
-  | AnotherSuuuuuuuuuperLongName
+  | SuperLongColooooooooooooooourName
+  | AnotherSuuuuuuuuuuuuuperLongName
 
 type color = Colour.t = private Red | Blue
 type color = Colour.t =
@@ -234,8 +234,8 @@ type color = Colour.t =
   private
   | Red
   | Blue
-  | SuperLongColoooooooooourName
-  | AnotherSuuuuuuuuuperLongName
+  | SuperLongColoooooooooooooourName
+  | AnotherSuuuuuuuuuuuuuperLongName
 
 // gadt
 type color = Red: color | Blue: color

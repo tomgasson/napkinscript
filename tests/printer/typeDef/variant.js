@@ -1,5 +1,5 @@
 type color = Red | Blue
-type color = Red | Blue | SuperLongColoooooooooourName | AnotherSuuuuuuuuuperLongName
+type color = Red | Blue | SuperLongColooooooooooooooourName | AnotherSuuuuuuuuuuuuuuperLongName
 
 type color = private Red | Blue
 type color =
@@ -7,7 +7,7 @@ type color =
   | Red
   | Blue
   | Green
-type color = private Red | Blue | SuperLongColoooooooooourName | AnotherSuuuuuuuuuperLongName
+type color = private Red | Blue | SuperLongColooooooooooooooourName | AnotherSuuuuuuuuuuuuuperLongName
 
 type color = Colour.t = private Red | Blue
 type color = Colour.t =
@@ -15,7 +15,7 @@ type color = Colour.t =
   | Red
   | Blue
   | Green
-type color = Colour.t = private Red | Blue | SuperLongColoooooooooourName | AnotherSuuuuuuuuuperLongName
+type color = Colour.t = private Red | Blue | SuperLongColoooooooooooooourName | AnotherSuuuuuuuuuuuuuperLongName
 
 
 // gadt

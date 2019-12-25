@@ -35,6 +35,94 @@ open /* leading */ React // trailing
 "
 `;
 
+exports[`pattern.ns 1`] = `
+"// Ppat_any
+let /* before */ _ /* after */ = 1
+
+// Ppat_var
+let /* before */ x /* after */ = 1
+
+// Ppat_constant
+let /* before */ 123 /* after */ = 123
+
+// Ppat_interval not supported
+// Ppat_interval of constant * constant
+
+// Ppat_alias
+let /* before pat */ p /* after pat */ as /* before alias */ x /* after alias */ = ()
+let /* c0 */ (/* c1 */ p /* c2 */ as /* c3 */ x /* c4 */) as /* c5 */ y /* c6 */ = ()
+
+// Ppat_array
+let /* c0 */ [
+  /* c1 */ a /* c2 */,
+  /* c3 */ b /* c4 */,
+  /* c5 */ c /* c6 */,
+] /* c7 */ = [1, 2, 3]
+
+// Ppat_construct
+let /* here */ Black /* there */ = color
+
+let /* here */ Black(/* inside */) /* there */ = color
+let Black(/* inside */ /* inside2 */) = color
+let Black(/* inside */ /* inside2 */ /* inside 3 */) = color
+let Black(
+// singleLineComment
+) = color
+
+let /* before */ Rgb(
+  /* red */ r /* red2 */,
+  /* green */ g /* green2 */,
+  /* blue */ b /* blue2 */,
+) /* after */ = color
+
+let () = ()
+let [/* inside */] = []
+let list(/* inside */) = list()
+
+let /* before */ list(
+  /* a1 */ a /* a2 */,
+  /* b1 */ b /* b2 */,
+) /* after */ = list(1, 2)
+let /* before */ list(
+  /* a1 */ a /* a2 */,
+  .../* b1 */ b /* b2 */,
+) /* after */ = list(1, 2)
+
+// Ppat_record
+let /* before */ {/* c0 */ name /* c1 */, /* c2 */ age /* c3 */} /* after */ = {
+  name: \\"steve\\",
+  age: 31,
+}
+
+let /* before */ {
+  /* c0 */ name /* c1 */: /* c2 */ firstName /* c3 */,
+  /* c3 */ age /* c4 */: /* c5 */ ageInYears /* c6 */,
+} /* after */ = {name: \\"steve\\", age: 31}
+
+// Ppat_or
+let /* b1 */ Blue /* b2 */ | /* c1 */ Red /* c2 */ = color
+let /* b1 */ Blue /* b2 */
+| (/* c1 */ Red /* c2 */ | /* d1 */ Green) /* d2 */ = color
+
+// Ppat_constraint
+let /* c0 */ number /* c1 */: /* c2 */ int /* c3 */ = 123
+
+// Ppat_lazy
+let /* before */ lazy /* a */ x /* b */ /* after */ = lazy 1
+
+// Ppat_unpack
+let /* before */ module(/* h1 */ Hashtbl /* h2 */) /* after */ = Hashtbl
+let /* before */ module(/* h1 */ Hashtbl /* h2 */: MutableTable) /* after */ = Hashtbl
+
+// Ppat_exception
+let /* before */ exception /* c0 */ Exit /* c1 */ /* after */ = exc
+
+// Ppat_extension
+let /* before */ %bs.raw(\\"eval(gc())\\") /* after */ = stuff
+
+"
+`;
+
 exports[`structure1.ns 1`] = `
 "// leading single line 1a
 // leading single line 1b
@@ -123,6 +211,146 @@ exports[`structure4.ns 1`] = `
 "
 `;
 
+exports[`typeDefinition.js 1`] = `
+"/* before */ type t /* after */
+/* before */ type /* before name */ t /* after name */ /* after */
+
+/* before */ type t = .. /* after */
+/* before */ type /* before name */ t /* after name */ = .. /* after */
+
+/* before */ type t<
+  /* c0 */ 'err /* c1 */,
+  /* c2 */ 'success /* c3 */,
+> /* after */
+/* before */ type /* before name */ t /* after name */<
+  /* c0 */ 'err /* c1 */,
+  /* c2 */ 'success /* c3 */,
+> /* after */
+
+/* before */ type t = /* before manifest */ string /* after */
+/* before */ type /* before name */ t /* after name */ = /* before manifest */ string /* after */
+/* before */ type /* before name */ t /* after name */<
+  /* c0 */ 'err /* c1 */,
+  /* c2 */ 'success /* c3 */,
+> = /* before manifest */ string /* after */
+
+/* before */ type /* before name */ t /* after name */ =
+  // above Red
+  | Red // trailing Red
+  // above Blue
+  | Blue // trailing Blue
+  // above Green
+  | Green // trailing Green
+
+/* before */ type /* before name */ t /* after name */ = /* before manifest */ Colour.t /* after manifest */ =
+  // above Red
+  | /* before Red */ Red // trailing Red
+  // above Blue
+  | /* before Blue */ Blue // trailing Blue
+  // above Green
+  | /* before Green */ Green /* trailing Green */ // test
+type color =
+  /* before Red */ Red /* after Red */: /* before gadt */ color /* after gadt */
+  | /* before Blue */ Blue /* after Blue */: /* before gadt */ color /* after gadt */
+
+type color =
+  /* before constr */ | Rgb(
+      /* after constructor */ /* before red */ red,
+      green,
+      blue,
+    )
+
+type color =
+  | /* before constr */ Rgb /* after constructor */(
+      /* before red */ red /* after red */,
+      /* before green */ green /* after green */,
+      /* before blue */ blue /* after blue */,
+    )
+
+type color =
+  | /* before constr */ Rgb /* after constructor */({
+      /* before red */ red /* after red */: /* before typ */ someNumber /* after typ */,
+      /* before green */ green /* after green */: /* before typ */ someNumber /* after typ */,
+      /* before blue */ blue /* after blue */: /* before typ */ someNumber /* after typ */,
+    })
+
+type color = {
+  /* before red */ red /* after red */: /* before typ */ someNumber /* after typ */,
+  /* before green */ green /* after green */: /* before typ */ someNumber /* after typ */,
+  /* before blue */ blue /* after blue */: /* before typ */ someNumber /* after typ */,
+}
+
+type /* c0 */ color /* c1 */ = /* before manifest */ Colour.t /* after manifest */ = {
+  /* before red */ red /* after red */: /* before typ */ someNumber /* after typ */,
+  /* before green */ green /* after green */: /* before typ */ someNumber /* after typ */,
+  /* before blue */ blue /* after blue */: /* before typ */ someNumber /* after typ */,
+}
+
+"
+`;
+
+exports[`typexpr.ns 1`] = `
+"// Ptyp_any
+type t = /* before */ _ /* after */
+
+// Ptyp_var
+type t = /* before */ 'a /* after */
+
+// Ptyp_tuple
+// sigh… conflicts
+
+// Ptyp_constr
+type t = /* before */ string /* after */
+type t = /* before */ option /* c0 */</* c1 */ string /* c2 */> /* after */
+type t = /* before */ result /* c0 */<
+  /* c1 */ success /* c2 */,
+  /* c3 */ err /* c4 */,
+> /* after */
+
+// Ptyp_extension
+type t = /* before */ %ext(\\"here\\") /* after */
+
+// Ptyp_package
+type t = /* c0 */ module(/* before */ S /* after */) /* c1 */
+
+type t = /* c0 */ module(/* c1 */ Hashmap /* c2 */ with
+  /* c3 */ type key /* c4 */ = /* c5 */ string /* c6 */
+)
+
+// Ptyp_alias
+type t = /* c0 */ string /* c1 */ as 'x // after
+
+// Ptyp_poly
+type fn = {f: /* c0 */ 'a /* c1 */ 'b /* c2 */. /* c3 */ string /* c4 */}
+
+// Ptyp_arrow
+type add = /* before */ (
+  /* c0 */ int /* c1 */,
+  /* c2 */ int /* c3 */,
+) => /* before return */ int /* after */
+type add = /* before */ (
+  ~a: /* c0 */ int /* c1 */,
+  ~b: /* c2 */ int /* c3 */,
+) => /* before return */ int /* after */
+type multiply = /* before */ (
+  ~fn: /* c0 */ (
+    /* cinner0 */ int /* cinner1 */,
+    /* cinner2 */ int /* cinner3 */,
+  ) => /* cx */ int /* c1 */,
+  ~b: /* c2 */ int /* c3 */,
+) => int /* after */
+
+// Ptyp_object
+type jsUser = /* before */ {
+  // above name
+  /* before name */ \\"name\\" /* after name */: /* before typ */ string /* after typ */,
+  // above age
+  /* before age */ \\"age\\" /* after age */: /* before int */ int /* after int */,
+} /* after */
+
+"
+`;
+
 exports[`valueBindings.ns 1`] = `
 "let x = 1
 // trailing first value-binding
@@ -140,6 +368,17 @@ and z = 3
 /* cmt c */
 and z2 = 4
 // trailing structure
+
+"
+`;
+
+exports[`whitespaceCase1.ns 1`] = `
+"let x = 1
+// comment
+
+let 123 = 123
+// comment2
+let f = ()
 
 "
 `;
