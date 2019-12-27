@@ -9,7 +9,7 @@
   "dependencies": {},
   "devDependencies": {
     "bs-platform": "^6.0.1",
-    "gentype": "^3.8.1",
+    "gentype": "^3.9.1",
     "jest": "^24.9.0"
   },
   "scripts": {
