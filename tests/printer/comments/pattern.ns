@@ -27,6 +27,8 @@ let Black(
 // singleLineComment
 ) = color
 
+let module(/* c0 */ X /* c1 */ : /* c2 */ X_int /* c3 */) /* c4 */ = x 
+
 let /* before */ Rgb /* after constr */ (/* red */ r /* red2 */, /* green */ g/* green2 */, /* blue */ b /* blue2 */) /* after */ = color
 
 let () = ()

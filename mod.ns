@@ -1,0 +1,18 @@
+// Pmod_ident
+/* c0 */ module /* c1 */ X /* c2 */ = /* c3 */ Y /* c4 */ 
+
+// Pmod_structure
+/* c0 */ module /* c1 */ X /* c2 */ = /* c3 */ {
+  let /* inside1 */ a /* inside2 */ = 2 /* trailing */
+} // trailing
+
+// Pmod_extension
+/* c0 */ module /* c1 */ X /* c2 */ = /* c3 */ %ext(/* c4 */ "test" /*c5*/) /* c6 */ 
+
+// Pmod_unpack
+/* c0 */ module /* c1 */ New_three /* c2 */ = /* c3 */ unpack(
+  /* c4 */three /* c5 */: /* c6 */ X_int /* c7 */ ) /* c8 */
+
+// Pmod_constraint
+/* c0 */ module /* c1 */ X /* c2 */ = (/* c3 */ X /* c4 */ : /* c5 */ Int /* c6 */)
+/* c0 */ module /* c1 */ X /* c2 */: /* c4 */ Int /* c5 */ = /* c6 */ X /* c7 */
