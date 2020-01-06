@@ -1,5 +1,684 @@
 // Jest Snapshot v1, https://goo.gl/fbAQLP
 
+exports[`blockExpr.ns 1`] = `
+"let () = /* c0 */ sideEffect1() /* c1 */
+
+let () = {
+  /* c0 */ sideEffect1() /* c1 */
+  /* c2 */ sideEffect2() /* c3 */
+}
+
+let () = {
+  /* c0 */ sideEffect1() // c1
+  // c2
+  
+  // c3
+  /* c4 */ sideEffect2() // c5
+}
+
+let () = {
+  /* c0 */ sideEffect1() /* c1 */
+  /* c2 */ sideEffect2() /* c3 */
+  /* c4 */ sideEffect3() /* c5 */
+}
+
+let () = {
+  /* c0 */ sideEffect1() /* c1 */
+  // k
+  
+  // k2
+  /* k3 */
+  // k4
+  
+  // k5
+  /* c2 */ sideEffect2() /* c3 */
+  // k
+  
+  // k2
+  /* k3 */
+  // k4
+  
+  // k5
+  /* c4 */ sideEffect3() /* c5 */
+}
+
+let () = {
+  /* c0 */ sideEffect1() /* c1 */
+  /* c2 */ sideEffect2() /* c3 */
+  /* c4 */ sideEffect3() /* c5 */
+  /* c6 */ sideEffect4() /* c7 */
+}
+
+let () = {
+  /* c0 */ let a /* inside */ = 1 /* c1 */
+  /* c2 */ sideEffect2() /* c3 */
+}
+
+let () = {
+  /* c0 */ let a /* inside */ = 1 /* c1 */
+  // k
+  
+  // k2
+  /* k3 */ /* k4 */
+  
+  // k5
+  /* c2 */ sideEffect2() /* c3 */
+}
+
+let () = {
+  /* c0 */ let a /* inside a */ = 1 /* c1 */
+  /* c2 */ let b /* inside b */ = 2 /* c3 */
+  /* c4 */ a + b /* c5 */
+}
+
+let () = {
+  /* c0 */ let a /* inside a */ = 1 /* c1 */
+  // k
+  
+  // k2
+  /* k3 */ /* k4 */
+  
+  // k5
+  /* c2 */ let b /* inside b */ = 2 /* c3 */
+  // k
+  
+  // k2
+  /* k3 */ /* k4 */
+  
+  // k5
+  /* c4 */ a + b /* c5 */
+}
+
+let () = {
+  /* c0 */ let a /* inside a */ = 1 /* c1 */
+  /* c2 */ let b /* inside b */ = 2 /* c3 */
+  /* c4 */ let c /* inside c */ = 3 /* c5 */
+  /* c5 */ a + b + c /* c6 */
+}
+
+let () = {
+  /* c0 */ exception /* inside */ Exit /* c1 */
+  /* c2 */ raise(Exit) /* c3 */
+}
+
+let () = {
+  /* c0 */ exception /* inside */ Exit // c1
+  // k
+  
+  // k2
+  /* c2 */ raise(Exit) // c3
+}
+
+let () = {
+  /* c0 */ exception /* inside */ Exit /* c1 */
+  /* c2 */ exception /* inside */ Terminate /* c3 */
+  /* c4 */ raise(Exit) /* c5 */
+}
+
+let () = {
+  /* c0 */ exception /* inside */ Exit // c1
+  // k
+  
+  // k2
+  
+  // k3
+  /* c2 */ exception /* inside */ Terminate // c3
+  // k
+  
+  // k2
+  
+  // k3
+  /* c4 */ raise(Exit) /* c5 */
+}
+
+let () = {
+  /* c0 */ exception /* inside */ Exit /* c1 */
+  /* c2 */ exception /* inside */ Terminate /* c3 */
+  /* c4 */ exception /* inside */ Oom /* c5 */
+  /* c6 */ raise(Exit) /* c7 */
+}
+
+let () = {
+  /* c0 */ module /* c1 */ L /* c2 */ = /* c3 */ Logger /* c4 */
+  /* c5 */ L.log() /* c6 */
+}
+
+let () = {
+  /* c0 */ module /* c1 */ L /* c2 */ = /* c3 */ Logger // c4
+  // k
+  
+  // k2
+  
+  // k3
+  /* c5 */ L.log() /* c6 */
+}
+
+let () = {
+  /* c0 */ module /* c1 */ L /* c2 */ = /* c3 */ Logger /* c4 */
+  /* c5 */ module /* c6 */ L2 /* c7 */ = /* c8 */ Logger2 /* c9 */
+  /* c10 */ L.log() /* c11 */
+  /* c12 */ L2.log() /* c13 */
+}
+
+let () = {
+  /* c0 */ module /* c1 */ L /* c2 */ = /* c3 */ Logger /* c4 */
+  // k
+  
+  /* k1 */
+  
+  // k2
+  /* c5 */ module /* c6 */ L2 /* c7 */ = /* c8 */ Logger2 /* c9 */
+  // k
+  
+  /* k1 */
+  
+  // k2
+  /* c10 */ L.log() /* c11 */
+  // k
+  
+  /* k1 */
+  
+  // k2
+  /* c12 */ L2.log() /* c13 */
+}
+
+let () = {
+  /* c0 */ open /* c1 */ Belt /* c2 */
+  /* c3 */ doSomething() /* c4 */
+}
+
+let () = {
+  /* c0 */ open /* c1 */ Belt // c2
+  // k
+  
+  /* k2 */
+  
+  // k3
+  /* c3 */ doSomething() // c4
+}
+
+let () = {
+  /* c0 */ open /* c1 */ Belt /* c2 */
+  /* c3 */ open /* c4 */ React /* c5 */
+  /* c6 */ doSomething() /* c7 */
+}
+
+let () = {
+  /* c0 */ open /* c1 */ Belt /* c2 */
+  // k
+  
+  /* k2 */
+  
+  // k3
+  /* c3 */ open /* c4 */ React /* c5 */
+  // k
+  
+  /* k2 */
+  
+  // k3
+  /* c6 */ doSomething() /* c7 */
+}
+
+while true {
+  /* c0 */ let () = sideEffect1() // c1
+  // c2
+  
+  /* c3 */ let () = sideEffect2() // c4
+  // c5
+  
+  // c6
+  /* c7 */ sideEffect2() // c8
+  
+  // here
+}
+
+for i in 0 to 10 {
+  /* c0 */ let () = sideEffect1() // c1
+  // c2
+  
+  /* c3 */ let () = sideEffect2() // c4
+  // c5
+  
+  // c6
+  /* c7 */ sideEffect2() // c8
+  
+  // here
+}
+
+switch color {
+| Blue =>
+  /* c0 */ let () = sideEffect1() // c1
+  // c2
+  
+  /* c3 */ let () = sideEffect2() // c4
+  // c5
+  
+  // c6
+  /* c7 */ sideEffect2() // c8
+
+| Red =>
+  /* c0 */ let () = sideEffect1() // c1
+  // c2
+  
+  /* c3 */ let () = sideEffect2() // c4
+  // c5
+  
+  // c6
+  /* c7 */ sideEffect2() // c8
+}
+
+try danger() catch {
+| Exc =>
+  /* c0 */ let () = sideEffect1() // c1
+  // c2
+  
+  /* c3 */ let () = sideEffect2() // c4
+  // c5
+  
+  // c6
+  /* c7 */ sideEffect2() // c8
+}
+
+if {
+  // here
+  let a = true
+  // okok
+  
+  // there
+  let /* inside */ b = false // trailing
+  
+  // between
+  true // test
+  
+  /* ws */
+  // after
+} {
+  // here
+  let a = true
+  // okok
+  
+  // there
+  let /* inside */ b = false
+  false // here
+} else {
+  // here
+  let a = true
+  // okok
+  
+  // there
+  let b = false
+  true
+} // trailing
+
+if {
+  // here
+  let a = true
+  // okok
+  
+  // there
+  let /* inside */ b = false // trailing
+  
+  // between
+  true // test
+  
+  /* ws */
+  // after
+} {
+  // here
+  let a = true
+  // okok
+  
+  // there
+  let /* inside */ b = false
+  false // here
+} else if {
+  let u = universe() // c0
+  // c1
+  
+  // c2
+  let /* inside */ gc = forceGc() // stop the world
+  // c3
+  
+  // c4
+  f(u, gc) // c5
+  /* c6 */
+  // c7
+} {
+  // here
+  let a = true
+  // okok
+  
+  // there
+  let b = false
+  true
+} // trailing
+
+"
+`;
+
+exports[`expr.ns 1`] = `
+"// Pexp_ident
+let pi = /* before */ Math.pi // after
+
+// Pexp_constant
+let one = /* before */ 1 // after
+
+// Pexp_let
+let x = {
+  let /* before a */ a /* after a */ = /* before 1 */ 1 // after 1
+  /* before ident */ Pexp.ident /* after ident */
+}
+
+let x = {
+  let /* before a */ a /* after a */ = /* before 1 */ 1 // after 1
+  let /* before b */ b /* after b */ = /* before 2 */ 2 // after 2
+  /* before ident */ Pexp.ident /* after ident */
+}
+
+let x = {
+  let /* before a */ a /* after a */ = /* before 1 */ 1 // after 1
+  let /* before b */ b /* after b */ = /* before 2 */ 2 // after 2
+  /* before const */ \\"a string\\" /* after const */
+}
+
+// Pexp_extension
+let x = /* c0 */ %ext(/* before */ \\"test\\" /* after */) /* c1 */
+
+// Pexp_open
+let x = {
+  /* before open */ open /* c0 */ Belt /* c1 */ // after open
+  /* before const */ \\"a string\\" /* after const */
+}
+
+let x = {
+  /* before open */ open /* c0 */ Belt /* c1 */ // after open
+  /* before open */ open! /* c0 */ Unsafe /* c1 */ // after open
+  /* before const */ \\"a string\\" /* after const */
+}
+
+let x = {
+  /* before let */ let a = 1 // after let
+  open /* before ident */ Belt // after open
+  /* before const */ \\"test\\" /* after const */
+}
+
+let x = {
+  open /* before ident */ Belt // after open
+  /* before let */ let a = 1 // after let
+  /* before const */ \\"test\\" /* after const */
+}
+
+// Pexp_letexception
+let x = {
+  /* before */ exception /* c0 */ Foo /* c1 */ // after
+  /* before */ \\"test\\" /* after */
+}
+
+// Pexp_letmodule
+let x = {
+  /* before */ module /* c0 */ B /* c1 */ = Belt // after
+  /* before */ \\"test\\" /* after */
+}
+
+// Pexp_assert
+let x = /* here */ assert /* c0 */ true /* c1 */
+
+// Pexp_lazy
+let x = /* here */ lazy /* c0 */ true /* c1 */
+
+// Pexp_constraint
+let x = (/* c0 */ \\"string\\" /* c1 */: /* c2 */ string /* c3 */) // after
+
+// Pexp_construct
+let x = /* before */ true /* after */
+let x = /* before */ Red /* after */
+let x = /* before */ Red(/* c0 */ shade /* c1 */) /* after */
+let x = /* before */ Red /* after Red */(
+  /* c0 */ r /* c1 */,
+  /* c2 */ g /* c3 */,
+  /* c4 */ b /* c5 */,
+) /* after */
+
+// lists
+let x = /* c0 */ list(/* c1 */) /* c2 */
+/* c0 */ list(/* c1 */) /* c2 */
+
+let x = /* c0 */ list(/* c1 */ a /* c2 */) /* c3 */
+/* c0 */ list(/* c1 */ a /* c2 */) /* c3 */
+
+let x = /* c0 */ list(/* c1 */ a /* c2 */, /* c3 */ b /* c4 */) /* c5 */
+/* c0 */ list(/* c1 */ a /* c2 */, /* c3 */ b /* c4 */) /* c5 */
+
+let x = /* c0 */ list(
+  /* c1 */ a /* c2 */,
+  /* c3 */ b /* c4 */,
+  /* c5 */ c /* c6 */,
+) /* c7 */
+/* c0 */ list(
+  /* c1 */ a /* c2 */,
+  /* c3 */ b /* c4 */,
+  /* c5 */ c /* c6 */,
+) /* c7 */
+
+// Pexp_array
+let x = [/* c0 */ a /* c1 */, /* c2 */ b /* c3 */, /* c4 */ c /* c5 */]
+let x = [/* a */]
+let x = [// test
+]
+
+// Pexp_record
+let user = /* before */ {
+  // above name
+  /* c0 */ name /* c1 */: /* c2 */ \\"Steve\\" /* c3 */,
+  // above age
+  /* c4 */ age /* c5 */: /* c6 */ 31 /* c7 */,
+} // after
+
+// bs object sugar
+let user = /* before */ {
+  // above name
+  /* c0 */ \\"name\\" /* c1 */: /* c2 */ \\"Steve\\" /* c3 */,
+  // above age
+  /* c4 */ \\"age\\" /* c5 */: /* c6 */ 31 /* c7 */,
+} // after
+
+let spreadUser = {
+  .../* before */ user1 /* after */,
+  /* c0 */ age /* c1 */: /* c2 */ 32 /* c3 */,
+}
+
+// Pexp_field
+let x = /* before */ user /* c0 */./* c1 */ name /* c2 */
+
+// Pexp_setfield
+/* before */ user /* c0 */./* c1 */ name /* c2 */ = /* c3 */ \\"Steve\\" /* c4 */
+
+// Pexp_ifthenelse
+if /* c0 */ user.name === \\"Steve\\" /* c1 */ {
+  /* c2 */ Js.log(\\"It's Steve\\") /* c3 */
+} // trailing
+
+if /* c0 */ user.name === \\"John\\" /* c1 */ {
+  /* c2 */ Js.log(\\"It's John…\\")
+} else {
+  // c4
+  /* c5 */ Js.log(\\"we need John\\") /* c6 */
+} // trailing
+
+// Pexp_while
+while /* c0 */ condition.contents /* c1 */ {
+  /* c2 */ doStuff() /* c3 */
+} // trailing
+
+// Pexp_for
+for /* c0 */ i /* c1 */ in /* c2 */ 0 /* c3 */ to /* c4 */ 10 /* c5 */ {
+  /* c6 */ doStuff() /* c7 */
+} // trailing
+
+// Pexp_pack
+/* c0 */ module(/* c1 */ ModExpr /* c2 */) /* c3 */
+/* c0 */ let /* c1 */ three /* c2 */ = /* c3 */ module(
+  /* c4 */ Three /* c5 */
+) /* c6 */
+
+/* c0 */ module(/* c1 */ ModExpr: /* c4 */ MyModule /* c5 */) /* c6 */
+/* c0 */ let /* c1 */ three /* c2 */ = /* c3 */ module(
+  /* c4 */ Three: /* c6 */ MyModule /* c7 */
+) /* c8 */
+
+/* c0 */ switch /* c1 */ color /* c2 */ {
+// above Red
+/* c0 */ | Red /* c1 */ => /* c2 */ printColor(\\"red\\") /* ending */
+
+// above Blue
+/* c3 */ | Blue /* c4 */ => /* c5 */ printColor(\\"blue\\") /* ending */
+}
+
+/* c0 */ try /* c2 */ unsafeIdentifier /* c3 */ catch {
+// Above
+/* before */ | InfiniteLoop /* after */ => /* here */ () /* trailing */
+
+// Above2
+/* before */ | InfiniteLoop2 /* after */ => /* here */ () /* trailing */
+} // trailing
+
+"
+`;
+
+exports[`extensionConstructor.ns 1`] = `
+"/* c0 */ exception /* c1 */ Exit /* c2 */ = /* c3 */ Terminate /* c4 */
+
+/* c0 */ exception /* c1 */ ExitEarly /* c2 */(
+  /* c4 */ int /* c5 */,
+  /* c6 */ int /* c7 */,
+) // after
+
+/* c0 */ exception /* c1 */ ExitEarly /* c2 */(
+  /* c4 */ int /* c5 */,
+  /* c6 */ int /* c7 */,
+): /* c8 */ gadt // after
+
+/* c0 */ type /* c1 */ Foo.Bar.t /* c2 */ +=
+  | /* before Foo */ Foo // after Foo
+  | /* before Bar */ Bar // after Bar
+
+/* c0 */ type /* c1 */ Foo.Bar.t /* c2 */</* c1.1 */ 'x /* c2.2 */> +=
+  | /* before Foo */ Foo // after Foo
+  | /* before Bar */ Bar // after Bar
+
+/* c0 */ type /* c1 */ Foo.Bar.t /* c2 */ += /* c3 */ Bar /* c4 */
+
+/* c0 */ type /* c1 */ t /* c2 */ +=
+  | /* c3 */ Foo /* c4 */ = /* c5 */ Bar /* c6 */
+
+"
+`;
+
+exports[`modExpr.ns 1`] = `
+"// Pmod_ident
+/* c0 */ module /* c1 */ X /* c2 */ = /* c3 */ Y /* c4 */
+
+// Pmod_structure
+/* c0 */ module /* c1 */ X /* c2 */ = /* c3 */ {
+  let /* inside1 */ a /* inside2 */ = 2 /* trailing */
+} // trailing
+
+// Pmod_extension
+/* c0 */ module /* c1 */ X /* c2 */ = /* c3 */ %ext(
+  /* c4 */ \\"test\\" /* c5 */
+) /* c6 */
+
+// Pmod_unpack
+/* c0 */ module /* c1 */ New_three /* c2 */ = /* c3 */ unpack(
+  /* c4 */ three /* c5 */: /* c6 */ X_int /* c7 */
+) /* c8 */
+
+// Pmod_constraint
+/* c0 */ module /* c1 */ X /* c2 */: /* c5 */ Int /* c6 */ = /* c3 */ X /* c4 */
+/* c0 */ module /* c1 */ X /* c2 */: Int = X /* c7 */
+
+// Pmod_apply
+/* c0 */ module /* c1 */ X /* c2 */ = /* c3 */ F /* c4 */(
+  /* c4 */ Arg1 /* c5 */,
+  /* c6 */ Arg2 /* c7 */,
+  /* c8 */ Arg3 /* c9 */,
+) /* c10 */
+/* c0 */ module /* c1 */ X /* c2 */ = /* c3 */ F(
+  /* c4 */ A /* c5 */: /* c6 */ SetLike /* c7 */,
+  /* c7 */ B /* c8 */: /* c9 */ TreeLike /* c10 */,
+) /* c11 */
+/* c0 */ module /* c1 */ S0 /* c2 */ = /* c3 */ Make /* c4 */(/* lbrace */ {
+  type t = int /* c5 */
+  let eq /* c6 */ = (x, y) => x == y
+} /* rbrace */) // trailing
+
+// Pmod_functor
+/* c0 */ module /* c1 */ F /* c2 */ = /* before parameters */ (
+  /* c3 */ A /* c4 */: /* c5 */ X /* c6 */,
+  /* c7 */ B /* c8 */: /* c9 */ Y /* c 10 */,
+  /* c7 */ C /* c8 */: /* c9 */ Z /* c 10 */,
+) => /* c11 */ ReturnMod /* c12 */
+
+module Make = /* before parameters */ (
+  /* before A */ A /* after A */: /* before X */ X /* after X */,
+  /* before B */ B /* after B */: /* before Y */ Y /* after Y */,
+): /* c1 */ Set /* c2 */ => {
+  let a /* inside */ = A.a + B.b
+}
+
+module Make = /* before parameters */ (
+  /* before A */ A /* after A */: /* before X */ X /* after X */,
+  /* before B */ B /* after B */: /* before Y */ Y /* after Y */,
+): /* c1 */ Set /* c2 */ => {
+  let a /* inside */ = A.a + B.b
+}
+
+"
+`;
+
+exports[`modType.ns 1`] = `
+"// Pmty_ident
+/* c0 */ module type /* c1 */ T /* c2 */ = /* c3 */ Tree /* c4 */
+
+// Pmty_signature
+/* c0 */ module type /* c1 */ T /* c2 */ = /* c3 */ {
+  let a: int
+} /* c4 */
+
+// Pmty_extension
+/* c0 */ module type /* c1 */ T /* c2 */ = /* c3 */ %ext(
+  /* c4 */ \\"test\\" /* c5 */
+) /* c6 */
+
+// Pmty_typeof
+/* c0 */ module type /* c1 */ A /* c2 */ = /* c3 */ module type of /* c4 */ {
+  let a /* inside */ = 1
+} /* c5 */
+
+// Pmty_with
+/* c0 */ module type /* c1 */ A /* c2 */ = /* c3 */ Foo /* c4 */
+  with type t = string // end
+
+// Pmty_functor
+/* c0 */ module type /* c1 */ Functor /* c2 */ = /* c3 */ SetLike /* c4 */ =>
+/* c5 */ Set /* c6 */
+module type Functor = /* before */ (
+  /* before S */ S /* after S */: /* before */ SetLike /* after */,
+  /* before B */ B /* after B */: /* before */ BtreeLike /* after */,
+) => /* before NeoTree */ NeoTree // after NeoTree
+module type Functor = (
+  /* c0 */ /* c1 */ /* c2 */ SetLike /* c3 */,
+  /* c4 */ /* c5 */ /* c6 */ BtreeLike /* c7 */,
+) => NeoTree
+
+module type Functor = /* before */ (
+  /* c0 */ SetLike /* c1 */,
+  /* c2 */ BtreeLike /* c3 */,
+) => NeoTree
+
+"
+`;
+
 exports[`multiline.ns 1`] = `
 "/* first line
  * the leading stars
@@ -69,6 +748,8 @@ let Black(
 // singleLineComment
 ) = color
 
+let module(/* c0 */ X /* c1 */: /* c2 */ X_int /* c3 */) /* c4 */ = x
+
 let /* before */ Rgb(
   /* red */ r /* red2 */,
   /* green */ g /* green2 */,
@@ -112,13 +793,86 @@ let /* before */ lazy /* a */ x /* b */ /* after */ = lazy 1
 
 // Ppat_unpack
 let /* before */ module(/* h1 */ Hashtbl /* h2 */) /* after */ = Hashtbl
-let /* before */ module(/* h1 */ Hashtbl /* h2 */: MutableTable) /* after */ = Hashtbl
+let /* before */ module(/* h1 */ Hashtbl /* h2 */: /* h3 */ MutableTable /* h4 */) /* after */ = Hashtbl
 
 // Ppat_exception
 let /* before */ exception /* c0 */ Exit /* c1 */ /* after */ = exc
 
 // Ppat_extension
 let /* before */ %bs.raw(\\"eval(gc())\\") /* after */ = stuff
+
+"
+`;
+
+exports[`signatureItem.nsi 1`] = `
+"// Psig_value
+/* c0 */ external /* c1 */ force_gc /* c2 */: /* c3 */ unit /* c4 */ => /* c5 */ unit /* c6 */ =
+  \\"gc\\" // trailing
+
+// Psig_type
+/* c0 */ type /* c1 */ t /* c2 */ = /* c3 */ string /* c4 */
+
+/* c0 */ type /* c1 */ t /* c2 */ = /* c4 */ string /* c5 */
+// above
+and /* c6 */ s /* c7 */ = /* c8 */ int /* c9 */
+
+// Pstr_typext
+/* c0 */ type /* c1 */ Foo.Bar.t /* c2 */ +=
+  | /* before Foo */ Foo // after Foo
+  | /* before Bar */ Bar // after Bar
+
+/* c0 */ type /* c1 */ Foo.Bar.t /* c2 */</* c1.1 */ 'x /* c2.2 */> +=
+  | /* before Foo */ Foo // after Foo
+  | /* before Bar */ Bar // after Bar
+
+/* c0 */ type /* c1 */ Foo.Bar.t /* c2 */ += /* c3 */ Bar /* c4 */
+
+/* c0 */ type /* c1 */ t /* c2 */ +=
+  | /* c3 */ Foo /* c4 */ = /* c5 */ Bar /* c6 */
+
+// Pstr_exception
+/* c0 */ exception /* c1 */ Exit /* c2 */ = /* c3 */ Terminate /* c4 */
+
+/* c0 */ exception /* c1 */ ExitEarly /* c2 */(
+  /* c4 */ int /* c5 */,
+  /* c6 */ int /* c7 */,
+) // after
+
+/* c0 */ exception /* c1 */ ExitEarly /* c2 */(
+  /* c4 */ int /* c5 */,
+  /* c6 */ int /* c7 */,
+): /* c8 */ gadt // after
+
+/* c0 */ exception /* c1 */ ExitEarly /* c2 */({
+  /* c4 */ code /* inside */: /* inside2 */ int /* c5 */,
+  /* c6 */ timeout /* inside */: /* inside2 */ int /* c7 */,
+}): /* c8 */ gadt // after
+
+// Psig_module
+/* c0 */ module /* c1 */ X /* c2 */: /* c3 */ MT /* c4 */
+
+// Psig_module
+/* c0 */ module rec /* c1 */ X1 /* c2 */: /* c3 */ MT1
+// above
+and /* c4 */ Xn /* c5 */: /* c6 */ MTn /* c7 */
+
+// Psig_modtype
+/* c0 */ module type /* c1 */ S /* c2 */ = /* c3 */ MT /* c4 */
+/* c0 */ module type /* c1 */ S /* c2 */
+
+// Psig_open
+/* c0 */ open /* c1 */ Belt /* c2 */
+
+// Psig_include
+/* c0 */ include /* c1 */ {
+  let a /* inside */: int
+} // after
+
+// Psig_attribute
+/* c0 */ @@attr(/* c1 */ payload /* c2 */) /* c3 */
+
+// Psig_extension
+/* c0 */ @@extension(/* c1 */ payload /* c2 */) /* c3 */
 
 "
 `;
@@ -143,7 +897,8 @@ exports[`structure1.ns 1`] = `
 // above open
 open /* here */ React // after
 // trailing
-/* foo */ /* bar */
+/* foo */
+/* bar */
 
 // another
 // ok
@@ -191,9 +946,11 @@ exports[`structure4.ns 1`] = `
   age: 31,
 }
 
-/* A comment */ /**
+/* A comment */
+/**
  * A type that can be written to a buffer.
- */ /**
+ */
+/**
  * Describes the connection status of a ReactiveSocket/DuplexConnection.
  * - NOT_CONNECTED: no connection established or pending.
  * - CONNECTING: when \`connect()\` has been called but a connection is not yet
@@ -201,15 +958,90 @@ exports[`structure4.ns 1`] = `
  * - CONNECTED: when a connection is established.
  * - CLOSED: when the connection has been explicitly closed via \`close()\`.
  * - ERROR: when the connection has been closed for any other reason.
- */ /**
+ */
+/**
  * A contract providing different interaction models per the [ReactiveSocket protocol]
  * (https://github.com/ReactiveSocket/reactivesocket/blob/master/Protocol.md).
- */ /**
+ */
+/**
  * A single unit of data exchanged between the peers of a \`ReactiveSocket\`.
  */
 
 "
 `;
+
+exports[`structureItem.ns 1`] = `
+"// Pstr_attribute
+@@attr(/* c0 */ \\"here\\" /* c1 */)
+
+// Pstr_extension
+%%extension(/* c0 */ \\"here\\" /* c1 */)
+
+// Pstr_include
+/* c0 */ include /* c1 */ Belt /* c2 */
+/* c0 */ include /* c1 */ {
+  let a /* inside */ = 2
+} /* c2 */
+
+// Pstr_open
+/* c0 */ open /* c1 */ Belt /* c2 */
+
+// Pstr_modtype
+/* c0 */ module type /* c1 */ T /* c2 */ = /* c3 */ MT /* c4 */
+
+// Pstr_recmodule
+/* c0 */ module rec /* c1 */ X1 /* c2 */ = /* c3 */ ME1 /* c4 */
+// above
+and /* c5 */ Xn /* c6 */ = /* c7 */ MEn /* c8 */
+
+// Pstr_module
+/* c0 */ module /* c1 */ X /* c2 */ = /* c3 */ Y /* c4 */
+
+// Pstr_exception
+/* c0 */ exception /* c1 */ Exit /* c2 */ = /* c3 */ Terminate /* c4 */
+
+/* c0 */ exception /* c1 */ ExitEarly /* c2 */(
+  /* c4 */ int /* c5 */,
+  /* c6 */ int /* c7 */,
+) // after
+
+/* c0 */ exception /* c1 */ ExitEarly /* c2 */(
+  /* c4 */ int /* c5 */,
+  /* c6 */ int /* c7 */,
+): /* c8 */ gadt // after
+
+// Pstr_typext
+/* c0 */ type /* c1 */ Foo.Bar.t /* c2 */ +=
+  | /* before Foo */ Foo // after Foo
+  | /* before Bar */ Bar // after Bar
+
+/* c0 */ type /* c1 */ Foo.Bar.t /* c2 */</* c1.1 */ 'x /* c2.2 */> +=
+  | /* before Foo */ Foo // after Foo
+  | /* before Bar */ Bar // after Bar
+
+/* c0 */ type /* c1 */ Foo.Bar.t /* c2 */ += /* c3 */ Bar /* c4 */
+
+/* c0 */ type /* c1 */ t /* c2 */ +=
+  | /* c3 */ Foo /* c4 */ = /* c5 */ Bar /* c6 */
+
+// Pstr_type
+/* c0 */ type /* c1 */ t /* c2 */ = /* c3 */ string /* c4 */
+
+/* c0 */ type /* c1 */ t /* c2 */ = /* c4 */ string /* c5 */
+// above
+and /* c6 */ s /* c7 */ = /* c8 */ int /* c9 */
+
+// Pstr_primitive
+/* c0 */ external /* c1 */ force_gc /* c2 */: /* c3 */ unit /* c4 */ => /* c5 */ unit /* c6 */ =
+  \\"gc\\" // trailing
+
+// Pstr_eval
+/* c0 */ user.name /* c1 */ = /* c2 */ \\"Steve\\" /* c3 */
+
+"
+`;
+
+exports[`trailingComments.ns 1`] = `""`;
 
 exports[`typeDefinition.js 1`] = `
 "/* before */ type t /* after */
@@ -249,8 +1081,9 @@ exports[`typeDefinition.js 1`] = `
   | /* before Blue */ Blue // trailing Blue
   // above Green
   | /* before Green */ Green /* trailing Green */ // test
+
 type color =
-  /* before Red */ Red /* after Red */: /* before gadt */ color /* after gadt */
+  | /* before Red */ Red /* after Red */: /* before gadt */ color /* after gadt */
   | /* before Blue */ Blue /* after Blue */: /* before gadt */ color /* after gadt */
 
 type color =
@@ -308,7 +1141,7 @@ type t = /* before */ result /* c0 */<
 > /* after */
 
 // Ptyp_extension
-type t = /* before */ %ext(\\"here\\") /* after */
+type t = /* before */ %ext(/* before */ \\"here\\" /* after */) /* after */
 
 // Ptyp_package
 type t = /* c0 */ module(/* before */ S /* after */) /* c1 */
@@ -379,6 +1212,14 @@ exports[`whitespaceCase1.ns 1`] = `
 let 123 = 123
 // comment2
 let f = ()
+
+"
+`;
+
+exports[`whitespaceCase2.ns 1`] = `
+"let a = 2 // c2
+
+let b = 1
 
 "
 `;

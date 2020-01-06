@@ -227,3 +227,33 @@ and parseStructureItem = (_): Parsetree.structure_item => {
   let attrs = parseAttributes(p)
   attrs
 }
+
+// block expressions should have braces on the same line as the =>
+let equals = (c1, c2) => {
+  open Float
+  c1.red->equals(c2.red) &&
+  c1.blue->equals(c2.blue) &&
+  c1.green->equals(c2.green)
+}
+
+let equals2 = (c1, c2) => {
+  module B = Belt
+  c1.red->equals(c2.red) &&
+  c1.blue->equals(c2.blue) &&
+  c1.green->equals(c2.green)
+}
+
+let equals3 = (c1, c2) => {
+  let a = 1
+  let b = 2
+  c1.red->equals(c2.red) &&
+  c1.blue->equals(c2.blue) &&
+  c1.green->equals(c2.green)
+}
+
+let equals4 = (c1, c2) => {
+  exception Foo
+  c1.red->equals(c2.red) &&
+  c1.blue->equals(c2.blue) &&
+  c1.green->equals(c2.green)
+}

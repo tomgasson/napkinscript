@@ -57,3 +57,6 @@ let build_dispatch_table = handlers => {
     Hashtbl.set(table, ~key=I.Query_handler.name, ~data=instance), table
   )
 }
+
+module(Three)
+module(Three: X_int)

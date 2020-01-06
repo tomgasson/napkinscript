@@ -962,7 +962,10 @@ let x = (@attrOnTernary (isLeft ? node.left : node.right)).color
 `;
 
 exports[`firstClassModule.js 1`] = `
-"let three = module(Three: X_int)
+"module(Three)
+module(Three: X_int)
+
+let three = module(Three: X_int)
 let three = module(Three)
 
 let x = @attr module(Foo)
@@ -1313,6 +1316,36 @@ and parseStructureItem = (_): Parsetree.structure_item => {
   attrs
 }
 
+// block expressions should have braces on the same line as the =>
+let equals = (c1, c2) => {
+  open Float
+  c1.red->equals(c2.red) &&
+  c1.blue->equals(c2.blue) &&
+  c1.green->equals(c2.green)
+}
+
+let equals2 = (c1, c2) => {
+  module B = Belt
+  c1.red->equals(c2.red) &&
+  c1.blue->equals(c2.blue) &&
+  c1.green->equals(c2.green)
+}
+
+let equals3 = (c1, c2) => {
+  let a = 1
+  let b = 2
+  c1.red->equals(c2.red) &&
+  c1.blue->equals(c2.blue) &&
+  c1.green->equals(c2.green)
+}
+
+let equals4 = (c1, c2) => {
+  exception Foo
+  c1.red->equals(c2.red) &&
+  c1.blue->equals(c2.blue) &&
+  c1.green->equals(c2.green)
+}
+
 "
 `;
 
@@ -1502,7 +1535,9 @@ let x =
   <div
     ?ident
     ident
-    ident=?identifierExpr
+    ident=?// punned
+    // punned optional
+    identifierExpr
     ident=identifierExpr
     constant=\\"constant\\"
     letExpr={

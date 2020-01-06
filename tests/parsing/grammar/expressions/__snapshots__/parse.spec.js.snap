@@ -356,7 +356,9 @@ let build_dispatch_table handlers =
   let table = Hashtbl.create (module String) in
   List.iter handlers
     ~f:(fun (((module I)  : (module Query_handler_instance)) as instance) ->
-          Hashtbl.set table ~key:I.Query_handler.name ~data:instance) table"
+          Hashtbl.set table ~key:I.Query_handler.name ~data:instance) table
+;;(module Three)
+;;((module Three) : (module X_int))"
 `;
 
 exports[`float.js 1`] = `
