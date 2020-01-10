@@ -169,3 +169,28 @@ for /* c0 */ i /* c1 */ in /* c2 */ 0 /* c3 */ to /* c4 */ 10  /* c5 */ {
 // Above2
 | /* before */ InfiniteLoop2 /* after */ => /* here */ () /* trailing */
 } // trailing
+
+// Pexp_fun
+let f = (/* c0 */ a /* c1 */, /* c2 */ b /* c3 */) : /* c4 */int  /* c5 */ => /* c6 */ 20 /* c7 */
+let multiply = (/* c0 */ m1 /* c1 */, /* c2 */ m2 /* c3 */) => {
+  // here
+  open Matrix4D
+
+  let m3 = makeUninitializedUnsafe()
+  // there
+  
+  // over there
+  m3
+  /* trailing */
+  // test
+}
+
+let multiply = (~x=/* c0 */ m1 /* c1 */, ~y=/* c2 */ m2 /* c3 */) => () 
+
+let f = (/* c0 */ ~greeting /* c1 */, /* c2 */ ~from /* c3 */ as /* c4 */ hometown /* c5 */, /* c6 */ ~x=? /* c7 */) => ()
+
+let multiply = (/* c-2 */ type t /* c-1 */,/* c0 */ m1 /* c1 */, /* c2 */ m2 /* c3 */) => () 
+let multiply = (/* c-4 */ type t /* c-3 */,/* c0 */ m1 /* c1 */, /* c-2 */ type s /* c-1 */, /* c2 */ m2 /* c3 */) => () 
+
+// ternary
+let x = /* c0 */ test /* c1 */ ? /* c2 */ true /* c3 */ : /* c4 */ false /* c5 */

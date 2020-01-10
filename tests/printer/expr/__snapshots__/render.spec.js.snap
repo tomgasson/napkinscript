@@ -816,6 +816,7 @@ let rec peekMinNode = node =>
   | None => None
   | Some(node) =>
     if node.left === None {
+      // this shouldn't break over multiple lines
       Some(node)
     } else {
       node.left->peekMinNode
@@ -827,6 +828,7 @@ let rec peekMinNode = node =>
   | None => None
   | Some(node) =>
     if node.left === None {
+      // this shouldn't break over multiple lines
       MyConstructor(
         node,
         nodeLongIdentifiiiiieeeeeeer1,
@@ -1533,11 +1535,9 @@ let x = <> </>
 
 let x =
   <div
-    ?ident
-    ident
-    ident=?// punned
-    // punned optional
-    identifierExpr
+    ident // punned
+    ?ident // punned optional
+    ident=?identifierExpr
     ident=identifierExpr
     constant=\\"constant\\"
     letExpr={

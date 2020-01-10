@@ -354,3 +354,158 @@ if {
   let b = false
   true
 } // trailing
+
+assert {
+  // here 
+  open /* inside */ Matrix
+  // c
+
+  // c2
+  compare(m1, m2)
+  // after
+
+  // test
+}
+
+lazy {
+  // here 
+  open /* inside */ Matrix
+  // c
+
+  // c2
+  compare(m1, m2)
+  // after
+
+  // test
+}
+
+user.name = {
+  // here 
+  open /* inside */ Names
+  // c
+
+  // c2
+  defaultName
+  // after
+
+  // test
+}
+
+switch {
+  // here
+  open Matrix
+  // there
+
+  // test
+  arityCheck()
+  // trailing
+
+  // hmm
+} {
+| One => ()
+| Two => ()
+}
+
+try {
+  // here
+  open Matrix
+  // there
+
+  // test
+  arityCheck()
+  // trailing
+
+  // hmm
+} catch {
+| One => ()
+| Two => ()
+}
+
+let () = {
+  // here
+  open Matrix
+  // there
+
+  // test
+  arityCheck
+  // trailing
+
+  // hmm
+}(arg1, arg2)
+
+let name = {
+  // here
+  open Users
+  // there
+
+  // test
+  defaultUser
+  // trailing
+
+  // hmm
+}.name
+
+let () = {
+  // here
+  open Users
+  // there
+
+  // test
+  defaultUser
+  // trailing
+
+  // hmm
+}.name = {
+  // here
+  open Names
+  // there
+
+  // test
+  defaultName
+  // trailing
+
+  // hmm
+}
+
+while {
+  // comment
+  open Conditions
+  // inside
+
+  // inside2
+  check()
+  // foo
+
+  // bar
+} {
+  Js.log("test")
+}
+
+let multiply = (/* c0 */ m1 /* c1 */, /* c2 */ m2 /* c3 */) => {
+  // here
+  open Matrix4D
+
+  let m3 = makeUninitializedUnsafe()
+  // there
+  
+  // over there
+  m3
+  /* trailing */
+  // test
+}
+
+switch x {
+| Blue when /* c0 */ multicore.enabled /* c1 */ === /* c2 */ true /* c3 */ => ()
+| Red when {
+  // c0
+  open /* c1 */ Multicore // c2
+  // c3
+
+  // c4
+  isEnabled() // c5
+  /* c6 */
+
+  // c7
+
+ } => ()
+}

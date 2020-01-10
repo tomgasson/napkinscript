@@ -1,5 +1,47 @@
 // Jest Snapshot v1, https://goo.gl/fbAQLP
 
+exports[`binaryExpr.ns 1`] = `
+"/* with comments */
+compilation->Plugin.buildAssets // after
+/* below compilation */ // trailing
+
+compilation /* same line as compilation */->Plugin.buildAssets // trailing
+
+/* with comments */
+compilation
+/* first */
+->Plugin.buildAssets /* first trail */
+/* second */
+->Js.Json.stringify /* second trail */
+/* last */
+->Node.Fs.writeFileAsUtf8Sync(path) /* last trail */
+
+if (
+  // above1
+  a == b &&
+  // trailing1
+  // above2
+  c == d &&
+  // trailing2
+  // above3
+  e == f &&
+  // trailing3
+  x
+) {
+  console.log(\\"foo bar\\")
+}
+
+let truth =
+  a == b && c == d /* cmt */ && e == f
+
+let truth =
+  /* c0 */ a /* c1 */ == /* c2 */ b /* c3 */ &&
+  /* c4 */ c /* c5 */ == /* c6 */ d /* c7 */ &&
+  /* c8 */ e /* c9 */ == /* c10 */ f /* c11 */
+
+"
+`;
+
 exports[`blockExpr.ns 1`] = `
 "let () = /* c0 */ sideEffect1() /* c1 */
 
@@ -302,6 +344,14 @@ if {
   false // here
 } else {
   // here
+  
+  // okok
+  
+  // there
+  /* inside */
+  // here
+  
+  // here
   let a = true
   // okok
   
@@ -353,11 +403,175 @@ if {
   true
 } // trailing
 
+assert {
+  // here
+  open /* inside */ Matrix
+  // c
+  
+  // c2
+  compare(m1, m2)
+  // after
+  
+  // test
+}
+
+lazy {
+  // here
+  open /* inside */ Matrix
+  // c
+  
+  // c2
+  compare(m1, m2)
+  // after
+  
+  // test
+}
+
+user.name = {
+  // here
+  open /* inside */ Names
+  
+  // c
+  
+  // c2
+  defaultName
+  // after
+  
+  // test
+}
+
+switch {
+  // here
+  open Matrix
+  // there
+  
+  // test
+  arityCheck()
+  // trailing
+  
+  // hmm
+} {
+| One => ()
+| Two => ()
+}
+
+try {
+  // here
+  open Matrix
+  // there
+  
+  // test
+  arityCheck()
+  // trailing
+  
+  // hmm
+} catch {
+| One => ()
+| Two => ()
+}
+
+let () = {
+  // here
+  open Matrix
+  
+  // there
+  
+  // test
+  arityCheck
+  // trailing
+  
+  // hmm
+}(arg1, arg2)
+
+let name = {
+  // here
+  open Users
+  
+  // there
+  
+  // test
+  defaultUser
+  // trailing
+  
+  // hmm
+}.name
+
+let () = {
+  // here
+  open Users
+  
+  // there
+  
+  // test
+  defaultUser
+  // trailing
+  
+  // hmm
+}.name = {
+  // here
+  open Names
+  
+  // there
+  
+  // test
+  defaultName
+  // trailing
+  
+  // hmm
+}
+
+while {
+  // comment
+  open Conditions
+  // inside
+  
+  // inside2
+  check()
+  // foo
+  
+  // bar
+} {
+  Js.log(\\"test\\")
+}
+
+let multiply = (/* c0 */ m1 /* c1 */, /* c2 */ m2 /* c3 */) => {
+  // here
+  open Matrix4D
+  
+  let m3 = makeUninitializedUnsafe()
+  
+  // there
+  
+  // over there
+  m3
+  /* trailing */
+  // test
+}
+
+switch x {
+| Blue when /* c0 */ multicore.enabled /* c1 */ === /* c2 */ true /* c3 */ => ()
+| Red
+  when {
+    // c0
+    open /* c1 */ Multicore // c2
+    // c3
+    
+    // c4
+    isEnabled() // c5
+    /* c6 */
+    
+    // c7
+  } => ()
+}
+
 "
 `;
 
 exports[`expr.ns 1`] = `
-"// Pexp_ident
+"[192:31 - 192:32]
+[193:31 - 193:32]
+[193:80 - 193:81]
+// Pexp_ident
 let pi = /* before */ Math.pi // after
 
 // Pexp_constant
@@ -499,7 +713,7 @@ if /* c0 */ user.name === \\"Steve\\" /* c1 */ {
 } // trailing
 
 if /* c0 */ user.name === \\"John\\" /* c1 */ {
-  /* c2 */ Js.log(\\"It's John…\\")
+  /* c2 */ Js.log(\\"It's John…\\") /* c3 */
 } else {
   // c4
   /* c5 */ Js.log(\\"we need John\\") /* c6 */
@@ -541,6 +755,48 @@ for /* c0 */ i /* c1 */ in /* c2 */ 0 /* c3 */ to /* c4 */ 10 /* c5 */ {
 // Above2
 /* before */ | InfiniteLoop2 /* after */ => /* here */ () /* trailing */
 } // trailing
+
+// Pexp_fun
+let f = (/* c0 */ a /* c1 */, /* c2 */ b /* c3 */): /* c4 */ int /* c5 */ =>
+  /* c6 */ 20 /* c7 */
+let multiply = (/* c0 */ m1 /* c1 */, /* c2 */ m2 /* c3 */) => {
+  // here
+  open Matrix4D
+  
+  let m3 = makeUninitializedUnsafe()
+  
+  // there
+  
+  // over there
+  m3
+  /* trailing */
+  // test
+}
+
+let multiply = (~x=/* c0 */ m1 /* c1 */, ~y=/* c2 */ m2 /* c3 */) => ()
+
+let f = (
+  /* c0 */ ~greeting /* c1 */,
+  ~from as /* c2 */ /* c3 */ /* c4 */ hometown /* c5 */,
+  /* c6 */ ~x=?,
+) => /* c7 */ ()
+
+let multiply = (
+  /* c-2 */ type t /* c-1 */,
+  /* c0 */ m1 /* c1 */,
+  /* c2 */ m2 /* c3 */,
+) => ()
+let multiply = (
+  /* c-4 */ type t /* c-3 */,
+  /* c0 */ m1 /* c1 */,
+  /* c-2 */ type s /* c-1 */,
+  /* c2 */ m2 /* c3 */,
+) => ()
+
+// ternary
+let x = /* c0 */ test /* c1 */
+  ? /* c2 */ true /* c3 */
+  : /* c4 */ false /* c5 */
 
 "
 `;
@@ -702,6 +958,38 @@ let f = () => ()
 /**
  * test
  */
+
+/* BuckleScript outperforms a classic for-loop: 
+   function equals3(m1, m2) {
+    for (var i = 0; i < 4; i++) {
+        for (var j = 0; j < 4; j++) {
+            var x = m1[i][j];
+            var y = m2[i][j];
+            if(!floatEquals(x, y)) {
+                return false
+            }
+        }
+    }
+    return true
+  } */
+let equals = (matrix1, matrix2) => {
+  let rec loop = (i, j) =>
+    if i > 3 {
+      true
+    } else {
+      let x = matrix1->getUnsafe(~row=i, ~col=j)
+      let y = matrix2->getUnsafe(~row=i, ~col=j)
+      if !Float.equals(x, y) {
+        false
+      } else if j < 3 {
+        loop(i, j + 1)
+      } else {
+        loop(i + 1, 0)
+      }
+    }
+  
+  loop(0, 0)
+}
 
 "
 `;
