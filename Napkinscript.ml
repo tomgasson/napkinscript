@@ -5334,68 +5334,80 @@ Solution: directly use `concat`."
       p.token = Underscore ||
       Grammar.isExprStart p.token
     ) then (
-      let uncurried = Parser.optional p Dot in
       match p.Parser.token with
-      (* foo(_), do not confuse with foo(_ => x), TODO: performance *)
-      | Underscore when not (isEs6ArrowExpression ~inTernary:false p) ->
-        let loc = mkLoc p.startPos p.endPos in
-        Parser.next p;
-        let exp = Ast_helper.Exp.ident ~loc (
-          Location.mkloc (Longident.Lident "_") loc
-        ) in
-        Some (uncurried, Asttypes.Nolabel, exp)
-      | Tilde ->
-        Parser.next p;
-        (* TODO: nesting of pattern matches not intuitive for error recovery *)
-        begin match p.Parser.token with
-        | Lident ident ->
-          let startPos = p.startPos in
-          Parser.next p;
-          let endPos = p.prevEndPos in
-          let loc = mkLoc startPos endPos in
-          let identExpr = Ast_helper.Exp.ident ~loc (
-            Location.mkloc (Longident.Lident ident) loc
-          ) in
-          begin match p.Parser.token with
-          | Question ->
-            Parser.next p;
-            Some (uncurried, Asttypes.Optional ident, identExpr)
-          | Equal ->
-            Parser.next p;
-            let label = match p.Parser.token with
-            | Question ->
-              Parser.next p;
-              Asttypes.Optional ident
-            | _ ->
-              Labelled ident
+      | Dot ->
+        let uncurried = true in
+        let startPos = p.Parser.startPos in
+        Parser.next(p);
+        begin match p.token with
+          (* apply(.) *)
+          | Rparen ->
+            let loc = mkLoc startPos p.prevEndPos in
+            let unitExpr = Ast_helper.Exp.construct ~loc
+              (Location.mkloc (Longident.Lident "()") loc) None
             in
-            let expr = match p.Parser.token with
-            | Underscore ->
-              let loc = mkLoc p.startPos p.endPos in
-              Parser.next p;
-              Ast_helper.Exp.ident ~loc (
-                Location.mkloc (Longident.Lident "_") loc
-              )
-            | _ -> parseConstrainedExpr p
-            in
-            Some (uncurried, label, expr)
+            Some (uncurried, Asttypes.Nolabel, unitExpr)
           | _ ->
-            Some (uncurried, Labelled ident, identExpr)
-          end
-        | t ->
-          Parser.err p (Diagnostics.lident t);
-          Some (uncurried, Nolabel, Recover.defaultExpr ())
+            parseArgument2 p ~uncurried
         end
-      (* apply(.) *)
-      | Rparen when uncurried ->
-        let unitExpr = Ast_helper.Exp.construct
-          (Location.mknoloc (Longident.Lident "()")) None
-        in
-        Some (uncurried, Nolabel, unitExpr)
-      | _ -> Some (uncurried, Nolabel, parseConstrainedExpr p)
+      | _ ->
+        parseArgument2 p ~uncurried:false
     ) else
       None
 
+  and parseArgument2 p ~uncurried =
+    match p.Parser.token with
+    (* foo(_), do not confuse with foo(_ => x), TODO: performance *)
+    | Underscore when not (isEs6ArrowExpression ~inTernary:false p) ->
+      let loc = mkLoc p.startPos p.endPos in
+      Parser.next p;
+      let exp = Ast_helper.Exp.ident ~loc (
+        Location.mkloc (Longident.Lident "_") loc
+      ) in
+      Some (uncurried, Asttypes.Nolabel, exp)
+    | Tilde ->
+      Parser.next p;
+      (* TODO: nesting of pattern matches not intuitive for error recovery *)
+      begin match p.Parser.token with
+      | Lident ident ->
+        let startPos = p.startPos in
+        Parser.next p;
+        let endPos = p.prevEndPos in
+        let loc = mkLoc startPos endPos in
+        let identExpr = Ast_helper.Exp.ident ~loc (
+          Location.mkloc (Longident.Lident ident) loc
+        ) in
+        begin match p.Parser.token with
+        | Question ->
+          Parser.next p;
+          Some (uncurried, Asttypes.Optional ident, identExpr)
+        | Equal ->
+          Parser.next p;
+          let label = match p.Parser.token with
+          | Question ->
+            Parser.next p;
+            Asttypes.Optional ident
+          | _ ->
+            Labelled ident
+          in
+          let expr = match p.Parser.token with
+          | Underscore ->
+            let loc = mkLoc p.startPos p.endPos in
+            Parser.next p;
+            Ast_helper.Exp.ident ~loc (
+              Location.mkloc (Longident.Lident "_") loc
+            )
+          | _ -> parseConstrainedExpr p
+          in
+          Some (uncurried, label, expr)
+        | _ ->
+          Some (uncurried, Labelled ident, identExpr)
+        end
+      | t ->
+        Parser.err p (Diagnostics.lident t);
+        Some (uncurried, Nolabel, Recover.defaultExpr ())
+      end
+    | _ -> Some (uncurried, Nolabel, parseConstrainedExpr p)
 
   and parseCallExpr p funExpr =
     Parser.expect Lparen p;
