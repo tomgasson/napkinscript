@@ -815,8 +815,7 @@ module Token = struct
     | Module
     | Of
     | With
-    | Mod | Land | Lor | Lxor
-    | Lsl | Lsr | Asr
+    | Land | Lor
     | Band (* Bitwise and: & *)
     | BangEqual | BangEqualEqual
     | LessEqual | GreaterEqual
@@ -839,8 +838,8 @@ module Token = struct
     | Land -> 3
     | Equal | EqualEqual | EqualEqualEqual | LessThan | GreaterThan
     | BangEqual | BangEqualEqual | LessEqual | GreaterEqual | BarGreater -> 4
-    | Plus | PlusDot | Minus | MinusDot | Lxor | PlusPlus -> 5
-    | Asterisk | AsteriskDot | Forwardslash | ForwardslashDot  | Lsl | Lsr | Mod -> 6
+    | Plus | PlusDot | Minus | MinusDot | PlusPlus -> 5
+    | Asterisk | AsteriskDot | Forwardslash | ForwardslashDot -> 6
     | Exponentiation -> 7
     | Hash | HashHash | MinusGreater -> 8
     | Dot -> 9
@@ -906,8 +905,7 @@ module Token = struct
     | Module -> "module"
     | Of -> "of"
     | With -> "with"
-    | Mod -> "mod"  | Lor -> "||" | Lxor -> "lxor"
-    | Lsl -> "lsl"| Lsr -> "lsr" | Asr -> "asr"
+    | Lor -> "||"
     | Band -> "&" | Land -> "&&"
     | BangEqual -> "!=" | BangEqualEqual -> "!=="
     | GreaterEqual -> ">=" | LessEqual -> "<="
@@ -953,10 +951,6 @@ module Token = struct
       "include", Include;
       "module", Module;
       "of", Of;
-      "mod", Mod; "land", Land;  "lxor", Lxor;
-      "lsl", Lsl;
-      "lsr", Lsr;
-      "asr", Asr;
       "list", List;
       "with", With;
       "try", Try;
@@ -974,8 +968,8 @@ module Token = struct
     | True | False | Open | Let | Rec | And | As
     | Exception | Assert | Lazy | If | Else | For | In | To
     | Downto | While | Switch | When | External | Typ | Private
-    | Mutable | Constraint | Include | Module | Of | Mod
-    | Land | Lor | Lxor | Lsl | Lsr | Asr | List | With
+    | Mutable | Constraint | Include | Module | Of
+    | Land | Lor | List | With
     | Try | Catch | Import | Export -> true
     | _ -> false
 
@@ -1173,7 +1167,6 @@ module Grammar = struct
     | At -> true
     | t when isExprStart t -> true
     | _ -> false
-
 
   let isPatternStart = function
     | Token.Int _ | String _ | Character _ | True | False
@@ -4424,7 +4417,7 @@ Solution: directly use `concat`."
          * See Scanner.isBinaryOp *)
         | Minus | MinusDot when not (
             Scanner.isBinaryOp p.scanner.src p.startPos.pos_cnum p.endPos.pos_cnum
-          ) -> -1
+          ) && p.startPos.pos_lnum > p.prevEndPos.pos_lnum -> -1
         | token -> Token.precedence token
       in
       if tokenPrec < prec then a

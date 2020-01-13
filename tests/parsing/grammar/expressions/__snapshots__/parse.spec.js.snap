@@ -96,7 +96,9 @@ let x = z |> ((for i = 0 to 10 do () done)[@attr ])
 let x = z |> while condition do () done
 let x = z |> ((while condition do () done)[@attr ])
 let x = (a + (-1)) + (-2)
-let x = (a + (((-1))[@attr ])) + (((-2))[@attr ])"
+let x = (a + (((-1))[@attr ])) + (((-2))[@attr ])
+let x = a - b
+let x = a -. b"
 `;
 
 exports[`binaryNoEs6Arrow.js 1`] = `
