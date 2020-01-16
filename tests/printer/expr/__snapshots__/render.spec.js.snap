@@ -638,6 +638,9 @@ let x =
     rbt.compare(Js.Array2.unsafe_get(old, oldIter.contents), node.value) <
     veryLongIdentifier
 
+// should be formatted on one line, i.e. NOT break
+let fullCircle = 2. *. pi
+
 "
 `;
 
@@ -839,8 +842,7 @@ let rec peekMinNode = node =>
     }
   }
 
-let constructor =
-  @attr Blue
+let constructor = @attr Blue
 
 let x = switch x {
 | Bar =>
@@ -1951,11 +1953,9 @@ config.shouldSkip =
   !filePath.includes(allMlSuffixesCategory) &&
   !filePath.endsWith(allScriptDirectoriesCategory)
 
-let () =
-  @attr user.name = \\"steve\\"
+let () = @attr user.name = \\"steve\\"
 
-let () =
-  @attr user.name = \\"steve\\" |> @attr user.name = \\"steve\\"
+let () = @attr user.name = \\"steve\\" |> @attr user.name = \\"steve\\"
 
 user.name = steve[\\"name\\"]
 user.address = addresses[2]

@@ -295,3 +295,6 @@ while (
 let x =
   oldIter.contents < oldLen &&
   rbt.compare(Js.Array2.unsafe_get(old, oldIter.contents), node.value) < veryLongIdentifier;
+
+// should be formatted on one line, i.e. NOT break
+let fullCircle = 2. *. pi

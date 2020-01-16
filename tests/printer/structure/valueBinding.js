@@ -18,3 +18,7 @@ let make = () => <div />
 
 @react.component let make = () => <div />
 @react.recursiveComponent and otherMake = () => <div />
+
+@react.component let make = () => <div />
+@react.recursiveComponent
+and otherMake = () => <div />

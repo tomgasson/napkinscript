@@ -31,8 +31,7 @@ if (
   console.log(\\"foo bar\\")
 }
 
-let truth =
-  a == b && c == d /* cmt */ && e == f
+let truth = a == b && c == d /* cmt */ && e == f
 
 let truth =
   /* c0 */ a /* c1 */ == /* c2 */ b /* c3 */ &&
@@ -1508,6 +1507,24 @@ exports[`whitespaceCase2.ns 1`] = `
 "let a = 2 // c2
 
 let b = 1
+
+"
+`;
+
+exports[`whitespaceLeadingComment.ns 1`] = `
+"// the comment \\"assert Tuple\\" should contain whitespace before/after
+let () = {
+  let point = Tuple.makePoint(0., 1., 0.)
+  let halfQuarter = rotationX(Js.Math._PI /. 4.)
+  let fullQuarter = rotationX(Js.Math._PI /. 2.)
+  
+  /* assert Tuple.equals(
+    halfQuarter->applyTo(point),
+    Tuple.makePoint(0., Js.Math.sqrt(2.) /. 2., Js.Math.sqrt(2.) /. 2.),
+  ) */
+  
+  assert Tuple.equals(fullQuarter->applyTo(point), Tuple.makePoint(0., 0., 1.))
+}
 
 "
 `;

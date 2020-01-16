@@ -4602,8 +4602,8 @@ Solution: directly use `concat`."
     let first = parseLetBindingBody ~startPos ~attrs p in
 
     let rec loop p bindings =
-      let attrs = parseAttributesAndBinding p in
       let startPos = p.Parser.startPos in
+      let attrs = parseAttributesAndBinding p in
       match p.Parser.token with
       | And ->
         Parser.next p;
@@ -10453,6 +10453,7 @@ module Printer = struct
             if diff > 1 then Doc.hardLine else Doc.nil
           else if diff == 0 then
            Doc.space
+          else if diff > 1 then Doc.concat [Doc.hardLine; Doc.hardLine]
           else
            Doc.hardLine
         in
@@ -11908,7 +11909,7 @@ module Printer = struct
 
   and printValueBinding ~recFlag vb cmtTbl i =
     let (hasGenType, attrs) = ParsetreeViewer.splitGenTypeAttr vb.pvb_attributes in
-    let attrs = printAttributes attrs in
+    let attrs = printAttributes ~loc:vb.pvb_pat.ppat_loc attrs in
     let isGhost = ParsetreeViewer.isGhostUnitBinding i vb in
 		let header = if isGhost then Doc.nil else
 			if i == 0 then
@@ -11950,24 +11951,26 @@ module Printer = struct
           ParsetreeViewer.isArrayAccess e
         )
       in
-			Doc.concat [
-        attrs;
-				header;
-				printPattern vb.pvb_pat cmtTbl;
-				Doc.text " =";
-        if shouldIndent then
-          Doc.indent (
+      Doc.group (
+        Doc.concat [
+          attrs;
+          header;
+          printPattern vb.pvb_pat cmtTbl;
+          Doc.text " =";
+          if shouldIndent then
+            Doc.indent (
+              Doc.concat [
+                Doc.line;
+                printedExpr;
+              ]
+            )
+          else
             Doc.concat [
-              Doc.line;
+              Doc.space;
               printedExpr;
             ]
-          )
-        else
-          Doc.concat [
-            Doc.space;
-            printedExpr;
-          ]
-      ]
+        ]
+      )
 
   and printPackageType ~printModuleKeywordAndParens (packageType: Parsetree.package_type) cmtTbl =
     let doc = match packageType with
@@ -13808,7 +13811,7 @@ module Printer = struct
       | None -> Doc.line
       | Some loc -> begin match List.rev attrs with
         | ({loc = firstLoc}, _)::_ when loc.loc_start.pos_lnum > firstLoc.loc_end.pos_lnum ->
-          Doc.literalLine;
+          Doc.hardLine;
         | _ -> Doc.line
         end
       in
