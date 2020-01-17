@@ -59,8 +59,8 @@ let _ = <div> ...child </div>
 let _ = <Foo> ...(a => 1) </Foo>
 let _ = <Foo> ...<Foo2 /> </Foo>
 let _ = <Foo> ...[a] </Foo>
-let _ = <Foo> .../1, 2/ </Foo>
-let _ = <Foo> .../1, 2/</Foo> // no whitespace between / & </
+let _ = <Foo> ...(1, 2) </Foo>
+let _ = <Foo> ...(1, 2)</Foo> // no whitespace between / & </
 
 // children
 let _ = <div> ident [1, 2, 3] {call(a, b)} x.y.z </div>
@@ -148,7 +148,7 @@ let z =
 
 let omega =
   <div
-    aList=list(
+    aList=list[
       width,
       height,
       color,
@@ -158,7 +158,7 @@ let omega =
       border,
       borderColor,
       someOtherAttribute
-    )
+    ]
     key=string_of_int(1)
   />
 
@@ -167,7 +167,7 @@ let someArray = <div
 
 let tuples =
   <div
-    aTuple=/width,
+    aTuple=(width,
             height,
             color,
             backgroundColor,
@@ -176,7 +176,7 @@ let tuples =
             border,
             borderColor,
             someOtherAttribute,
-            definitelyBreakere/
+            definitelyBreakere)
     key=string_of_int(1)
   />
 
@@ -221,7 +221,7 @@ let x =[<div />]
 
 let z = (<div />)
 
-let z = /<Button onClick=handleStaleClick />, <Button onClick=handleStaleClick />/
+let z = (<Button onClick=handleStaleClick />, <Button onClick=handleStaleClick />)
 
 let y = [<div />, <div />];
 
@@ -298,13 +298,13 @@ let _ = <div
     baz,
     superLongIdent,
     breakLine,
-  ): /
+  ): (
     event,
     event2,
     event3,
     event4,
     event5
-  / => {
+  ) => {
     doStuff()
     bar(foo)
   }}
@@ -317,13 +317,13 @@ let _ = <div
     baz,
     superLongIdent,
     breakLine,
-  ): /
+  ): (
     event,
     event2,
     event3,
     event4,
     event5
-  / =>
+  ) =>
     doStuff()
   }
 />;
@@ -430,11 +430,11 @@ let _ = <button ?id className={Cn.make(["button", "is-fullwidth"])} onClick>
   {"Submit" |> ste}
 </button>
 
-let _ = <button ?id className={Cn.make(list("button", "is-fullwidth"))} onClick>
+let _ = <button ?id className={Cn.make(list["button", "is-fullwidth"])} onClick>
   {"Submit" |> ste}
 </button>
 
-let _ = <button ?id className={Cn.make(/"button", "is-fullwidth"/)} onClick>
+let _ = <button ?id className={Cn.make(("button", "is-fullwidth"))} onClick>
   {"Submit" |> ste}
 </button>
 

@@ -41,7 +41,7 @@ File \\"/napkinscript/tests/parsing/errors/structure/letBinding.js\\", line 14, 
 
 12 │  let t = {
 13 │  	// missing =
-[31m14[0m │  	let /_, _, token/ scanner->scan          
+[31m14[0m │  	let (_, _, token) scanner->scan          
                         [31m^[0m
 15 │    token
 16 │  }

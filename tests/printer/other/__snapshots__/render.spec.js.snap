@@ -9,7 +9,7 @@ exports[`StaticReactTypes.js 1`] = `
 type elem<'t> =
   | Empty: elem<empty>
   | Element(renderable<('s, 'a) => 'sub>): elem<('s, 'a) => 'sub>
-  | TwoElements(elem<'t1>, elem<'t2>): elem</'t1, 't2/>
+  | TwoElements(elem<'t1>, elem<'t2>): elem<('t1, 't2)>
   /*
    * Not an ordered map yet, but should be.
    */
@@ -22,7 +22,7 @@ and subtree<'t> =
   | Instance(inst<('s, 'a) => 'sub>): subtree<('s, 'a) => 'sub>
   /* Having TwoInstances mirror the fact that TwoElements requires sub
    * elements, was probably overkill. */
-  | TwoInstances(subtree<'t1>, subtree<'t2>): subtree</'t1, 't2/>
+  | TwoInstances(subtree<'t1>, subtree<'t2>): subtree<('t1, 't2)>
   | InstanceMap(list<subtree<'t>>): subtree<list<'t>>
 and reducer<'t> = (inst<'t>, 'a) => 's constraint 't = ('s, 'a) => 'sub
 /*
@@ -91,22 +91,22 @@ and subreplacer<'sub> = subtree<'sub> => subtree<'sub> => unit
 exports[`case.js 1`] = `
 "let printExprFunParameters = (~uncurried, parameters) =>
   switch parameters {
-  | list(/[], Asttypes.Nolabel, None, {Parsetree.ppat_desc: Ppat_any}/)
+  | list[([], Asttypes.Nolabel, None, {Parsetree.ppat_desc: Ppat_any})]
     when !uncurried =>
     Doc.text(\\"_\\")
-  | list(/
+  | list[(
       [],
       Asttypes.Nolabel,
       None,
-      {Parsetree.ppat_desc: Ppat_var(stringLoc)}
-    /) when !uncurried =>
+      {Parsetree.ppat_desc: Ppat_var(stringLoc)},
+    )] when !uncurried =>
     Doc.text(stringLoc.txt)
-  | list(/
+  | list[(
       [],
       Nolabel,
       None,
-      {ppat_desc: Ppat_construct({txt: Longident.Lident(\\"()\\")}, None)}
-    /) when !uncurried =>
+      {ppat_desc: Ppat_construct({txt: Longident.Lident(\\"()\\")}, None)},
+    )] when !uncurried =>
     Doc.text(\\"()\\")
   | parameters =>
     let lparen = if uncurried {
@@ -115,19 +115,19 @@ exports[`case.js 1`] = `
       Doc.lparen
     }
     let shouldHug = ParsetreeViewer.parametersShouldHug(parameters)
-    let printedParamaters = Doc.concat(list(
+    let printedParamaters = Doc.concat(list[
       if shouldHug {
         Doc.nil
       } else {
         Doc.softLine
       },
       Doc.join(
-        ~sep=Doc.concat(list(Doc.comma, Doc.line)),
+        ~sep=Doc.concat(list[Doc.comma, Doc.line]),
         List.map(printExpFunParameter, parameters),
       ),
-    ))
+    ])
     Doc.group(
-      Doc.concat(list(
+      Doc.concat(list[
         lparen,
         if shouldHug {
           printedParamaters
@@ -137,10 +137,10 @@ exports[`case.js 1`] = `
         if shouldHug {
           Doc.nil
         } else {
-          Doc.concat(list(Doc.trailingComma, Doc.softLine))
+          Doc.concat(list[Doc.trailingComma, Doc.softLine])
         },
         Doc.rparen,
-      )),
+      ]),
     )
   }
 

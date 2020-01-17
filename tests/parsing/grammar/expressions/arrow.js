@@ -17,15 +17,15 @@ let f = (_, _) => ()
 let f = ([a, b], [c, d]) => a + b  + c + d
 let f = ({a}) => a + 1
 let f = ({a, b}, {c, d}) => a + b + c + d
-let f = (/a/) => a + 1
-let f = (/a, b/) => a + b
-let f = (/a, b/, /c, d/) => a + b + c + d
+let f = ((a,)) => a + 1
+let f = ((a, b)) => a + b
+let f = ((a, b), (c, d)) => a + b + c + d
 let f = (exception Terminate) => ()
 let f = (exception Terminate, exception Exit) => ()
 let f = (lazy x) => ()
 let f = (lazy x, lazy y) => ()
-let f = (list()) => ()
-let f = (list(x, ...xs)) => x + xs->Belt.List.length
+let f = (list[]) => ()
+let f = (list[x, ...xs]) => x + xs->Belt.List.length
 
 // constrained pattern
 let f = (x: int, y: int) => x + y
@@ -49,20 +49,20 @@ let f = (~a as x=1, ~b as y=2, c) => x + y + c
 let f = (~a as x: int=1, ~b as y: int=2, c) => x + y + c
 
 // ~ labelName = ?
-let f = (~a=?, ~b=?, c) => switch /a, b/ {
-| /Some(a), Some(b)/ => a + b + c
+let f = (~a=?, ~b=?, c) => switch (a, b) {
+| (Some(a), Some(b)) => a + b + c
 | _ => 3
 }
 
 // ~ labelName as pattern = ?
-let f = (~a as x=?, ~b as y=?, c) => switch /x, y/ {
-| /Some(a), Some(b)/ => a + b + c
+let f = (~a as x=?, ~b as y=?, c) => switch (x, y) {
+| (Some(a), Some(b)) => a + b + c
 | _ => 3
 }
 
 // ~ labelName as pattern : type = ?
-let f = (~a as x : option<int>=?, ~b as y : option<int>=?, c) => switch /x, y/ {
-| /Some(a), Some(b)/ => a + b + c
+let f = (~a as x : option<int>=?, ~b as y : option<int>=?, c) => switch (x, y) {
+| (Some(a), Some(b)) => a + b + c
 | _ => 3
 }
 

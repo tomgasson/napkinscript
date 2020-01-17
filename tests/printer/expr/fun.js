@@ -133,7 +133,7 @@ let tupleBuilder = (
   thisIsAVeryLongNaaaaaaaaaaaaaaaaaaameeeeeeeeeeeee,
   thisIsAVeryLongNaaaaaaaaaaaaaaaaaaameeeeeeeeeeeee,
   thisIsAVeryLongNaaaaaaaaaaaaaaaaaaameeeeeeeeeeeee,
-) => /1, 2, 3/
+) => (1, 2, 3)
 
 let tupleBuilder = (
   thisIsAVeryLongNaaaaaaaaaaaaaaaaaaameeeeeeeeeeeee,
@@ -141,11 +141,11 @@ let tupleBuilder = (
   thisIsAVeryLongNaaaaaaaaaaaaaaaaaaameeeeeeeeeeeee,
   thisIsAVeryLongNaaaaaaaaaaaaaaaaaaameeeeeeeeeeeee,
   thisIsAVeryLongNaaaaaaaaaaaaaaaaaaameeeeeeeeeeeee,
-) => /
+) => (
   superLongIdentiiiiiiiifffffffiiiiieeeeeeeer,
   superLongIdentiiiiiiiifffffffiiiiieeeeeeeer,
   superLongIdentiiiiiiiifffffffiiiiieeeeeeeer,
-/
+)
 
 let constrBuilder = (
   thisIsAVeryLongNaaaaaaaaaaaaaaaaaaameeeeeeeeeeeee,
@@ -194,12 +194,12 @@ let add = (superLongParameterName1, superLongParameterName2, superLongParameterN
   "field5": int,
   }  => a + b
 
-let add = (/a, b/): /int, string, int, int/  => a + b
-let add = (/a, b/): /intWithSuperLongName, stringWithSuperLongName, intWithSuperLongName, intWithSuperLongName/  => a + b
-let add = (/superLongParameterName, bsuperLongParameterName, superLongParameterName, superLongParameterName/): /intWithSuperLongName, stringWithSuperLongName, intWithSuperLongName, intWithSuperLongName/  => a + b
+let add = ((a, b)): (int, string, int, int)  => a + b
+let add = ((a, b)): (intWithSuperLongName, stringWithSuperLongName, intWithSuperLongName, intWithSuperLongName)  => a + b
+let add = ((superLongParameterName, bsuperLongParameterName, superLongParameterName, superLongParameterName)): (intWithSuperLongName, stringWithSuperLongName, intWithSuperLongName, intWithSuperLongName)  => a + b
 
-let add = (list(a, b)): list<intWithSuperLongName, stringWithSuperLongName, intWithSuperLongName, intWithSuperLongName>  => a + b
-let add = (list(superLongParameterName, bsuperLongParameterName, superLongParameterName, superLongParameterName)): list<intWithSuperLongName, stringWithSuperLongName, intWithSuperLongName, intWithSuperLongName>  => a + b
+let add = (list[a, b]): list<intWithSuperLongName, stringWithSuperLongName, intWithSuperLongName, intWithSuperLongName>  => a + b
+let add = (list[superLongParameterName, bsuperLongParameterName, superLongParameterName, superLongParameterName]): list<intWithSuperLongName, stringWithSuperLongName, intWithSuperLongName, intWithSuperLongName>  => a + b
 
 let add = ([a, b]): array<intWithSuperLongName, stringWithSuperLongName, intWithSuperLongName, intWithSuperLongName>  => a + b
 let add = ([superLongParameterName, bsuperLongParameterName, superLongParameterName, superLongParameterName]): array<intWithSuperLongName, stringWithSuperLongName, intWithSuperLongName, intWithSuperLongName>  => a + b
@@ -214,7 +214,7 @@ let add = (Color(superLongParameterName, superLongParameterName, superLongParame
 let parseExceptionDef = (~attrs, p) => {
   let startPos = p.Parser.startPos
   Parser.expect(Token.Exception, p)
-  let /_, name, kind/ = parseConstrDef(~parseAttrs=false, p)
+  let (_, name, kind) = parseConstrDef(~parseAttrs=false, p)
   let loc = mkLoc(startPos, p.prevEndPos)
   Ast_helper.Te.constructor(~loc, ~attrs, name, kind)
 }

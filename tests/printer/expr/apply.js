@@ -23,11 +23,11 @@ let coordinate = make3dCoordinate({...base, field1: thisIsAPrettyLongNameHere, f
 let coordinate = make2dCoordinateArray([x, y])
 let coordinate = make3dCoordinateArray([thisIsAPrettyLongNameHere, thisIsAPrettyLongNameHere,thisIsAPrettyLongNameHere])
 
-let coordinate = make2dCoordinateTuple(/x, y/)
-let coordinate = make3dCoordinateTuple(/thisIsAPrettyLongNameHere, thisIsAPrettyLongNameHere,thisIsAPrettyLongNameHere/)
+let coordinate = make2dCoordinateTuple((x, y))
+let coordinate = make3dCoordinateTuple((thisIsAPrettyLongNameHere, thisIsAPrettyLongNameHere,thisIsAPrettyLongNameHere))
 
-let coordinate = make2dCoordinateList(list(x, y))
-let coordinate = make3dCoordinateList(list(thisIsAPrettyLongNameHere, thisIsAPrettyLongNameHere,thisIsAPrettyLongNameHere, ...allCoords))
+let coordinate = make2dCoordinateList(list[x, y])
+let coordinate = make3dCoordinateList(list[thisIsAPrettyLongNameHere, thisIsAPrettyLongNameHere,thisIsAPrettyLongNameHere, ...allCoords])
 
 let coordinate = makeJsCoordinate({"x": 1, "y": 1})
 let user = makeJsUser({

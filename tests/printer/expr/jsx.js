@@ -133,11 +133,11 @@ let x =
     tryExpression={try sideEffect() catch {
       | Error => ()
     }}
-    tuple=/a, b, c/
+    tuple=(a, b, c)
     constr=Rgb(red, blue, green)
-    list1=list()
-    list2=list(a, b)
-    list3=list(a, b, ...x)
+    list1=list[]
+    list2=list[a, b]
+    list3=list[a, b, ...x]
     array=[a, b, c]
     record={x: 1, y: 2}
     field=foo.bar
@@ -204,11 +204,11 @@ let x =
     {try sideEffect() catch {
       | Error => ()
     }}
-    {/a, b, c/}
+    {(a, b, c)}
     Rgb(red, blue, green)
-    list()
-    list(a, b)
-    list(a, b, ...x)
+    list[]
+    list[a, b]
+    list[a, b, ...x]
     [a, b, c]
     {x: 1, y: 2}
     foo.bar

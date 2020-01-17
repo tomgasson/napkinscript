@@ -15,4 +15,4 @@ let f: type t. foo<t> = (sideEffect) => {
   x => M.E(x)
 }
 
-let f: type t x u. list</t, x, y/> = (l) => f(l)
+let f: type t x u. list<(t, x, y)> = (l) => f(l)

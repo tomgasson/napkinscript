@@ -11,7 +11,7 @@ let x = {
 
 let t = {
 	// missing =
-	let /_, _, token/ scanner->scan
+	let (_, _, token) scanner->scan
   token
 }
 

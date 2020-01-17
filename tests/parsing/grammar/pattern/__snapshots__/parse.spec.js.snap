@@ -521,8 +521,8 @@ let (((1 : int), (2 : int)) : (int * int)) as tup = ()
   | (((1 as p1) : int), ((2 as p2) : int)) as tup -> ()
   | (((1 : int), (2 : int)) : (int * int)) -> ()
   | (((1 : int), (2 : int)) : (int * int)) as tup -> ()
-let f (x) = ()
-let f (x) = ()
+let f x = ()
+let f x = ()
 let f (x, y) = x + y
 let f (((x as p1), (y as p2)) as tup) = x + y
 let f ((x, y) : (int * int)) = ()

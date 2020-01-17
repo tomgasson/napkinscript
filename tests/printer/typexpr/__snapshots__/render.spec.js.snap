@@ -85,19 +85,19 @@ external c_binding: (
     ~subArrow: 'a1,
     ~subArrowParameter: 'a2,
     ~subArrowParameter3: loooooooongTypExpr,
-  ) => /foo, bar, baz/,
+  ) => (foo, bar, baz),
   ~subArrow2: (
     ~subArrow: 'a1,
     ~subArrowParameter: 'a2,
     ~subArrowParameter3: loooooooongTypExpr,
-  ) => /
+  ) => (
     foo,
     bar,
     baz,
     veryLooooooooooooooooongTupleTypeHere,
     veryLooooooooooooooooongTupleTypeHere,
-    shoulBreakThatLine
-  /,
+    shoulBreakThatLine,
+  ),
   ~jsObject: {
     \\"name\\": string,
     \\"otherLongName\\": evenLongerType,
@@ -120,7 +120,7 @@ type t = (
 type t = (
   ~firstName: string,
   ~lastName: string,
-) => /
+) => (
   name,
   string,
   age,
@@ -132,8 +132,8 @@ type t = (
   moreProps3,
   superLongIdentifierHere3,
   moreProps4,
-  superLongIdentifierHere4
-/
+  superLongIdentifierHere4,
+)
 
 type t = (
   ~firstName: string,
@@ -386,51 +386,51 @@ type reducer<'state> = {
 `;
 
 exports[`tuple.js 1`] = `
-"type t = /string, int, float/
+"type t = (string, int, float)
 
-type t = /
+type t = (
   superLongTypeNameThatWillBreak,
   superLongTypeNameThatWillBreak,
   superLongTypeNameThatWillBreak,
   superLongTypeNameThatWillBreak,
   superLongTypeNameThatWillBreak,
-  superLongTypeNameThatWillBreak
-/
+  superLongTypeNameThatWillBreak,
+)
 
-type t = constr</string, int, float/>
+type t = constr<(string, int, float)>
 
-type t = constr</
+type t = constr<(
   superLongTypeNameThatWillBreak,
   superLongTypeNameThatWillBreak,
   superLongTypeNameThatWillBreak,
   superLongTypeNameThatWillBreak,
   superLongTypeNameThatWillBreak,
-  superLongTypeNameThatWillBreak
-/>
+  superLongTypeNameThatWillBreak,
+)>
 
-external foo: /string, int, float/ = \\"external_binding\\"
+external foo: (string, int, float) = \\"external_binding\\"
 
-external foo: /
+external foo: (
   superLongTypeNameThatWillBreak,
   superLongTypeNameThatWillBreak,
   superLongTypeNameThatWillBreak,
   superLongTypeNameThatWillBreak,
   superLongTypeNameThatWillBreak,
-  superLongTypeNameThatWillBreak
-/ = \\"external_binding\\"
+  superLongTypeNameThatWillBreak,
+) = \\"external_binding\\"
 
-let x: /int, int/ = /1, 2/
+let x: (int, int) = (1, 2)
 
-let x: /
+let x: (
   superLongTypeNameThatWillBreak,
   superLongTypeNameThatWillBreak,
   superLongTypeNameThatWillBreak,
   superLongTypeNameThatWillBreak,
   superLongTypeNameThatWillBreak,
-  superLongTypeNameThatWillBreak
-/ = /1, 2/
+  superLongTypeNameThatWillBreak,
+) = (1, 2)
 
-type t = @attr /@attr string, @attr int, @attr float/
+type t = @attr (@attr string, @attr int, @attr float)
 
 "
 `;
@@ -488,20 +488,8 @@ let t: list<
   {\\"name\\": string, \\"age\\": int},
 > = x
 
-type t = Option.t</tupleTyp1, tupleTyp2, tupleTyp3/>
-type t = Option.t</
-  tupleTyp1,
-  tupleTyp2,
-  tupleTyp3,
-  tupleTyp3,
-  tupleTyp3,
-  tupleTyp3,
-  tupleTyp3,
-  tupleTyp3,
-  tupleTyp3,
-  tupleTyp3
-/>
-let t: Option.t</
+type t = Option.t<(tupleTyp1, tupleTyp2, tupleTyp3)>
+type t = Option.t<(
   tupleTyp1,
   tupleTyp2,
   tupleTyp3,
@@ -512,9 +500,21 @@ let t: Option.t</
   tupleTyp3,
   tupleTyp3,
   tupleTyp3,
+)>
+let t: Option.t<(
+  tupleTyp1,
+  tupleTyp2,
   tupleTyp3,
-  tupleTyp3
-/> = x
+  tupleTyp3,
+  tupleTyp3,
+  tupleTyp3,
+  tupleTyp3,
+  tupleTyp3,
+  tupleTyp3,
+  tupleTyp3,
+  tupleTyp3,
+  tupleTyp3,
+)> = x
 
 type t = @attrs Option.t<string>
 

@@ -1,12 +1,12 @@
-array->Js.Array2.forEach((/value, height/) =>
+array->Js.Array2.forEach(((value, height)) =>
   add(rbt, value, ~height)->ignore
 )
-someArray->Js.Array2.forEach((/value, height/) =>  add(rbt, value, ~height)->ignore)
-someArraaaaaaayWithAVeryLooooooooooooooooooooooooooooooooooooooongName->Js.Array2.forEach((/value, height/) =>  add(rbt, value, ~height)->ignore)
+someArray->Js.Array2.forEach(((value, height)) =>  add(rbt, value, ~height)->ignore)
+someArraaaaaaayWithAVeryLooooooooooooooooooooooooooooooooooooooongName->Js.Array2.forEach(((value, height)) =>  add(rbt, value, ~height)->ignore)
 
 let make = (arr, ~compare) => {
   let rbt = make(~compare)
-  array->Js.Array2.forEach((/value, height/) => add(rbt,value, ~height)->ignore)
+  array->Js.Array2.forEach(((value, height)) => add(rbt,value, ~height)->ignore)
   rbt
 }
 
@@ -31,7 +31,7 @@ Fooooooooooooooooooo.baaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa(
 
 let make = (arr, ~compare) => {
   let rbt = make(~compare)
-  array->Js.Array2.forEach((/value, height/) => add(rbt, value, ~height)->ignore
+  array->Js.Array2.forEach(((value, height)) => add(rbt, value, ~height)->ignore
   )
   rbt
 }

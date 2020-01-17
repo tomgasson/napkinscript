@@ -38,7 +38,7 @@ let x = try z catch { | Exit => 1 } |> try y catch { | Blue => 2 }
 let x = if true { 1 } else { 2 } + if false { 2 } else { 3 }
 let x = for i in 0 to 10 { () } |> for i in 0 to 10 { () }
 
-let x = (/a, b/) + /b, c/
+let x = (a, b) + (b, c)
 let x = Vec3(a, b, c) + Vec4(a, b, c, d)
 let x = {x: 1, y: 2} + {x: 2, y :3}
 let x = user.firstName ++ user.lastName
@@ -204,8 +204,8 @@ let x = a && try unsafe() catch {
   | Error => ()
 }
 
-let x = a && /a, b/
-let x = a && /a, b/ && /c, d/
+let x = a && (a, b)
+let x = a && (a, b) && (c, d)
 
 let x = a && Foo(x, y)
 let x = a && Foo(x, y) && Foo(x, y, z)

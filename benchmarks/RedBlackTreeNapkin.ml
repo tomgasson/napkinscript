@@ -319,8 +319,8 @@ let add = (rbt, value, ~height) => {
 // They all come down to removing a node with maximum one child.
 let removeNode = (rbt, node) => {
   let nodeToRemove =
-    switch /node.left, node.right/ {
-    | /Some(_), Some(_)/ =>
+    switch (node.left, node.right) {
+    | (Some(_), Some(_)) =>
       let successor = peekMinNode(node.right)->castNotOption
       node.value = successor.value
       node.height = successor.height
@@ -332,13 +332,13 @@ let removeNode = (rbt, node) => {
   | None => nodeToRemove.right
   | left => left
   }
-  let (/successor, isLeaf/) = switch successor {
+  let (successor, isLeaf) = switch successor {
     | None =>
       let leaf = createNode(~value=%bs.raw("0"), ~color=Black, ~height=0.)
       let isLeaf = (. x) => x === leaf;
-      /leaf, isLeaf/
+      (leaf, isLeaf)
     | Some(successor) =>
-      /successor, (. _) => false/
+      (successor, (. _) => false)
   }
   let nodeParent = nodeToRemove.parent
   successor.parent = nodeParent
@@ -515,7 +515,7 @@ let make = (~compare) => {size: 0, root: None, compare}
 
 let makeWith = (array, ~compare) => {
   let rbt = make(~compare)
-  array->Js.Array2.forEach((/value, height/) => add(rbt,value, ~height)->ignore)
+  array->Js.Array2.forEach(((value, height)) => add(rbt,value, ~height)->ignore)
   rbt
 }
 
@@ -682,7 +682,7 @@ type oldNewVisible<'value> = {
 let getAnchorDelta = (rbt, ~anchor) => {
   switch anchor {
     | None => 0.0
-    | Some(/value, y/) =>
+    | Some((value, y)) =>
       switch rbt->findNode(rbt.root, value) {
         | Some(node) => y -. node->getY
         | None => 0.0

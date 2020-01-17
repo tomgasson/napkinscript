@@ -12,7 +12,7 @@ type t = Color.t<int as 'r, int as 'g, int as 'b> as 'rgb
 type t = %t as 'extension
 type t = %t.typ as 'extension
 type t = %ext.foo("raw") as 'extension
-type tup = /int as 'x, int as 'y/ as 'tupleAlias
+type tup = (int as 'x, int as 'y) as 'tupleAlias
 
 let t: string as 's = ()
 let t: _ as 'underscore = ()
@@ -28,4 +28,4 @@ let t: Color.t<int as 'r, int as 'g, int as 'b> as 'rgb = ()
 let t: %t as 'extension = ()
 let t: %t.typ as 'extension = ()
 let t: %ext.foo("raw") as 'extension = ()
-let t: /int as 'x, int as 'y/ as 'tupleAlias = ()
+let t: (int as 'x, int as 'y) as 'tupleAlias = ()

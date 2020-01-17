@@ -96,23 +96,23 @@ let lazy (x as y) = 1
 `;
 
 exports[`list.ns 1`] = `
-"let list() = 1
-let list(1) = 1
-let list(1, 2) = 1
-let list(1, 2, 3) = 1
-let list(1, 2, ...tail) = 1
+"let list[] = 1
+let list[1] = 1
+let list[1, 2] = 1
+let list[1, 2, 3] = 1
+let list[1, 2, ...tail] = 1
 
-let list(
+let list[
   aaaaaaaaaaaaaaaaaaaaaaaaaa,
   bbbbbbbbbbbbbbbbbbbbbbbbbb,
   cccccccccccccccccccccccccc,
-) = 1
-let list(
+] = 1
+let list[
   aaaaaaaaaaaaaaaaaaaaaaaaaa,
   bbbbbbbbbbbbbbbbbbbbbbbbbb,
   cccccccccccccccccccccccccc,
   ...tail,
-) = 1
+] = 1
 
 "
 `;
@@ -151,13 +151,13 @@ let {
 `;
 
 exports[`tuple.ns 1`] = `
-"let /a/ = 1
-let /a, b/ = 1
-let /
+"let (a) = 1
+let (a, b) = 1
+let (
   aaaaaaaaaaaaaaaaaaaaaaaaaa,
   bbbbbbbbbbbbbbbbbbbbbbbbbb,
-  cccccccccccccccccccccccccc
-/ = 1
+  cccccccccccccccccccccccccc,
+) = 1
 
 "
 `;

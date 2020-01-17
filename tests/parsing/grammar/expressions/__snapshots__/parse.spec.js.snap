@@ -379,8 +379,6 @@ exports[`for.js 1`] = `
 ;;for p = 0 to x + 1 do () done"
 `;
 
-exports[`forV2.js 1`] = `";;let i = ref 0 in while i < 10 do Js.log i; i := ((!i) + 1) done"`;
-
 exports[`ident.js 1`] = `
 "let x = foo
 let y = Foo.Bar.x
@@ -1053,7 +1051,7 @@ exports[`underscoreApply.js 1`] = `
 "let l =
   ([1; 2; 3] |. (fun __x -> List.map (fun i -> i + 1) __x)) |.
     (fun __x -> List.filter (fun i -> i > 0) __x)
-let l = (fun i -> i + 1) |. (fun __x -> List.map __x [|1;2;3|])
+let l = (fun i -> i + 1) |. (fun __x -> List.map __x [1; 2; 3])
 let x __x = List.length __x
 let nested x __x = List.length __x
 let incr ~v  = v + 1

@@ -1,45 +1,45 @@
-type t = /string, int, float/
+type t = (string, int, float)
 
-type t = /
+type t = (
   superLongTypeNameThatWillBreak,
   superLongTypeNameThatWillBreak,
   superLongTypeNameThatWillBreak,
   superLongTypeNameThatWillBreak,
   superLongTypeNameThatWillBreak,
   superLongTypeNameThatWillBreak
-/
+)
 
-type t = constr</string, int, float/>
+type t = constr<(string, int, float)>
 
-type t = constr</
+type t = constr<(
   superLongTypeNameThatWillBreak,
   superLongTypeNameThatWillBreak,
   superLongTypeNameThatWillBreak,
   superLongTypeNameThatWillBreak,
   superLongTypeNameThatWillBreak,
   superLongTypeNameThatWillBreak
-/>
+)>
 
-external foo: /string, int, float/ = "external_binding"
+external foo: (string, int, float) = "external_binding"
 
-external foo: /
+external foo: (
   superLongTypeNameThatWillBreak,
   superLongTypeNameThatWillBreak,
   superLongTypeNameThatWillBreak,
   superLongTypeNameThatWillBreak,
   superLongTypeNameThatWillBreak,
   superLongTypeNameThatWillBreak
-/ = "external_binding"
+) = "external_binding"
 
-let x: /int, int/ = /1, 2/
+let x: (int, int) = (1, 2)
 
-let x: /
+let x: (
   superLongTypeNameThatWillBreak,
   superLongTypeNameThatWillBreak,
   superLongTypeNameThatWillBreak,
   superLongTypeNameThatWillBreak,
   superLongTypeNameThatWillBreak,
   superLongTypeNameThatWillBreak
-/ = /1, 2/
+) = (1, 2)
 
-type t = @attr / @attr string, @attr int, @attr float/
+type t = @attr (@attr string, @attr int, @attr float)

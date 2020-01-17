@@ -791,7 +791,7 @@ module Token = struct
     | Eof
     | Exception
     | Backslash
-    | Forwardslash | ForwardslashDot | TupleEnding
+    | Forwardslash | ForwardslashDot
     | Asterisk | AsteriskDot | Exponentiation
     | Minus | MinusDot
     | Plus | PlusDot | PlusPlus | PlusEqual
@@ -875,7 +875,6 @@ module Token = struct
     | Plus -> "+" | PlusDot -> "+." | PlusPlus -> "++" | PlusEqual -> "+="
     | Backslash -> "\\"
     | Forwardslash -> "/" | ForwardslashDot -> "/."
-    | TupleEnding -> "/ (tuple ending)"
     | Exception -> "exception"
     | Hash -> "#" | HashHash -> "##" | HashEqual -> "#="
     | GreaterThan -> ">"
@@ -1110,7 +1109,7 @@ module Grammar = struct
 
   let isAtomicPatternStart = function
     | Token.Int _ | String _ | Character _
-    | Lparen | Lbracket | Lbrace | Forwardslash
+    | Lparen | Lbracket | Lbrace
     | Underscore
     | Lident _ | Uident _ | List
     | Exception | Lazy
@@ -1126,7 +1125,6 @@ module Grammar = struct
     | List
     | Lbracket
     | Lbrace
-    | Forwardslash
     | LessThan
     | Module
     | Percent -> true
@@ -1134,7 +1132,7 @@ module Grammar = struct
 
   let isAtomicTypExprStart = function
     | Token.SingleQuote | Underscore
-    | Forwardslash | Lparen | Lbrace
+    | Lparen | Lbrace
     | Uident _ | Lident _ | List
     | Percent -> true
     | _ -> false
@@ -1143,7 +1141,7 @@ module Grammar = struct
     | Token.True | False
     | Int _ | String _ | Float _ | Character _ | Backtick
     | Uident _ | Lident _
-    | Lparen | List | Module | Lbracket | Lbrace | Forwardslash
+    | Lparen | List | Module | Lbracket | Lbrace
     | LessThan
     | Minus | MinusDot | Plus | PlusDot | Bang | Band
     | Percent | At
@@ -1170,7 +1168,7 @@ module Grammar = struct
 
   let isPatternStart = function
     | Token.Int _ | String _ | Character _ | True | False
-    | Lparen | Lbracket | Lbrace | Forwardslash | List
+    | Lparen | Lbracket | Lbrace | List
     | Underscore
     | Lident _ | Uident _
     | Exception | Lazy | Percent | Module
@@ -1205,7 +1203,6 @@ module Grammar = struct
     | Token.At
     | SingleQuote
     | Underscore
-    | Forwardslash
     | Lparen
     | Uident _ | Lident _ | List
     | Module
@@ -2320,9 +2317,6 @@ module Scanner = struct
           next scanner;
           Token.ForwardslashDot
         ) else (
-          if inTupleMode scanner then
-            scanForwardSlashOrTupleEnding scanner
-          else
           Token.Forwardslash
         )
       else if ch == CharacterCodes.minus then
@@ -2429,25 +2423,6 @@ module Scanner = struct
     end in
     let endPos = position scanner in
     (startPos, endPos, token)
-
-  and scanForwardSlashOrTupleEnding scanner =
-    let cb scanner =
-      let (_, _, token) = scan scanner in
-      match token with
-      | Lident _ ->
-        next scanner;
-        if scanner.ch != CharacterCodes.equal then
-          Token.TupleEnding
-        else
-          Token.Forwardslash
-      | GreaterThan
-      | Int _ | Uident _ | Lparen | Minus | Plus
-      | Lazy | If | For | While | Switch | At -> Token.Forwardslash
-      | _ -> TupleEnding
-    in
-    let result = lookahead scanner cb in
-    if result = TupleEnding then popMode scanner Tuple;
-    result
 
   (* Imagine: <div> <Navbar /> <
    * is `<` the start of a jsx-child? <div …
@@ -2860,7 +2835,7 @@ module NapkinScript = struct
 
   module ErrorMessages = struct
     let listPatternSpread = "List pattern matches only supports one `...` spread, at the end.
-Explanation: a list spread at the tail is efficient, but a spread in the middle would create new list(s); out of performance concern, our pattern matching currently guarantees to never create new intermediate data."
+Explanation: a list spread at the tail is efficient, but a spread in the middle would create new list[s]; out of performance concern, our pattern matching currently guarantees to never create new intermediate data."
 
     let recordPatternSpread = "Record's `...` spread is not supported in pattern matches.
 Explanation: you can't collect a subset of a record's field into its own record, since a record needs an explicit declaration and that subset wouldn't have one.
@@ -2878,7 +2853,7 @@ Solution: if it's to validate the first few elements, use a `when` clause + Arra
 Explanation: since records have a known, fixed shape, a spread like `{a, ...b}` wouldn't make sense, as `b` would override every field of `a` anyway."
 
     let listExprSpread =  "Lists can only have one `...` spread, and at the end.
-Explanation: lists are singly-linked list, where a node contains a value and points to the next node. `list(a, ...bc)` efficiently creates a new item and links `bc` as its next nodes. `[...bc, a]` would be expensive, as it'd need to traverse `bc` and prepend each item to `a` one by one. We therefore disallow such syntax sugar.
+Explanation: lists are singly-linked list, where a node contains a value and points to the next node. `list[a, ...bc]` efficiently creates a new item and links `bc` as its next nodes. `[...bc, a]` would be expensive, as it'd need to traverse `bc` and prepend each item to `a` one by one. We therefore disallow such syntax sugar.
 Solution: directly use `concat`."
   end
 
@@ -3548,16 +3523,20 @@ Solution: directly use `concat`."
         Ast_helper.Pat.construct ~loc lid None
       | _ ->
         let pat = parseConstrainedPattern p in
-        Parser.expect Token.Rparen p;
-        let loc = mkLoc startPos p.prevEndPos in
-        {pat with ppat_loc = loc}
+        begin match p.token with
+        | Comma ->
+          Parser.next p;
+          parseTuplePattern ~attrs ~first:pat ~startPos p
+        | _ ->
+          Parser.expect Rparen p;
+          let loc = mkLoc startPos p.prevEndPos in
+          {pat with ppat_loc = loc}
+        end
       end
     | Lbracket ->
       parseArrayPattern ~attrs p
     | Lbrace ->
       parseRecordPattern ~attrs p
-    | Forwardslash ->
-      parseTuplePattern ~attrs p
     | Underscore ->
       let endPos = p.endPos in
       let loc = mkLoc startPos endPos in
@@ -3752,18 +3731,16 @@ Solution: directly use `concat`."
     let loc = mkLoc startPos p.prevEndPos in
     Ast_helper.Pat.record ~loc ~attrs fields closedFlag
 
-  and parseTuplePattern ~attrs p =
-    let startPos = p.startPos in
-    Parser.expect Forwardslash p;
+  and parseTuplePattern ~attrs ~first ~startPos p =
     let patterns =
       parseCommaDelimitedRegion p
         ~grammar:Grammar.PatternList
-        ~closing:Forwardslash
+        ~closing:Rparen
         ~f:parseConstrainedPatternRegion
     in
-    Parser.expect Forwardslash p;
+    Parser.expect Rparen p;
     let loc = mkLoc startPos p.prevEndPos in
-    Ast_helper.Pat.tuple ~loc ~attrs patterns
+    Ast_helper.Pat.tuple ~loc ~attrs (first::patterns)
 
   and parsePatternRegion p =
     match p.Parser.token with
@@ -3809,14 +3786,14 @@ Solution: directly use `concat`."
   and parseListPattern ~attrs p =
     let startPos = p.Parser.startPos in
     Parser.expect List p;
-    Parser.expect Lparen p;
+    Parser.expect Lbracket p;
     let listPatterns =
       parseCommaDelimitedReversedList p
         ~grammar:Grammar.PatternOcamlList
-        ~closing:Rparen
+        ~closing:Rbracket
         ~f:parsePatternRegion
     in
-    Parser.expect Rparen p;
+    Parser.expect Rbracket p;
     let loc = mkLoc startPos p.prevEndPos in
     let filterSpread (hasSpread, pattern) =
       if hasSpread then (
@@ -4156,8 +4133,14 @@ Solution: directly use `concat`."
             ~loc (Location.mkloc (Longident.Lident "()") loc) None
         | t ->
           let expr = parseConstrainedExpr p in
-          Parser.expect Rparen p;
-          {expr with pexp_loc = mkLoc startPos p.startPos}
+          begin match p.token with
+          | Comma ->
+            Parser.next p;
+            parseTupleExpr ~startPos ~first:expr p
+          | _ ->
+            Parser.expect Rparen p;
+            {expr with pexp_loc = mkLoc startPos p.startPos}
+          end
         end
       | List ->
         parseListExpr p
@@ -4168,8 +4151,6 @@ Solution: directly use `concat`."
         parseArrayExp p
       | Lbrace ->
         parseBracedOrRecordExpr p
-      | Forwardslash ->
-        parseTupleExpr p
       | LessThan ->
         parseJsx p
       | Percent ->
@@ -4392,16 +4373,7 @@ Solution: directly use `concat`."
     let rec loop a =
       let token = p.Parser.token in
       let tokenPrec =
-        (* Disambiguate division VS start of a tuple:
-         *  foo() / 1
-         *  VS
-         *  foo()
-         *  /1, 2/
-         * The newline indicates the difference between the two.
-         * Branching here has a performance impact.
-         * TODO: totally different tuple syntax *)
         match token with
-        | Token.Forwardslash when p.startPos.pos_lnum > p.prevEndPos.pos_lnum -> -1
         (* Can the minus be interpreted as a binary operator? Or is it a unary?
          * let w = {
          *   x
@@ -5211,8 +5183,8 @@ Solution: directly use `concat`."
     Parser.expect For p;
 		match p.token with
 		| Lparen ->
+			let lparen = p.startPos in
 			Parser.next p;
-			let lparen = p.prevEndPos in
 			begin match p.token with
 			| Rparen ->
 				Parser.next p;
@@ -5222,22 +5194,19 @@ Solution: directly use `concat`."
 					Ast_helper.Pat.construct lid None
 				in
         parseForRest false (parseAliasPattern ~attrs:[] unitPattern p) startPos p
-      | Let ->
-        let (recFlag, letBindings) = parseLetBindings ~attrs:[] p in
-        Parser.expect Semicolon p;
-        let condition = parseExpr p in
-        Parser.expect Semicolon p;
-        let after = parseExpr p in
-        Parser.expect Rparen p;
-        Parser.expect Lbrace p;
-        let block = parseExprBlock p in
-        Parser.expect Rbrace p;
-        let while_ = Ast_helper.Exp.while_ condition (
-          Ast_helper.Exp.sequence block after
-        ) in
-        Ast_helper.Exp.let_ recFlag letBindings while_
 			| _ ->
-        parseForRest true (parsePattern p) startPos p
+        let pat = parsePattern p in
+        begin match p.token with
+        | Comma ->
+          Parser.next p;
+          let tuplePattern =
+            parseTuplePattern ~attrs:[] ~startPos:lparen ~first:pat p
+          in
+          let pattern = parseAliasPattern ~attrs:[] tuplePattern p in
+          parseForRest false pattern startPos p
+        | _ ->
+          parseForRest true pat startPos p
+        end
 			end
 		| _ ->
       parseForRest false (parsePattern p) startPos p
@@ -5514,16 +5483,13 @@ Solution: directly use `concat`."
         ~loc (Location.mkloc (Longident.Lident "()") loc) None]
     | args -> args
 
-  and parseTupleExpr p =
-    let startPos = p.Parser.startPos in
-    Parser.expect Forwardslash p;
-    Scanner.setTupleMode p.scanner;
+  and parseTupleExpr ~first ~startPos p =
     let exprs =
       parseCommaDelimitedRegion
-        p ~grammar:Grammar.ExprList ~closing:TupleEnding ~f:parseConstrainedExprRegion
+        p ~grammar:Grammar.ExprList ~closing:Rparen ~f:parseConstrainedExprRegion
     in
-    Parser.expect TupleEnding p;
-    Ast_helper.Exp.tuple ~loc:(mkLoc startPos p.prevEndPos) exprs
+    Parser.expect Rparen p;
+    Ast_helper.Exp.tuple ~loc:(mkLoc startPos p.prevEndPos) (first::exprs)
 
   and parseSpreadExprRegion p =
     match p.Parser.token with
@@ -5538,12 +5504,12 @@ Solution: directly use `concat`."
   and parseListExpr p =
     let startPos = p.Parser.startPos in
     Parser.expect List p;
-    Parser.expect Lparen p;
+    Parser.expect Lbracket p;
     let listExprs =
       parseCommaDelimitedReversedList
-      p ~grammar:Grammar.ListExpr ~closing:Rparen ~f:parseSpreadExprRegion
+      p ~grammar:Grammar.ListExpr ~closing:Rbracket ~f:parseSpreadExprRegion
     in
-    Parser.expect Rparen p;
+    Parser.expect Rbracket p;
     let loc = mkLoc startPos p.prevEndPos in
     match listExprs with
     | (true, expr)::exprs ->
@@ -5666,8 +5632,6 @@ Solution: directly use `concat`."
       let endPos = p.endPos in
       Parser.next p;
       Ast_helper.Typ.any ~loc:(mkLoc startPos endPos) ~attrs ()
-    | Forwardslash ->
-      parseTupleType ~attrs p
     | Lparen ->
       Parser.next p;
       begin match p.Parser.token with
@@ -5678,10 +5642,16 @@ Solution: directly use `concat`."
         Ast_helper.Typ.constr ~attrs unitConstr []
       | _ ->
         let t = parseTypExpr p in
-        Parser.expect Rparen p;
-        {t with
-          ptyp_loc = mkLoc startPos p.prevEndPos;
-          ptyp_attributes = List.concat[attrs; t.ptyp_attributes]}
+        begin match p.token with
+        | Comma ->
+          Parser.next p;
+          parseTupleType ~attrs ~first:t ~startPos p
+        | _ ->
+          Parser.expect Rparen p;
+          {t with
+            ptyp_loc = mkLoc startPos p.prevEndPos;
+            ptyp_attributes = List.concat [attrs; t.ptyp_attributes]}
+        end
       end
     | Uident _ | Lident _ | List ->
       let constr = parseValuePath p in
@@ -5943,14 +5913,17 @@ Solution: directly use `concat`."
     else
       None
 
-  and parseTupleType ~attrs p =
-    let startPos = p.Parser.startPos in
-    Parser.expect Forwardslash p;
-    let types =
-      parseCommaDelimitedRegion ~grammar:Grammar.TypExprList ~closing:Forwardslash ~f:parseTypExprRegion p
+  and parseTupleType ~attrs ~first ~startPos p =
+    let typexprs =
+      parseCommaDelimitedRegion
+        ~grammar:Grammar.TypExprList
+        ~closing:Rparen
+        ~f:parseTypExprRegion
+        p
     in
-    Parser.expect Forwardslash p;
-    Ast_helper.Typ.tuple ~attrs ~loc:(mkLoc startPos p.prevEndPos) types
+    Parser.expect Rparen p;
+    let tupleLoc = mkLoc startPos p.prevEndPos in
+    Ast_helper.Typ.tuple ~attrs ~loc:tupleLoc (first::typexprs)
 
   (* be more robust: option(<node<int>>) option<<node<int>> *)
   and parseTypeConstructorArg p =
@@ -8308,7 +8281,7 @@ end = struct
         {pexp_desc = Pexp_pack _},
         {ptyp_desc = Ptyp_package _}
       )} -> false
-    | {pexp_desc = Pexp_constraint _ | Pexp_tuple _ | Pexp_fun _ | Pexp_function _ | Pexp_newtype _} -> true
+    | {pexp_desc = Pexp_constraint _ | Pexp_fun _ | Pexp_function _ | Pexp_newtype _} -> true
     | expr when ParsetreeViewer.isBinaryExpression expr -> true
     | expr when ParsetreeViewer.isTernaryExpr expr -> true
     | {pexp_desc =
@@ -8342,7 +8315,6 @@ end = struct
       ) -> false
     | Pexp_fun _
     | Pexp_newtype _
-    | Pexp_tuple _
     | Pexp_setfield _
     | Pexp_constraint _ -> true
     | _ when ParsetreeViewer.isTernaryExpr rhs -> true
@@ -11842,7 +11814,7 @@ module Printer = struct
 
   and printTupleType ~inline (types: Parsetree.core_type list) cmtTbl =
     let tuple = Doc.concat([
-      Doc.text "/";
+      Doc.lparen;
       Doc.indent (
         Doc.concat([
           Doc.softLine;
@@ -11851,9 +11823,9 @@ module Printer = struct
           )
         ])
       );
-      (* Doc.trailingComma; *) (* Trailing comma not supported in tuples right now… *)
+      Doc.trailingComma;
       Doc.softLine;
-      Doc.text "/";
+      Doc.rparen;
     ])
     in
     if inline == false then Doc.group(tuple) else tuple
@@ -12055,7 +12027,7 @@ module Printer = struct
     | Ppat_tuple patterns ->
       Doc.group(
         Doc.concat([
-          Doc.text "/";
+          Doc.lparen;
           Doc.indent (
             Doc.concat([
               Doc.softLine;
@@ -12064,9 +12036,9 @@ module Printer = struct
                   printPattern pat cmtTbl) patterns)
             ])
           );
-          (* Doc.ifBreaks (Doc.text ",") Doc.nil; *)
+          Doc.ifBreaks (Doc.text ",") Doc.nil;
           Doc.softLine;
-          Doc.text "/";
+          Doc.rparen
         ])
       )
     | Ppat_array [] ->
@@ -12094,9 +12066,9 @@ module Printer = struct
       )
     | Ppat_construct({txt = Longident.Lident "[]"}, _) ->
       Doc.concat [
-        Doc.text "list(";
+        Doc.text "list[";
         printCommentsInside cmtTbl p.ppat_loc;
-        Doc.rparen;
+        Doc.rbracket;
       ]
     | Ppat_construct({txt = Longident.Lident "::"}, _) ->
       let (patterns, tail) = ParsetreeViewer.collectPatternsFromListConstruct [] p in
@@ -12120,13 +12092,13 @@ module Printer = struct
       ]) in
       Doc.group(
         Doc.concat([
-          Doc.text "list(";
+          Doc.text "list[";
           if shouldHug then children else Doc.concat [
             Doc.indent children;
             Doc.ifBreaks (Doc.text ",") Doc.nil;
             Doc.softLine;
           ];
-          Doc.text ")";
+          Doc.rbracket;
         ])
       )
     | Ppat_construct(constrName, constructorArgs) ->
@@ -12334,9 +12306,9 @@ module Printer = struct
     | Pexp_construct ({txt = Longident.Lident "()"}, _) -> Doc.text "()"
     | Pexp_construct ({txt = Longident.Lident "[]"}, _) ->
       Doc.concat [
-        Doc.text "list(";
+        Doc.text "list[";
         printCommentsInside cmtTbl e.pexp_loc;
-        Doc.rparen;
+        Doc.rbracket;
       ]
     | Pexp_construct ({txt = Longident.Lident "::"}, _) ->
       let (expressions, spread) = ParsetreeViewer.collectListExpressions e in
@@ -12351,7 +12323,7 @@ module Printer = struct
       in
       Doc.group(
         Doc.concat([
-          Doc.text "list(";
+          Doc.text "list[";
           Doc.indent (
             Doc.concat([
               Doc.softLine;
@@ -12364,7 +12336,7 @@ module Printer = struct
           );
           Doc.trailingComma;
           Doc.softLine;
-          Doc.rparen;
+          Doc.rbracket;
         ])
       )
     | Pexp_construct (longidentLoc, args) ->
@@ -12415,7 +12387,7 @@ module Printer = struct
     | Pexp_tuple exprs ->
       Doc.group(
         Doc.concat([
-          Doc.text "/";
+          Doc.lparen;
           Doc.indent (
             Doc.concat([
               Doc.softLine;
@@ -12425,7 +12397,7 @@ module Printer = struct
           );
           Doc.ifBreaks (Doc.text ",") Doc.nil;
           Doc.softLine;
-          Doc.text "/";
+          Doc.rparen;
         ])
       )
     | Pexp_array [] ->
@@ -14358,11 +14330,8 @@ end = struct
   let run () =
     benchmark "./benchmarks/RedBlackTreeNapkin.ml" Napkin Parse;
     benchmark "./benchmarks/RedBlackTreeOcaml.ml" Ocaml Parse;
-    benchmark "./benchmarks/PrinterNapkin.ml" Napkin Parse;
-    benchmark "./benchmarks/PrinterOcaml.ml" Ocaml Parse;
     benchmark "./benchmarks/RedBlackTreeNapkin.ml" Napkin Print;
     benchmark "./benchmarks/RedBlackTreeNoCommentsNapkin.ml" Napkin Print;
-    benchmark "./benchmarks/PrinterNapkin.ml" Napkin Print;
     benchmark "./benchmarks/NapkinscriptNapkin.ml" Napkin Parse;
     benchmark "./benchmarks/NapkinscriptOcaml.ml" Ocaml Parse;
     benchmark "./benchmarks/NapkinscriptNapkin.ml" Napkin Print;
@@ -14376,7 +14345,7 @@ end
     (* Location.init lexbuf filename; *)
     (* Parse.implementation lexbuf *)
   (* in *)
-  (* Doc.toString ~width:80 (Printer.printStructure ast) |> print_endline *)
+  (* Doc.toString ~width:80 (Printer.printStructure ast CommentTable.empty) |> print_endline *)
 
 let () =
   Clflags.parse ();

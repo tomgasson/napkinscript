@@ -10,13 +10,13 @@ let x = -a.bar
 
 let x = true.x
 let x = (12: int).x
-let x = list(1, 2, ...x).x
+let x = list[1, 2, ...x].x
 let x = module(Foo: Bar).x
 let x = module(Foo).x
 let x = Rgb(1, 2, 3).x
 let x = [a, b, c].x
 let x = {x: 1, y: 3}.x
-let x = (/1, 2, 3/).x
+let x = (1, 2, 3).x
 let x = (%extension).x
 let x = user.name.last
 let x = streets[0].house

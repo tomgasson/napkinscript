@@ -14,11 +14,11 @@ let otherTxt = (`foo bar ${txt}`)
 
 let ident = (myIdent)
 
-let aList = (list(1, 2))
+let aList = (list[1, 2])
 
 let anArray = ([1, 2])
 
-let aTuple = (/1, 2/)
+let aTuple = ((1, 2))
 
 let aRecord = ({name: "steve", age: 30})
 

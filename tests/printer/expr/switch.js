@@ -3,8 +3,8 @@ switch x {
 | B => ()
 }
 
-switch /a, b/ {
-| /Some(a), Some(b)/ => 42
+switch (a, b) {
+| (Some(a), Some(b)) => 42
 | _ => 3
 }
 

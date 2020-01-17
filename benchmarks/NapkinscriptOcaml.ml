@@ -17,6 +17,7 @@ module Doc = struct
     | LineBreak of lineStyle
     | Group of (bool (* should break *) * t)
     | CustomLayout of t list
+    | BreakParent
     (* | Cursor *)
 
   let nil = Nil
@@ -32,6 +33,7 @@ module Doc = struct
   let group d = Group(false, d)
   let breakableGroup ~forceBreak d = Group(forceBreak, d)
   let customLayout gs = CustomLayout gs
+  let breakParent = BreakParent
   (* let cursor = Cursor *)
 
   let space = Text " "
@@ -53,6 +55,8 @@ module Doc = struct
     let rec walk doc = match doc with
     | Text _ | Nil | LineSuffix _ ->
       (false, doc)
+    | BreakParent ->
+      (true, Nil)
     | LineBreak (Hard | Literal) ->
       (true, doc)
     | LineBreak (Classic | Soft) ->
@@ -61,7 +65,13 @@ module Doc = struct
       let (childForcesBreak, newChildren) = walk children in
       (childForcesBreak, Indent newChildren)
     | IfBreaks (trueDoc, falseDoc) ->
-      (false, doc)
+      let (falseForceBreak, falseDoc) = walk falseDoc in
+      if falseForceBreak then
+        let (_, trueDoc) = walk trueDoc in
+        (true, trueDoc)
+      else
+        let forceBreak, trueDoc = walk trueDoc in
+        (forceBreak, IfBreaks (trueDoc, falseDoc))
     | Group(forceBreak, children) ->
       let (childForcesBreak, newChildren) = walk children in
       let shouldBreak = forceBreak || childForcesBreak in
@@ -118,6 +128,7 @@ module Doc = struct
       fits w (List.append ops rest)
     (* | (_ind, _mode, Cursor)::rest -> fits w rest *)
     | (_ind, _mode, LineSuffix _)::rest -> fits w rest
+    | (_ind, _mode, BreakParent)::rest -> fits w rest
     | (_ind, _mode, CustomLayout _)::rest -> fits w rest
 
   let toString ~width doc =
@@ -128,7 +139,7 @@ module Doc = struct
       match stack with
       | ((ind, mode, doc) as cmd)::rest ->
         begin match doc with
-        | Nil ->
+        | Nil | BreakParent ->
           process ~pos lineSuffices rest
         | Text txt ->
           Buffer.add_string buffer txt;
@@ -153,20 +164,15 @@ module Doc = struct
               Buffer.add_string buffer (String.make ind ' ');
               process ~pos:ind [] rest
             | docs ->
-              process ~pos:ind [] (List.concat [lineSuffices; cmd::rest])
+              process ~pos:ind [] (List.concat [List.rev lineSuffices; cmd::rest])
             end
-          ) else (
-            begin match lineSuffices with
-            | [] ->
-              let pos = match lineStyle with
-              | Classic -> Buffer.add_string buffer " "; pos + 1
-              | Hard | Literal -> Buffer.add_string buffer "\n"; 0
-              | Soft -> pos
-              in
-              process ~pos [] rest
-            | docs ->
-              process ~pos:ind [] (List.concat [lineSuffices; cmd::rest])
-            end
+          ) else (* mode = Flat *) (
+            let pos = match lineStyle with
+            | Classic -> Buffer.add_string buffer " "; pos + 1
+            | Hard | Literal -> Buffer.add_string buffer "\n"; 0
+            | Soft -> pos
+            in
+            process ~pos lineSuffices rest
           )
         | Group (shouldBreak, doc) ->
           if shouldBreak || not (fits (width - pos) ((ind, Flat, doc)::rest)) then
@@ -186,15 +192,26 @@ module Doc = struct
           let doc = findGroupThatFits docs in
           process ~pos lineSuffices ((ind, Flat, doc)::rest)
         end
-      | [] -> ()
+      | [] ->
+        begin match lineSuffices with
+        | [] -> ()
+        | suffices ->
+          process ~pos:0 [] (List.rev suffices)
+        end
     in
     process ~pos:0 [] [0, Flat, doc];
+
+    let len = Buffer.length buffer in
+    if len > 0 && Buffer.nth buffer (len - 1) != '\n' then
+      Buffer.add_char buffer '\n';
+    Buffer.add_char buffer '\n';
     Buffer.contents buffer
 
 
   let debug t =
     let rec toDoc = function
       | Nil -> text "nil"
+      | BreakParent -> text "breakparent"
       | Text txt -> text ("text(" ^ txt ^ ")")
       | LineSuffix doc -> group(
           concat [
@@ -470,6 +487,7 @@ end
 
 module IO: sig
   val readFile: string -> string
+  val readStdin: unit -> string
   val writeFile: string -> string -> unit
 end = struct
   (* random chunk size: 2^15, TODO: why do we guess randomly? *)
@@ -483,6 +501,21 @@ end = struct
       let len = input chan chunk 0 chunkSize in
       if len == 0 then (
         close_in chan;
+        Buffer.contents buffer
+      ) else (
+        Buffer.add_subbytes buffer chunk 0 len;
+        loop ()
+      )
+    in
+    loop ()
+
+  let readStdin () =
+    let buffer = Buffer.create chunkSize in
+    let chunk = Bytes.create chunkSize in
+    let rec loop () =
+      let len = input stdin chunk 0 chunkSize in
+      if len == 0 then (
+        close_in stdin;
         Buffer.contents buffer
       ) else (
         Buffer.add_subbytes buffer chunk 0 len;
@@ -661,14 +694,18 @@ module CharacterCodes = struct
       16 (* larger than any legal value *)
 end
 
-
 module Comment: sig
   type t
 
   val toString: t -> string
-  val toAttribute: t -> Parsetree.attribute
 
   val loc: t -> Location.t
+  val txt: t -> string
+  val prevTokEndPos: t -> Lexing.position
+
+  val setPrevTokEndPos: t -> Lexing.position -> unit
+
+  val isSingleLineComment: t -> bool
 
   val makeSingleLineComment: loc:Location.t -> string -> t
   val makeMultiLineComment: loc:Location.t -> string -> t
@@ -685,9 +722,19 @@ end = struct
     txt: string;
     style: style;
     loc: Location.t;
+    mutable prevTokEndPos: Lexing.position;
   }
 
   let loc t = t.loc
+  let txt t = t.txt
+  let prevTokEndPos t = t.prevTokEndPos
+
+  let setPrevTokEndPos t pos =
+    t.prevTokEndPos <- pos
+
+  let isSingleLineComment t = match t.style with
+    | SingleLine -> true
+    | MultiLine -> false
 
   let toString t =
     Format.sprintf
@@ -697,30 +744,19 @@ end = struct
       t.loc.loc_start.pos_lnum
       t.loc.loc_end.pos_lnum
 
-  let toAttribute t =
-    let expr =
-      Ast_helper.Exp.constant (Parsetree.Pconst_string (t.txt, None))
-    in
-    let id = Location.mkloc
-      (match t.style with
-       | SingleLine -> "napkinscript.singleLineComment"
-       | MultiLine -> "napkinscript.multiLineComment")
-      t.loc
-    in
-    (id, Parsetree.PStr [Ast_helper.Str.eval expr])
-
   let makeSingleLineComment ~loc txt = {
     txt;
     loc;
     style = SingleLine;
+    prevTokEndPos = Lexing.dummy_pos;
   }
 
   let makeMultiLineComment ~loc txt = {
     txt;
     loc;
     style = MultiLine;
+    prevTokEndPos = Lexing.dummy_pos;
   }
-
 end
 
 module Token = struct
@@ -755,7 +791,7 @@ module Token = struct
     | Eof
     | Exception
     | Backslash
-    | Forwardslash | ForwardslashDot | TupleEnding
+    | Forwardslash | ForwardslashDot
     | Asterisk | AsteriskDot | Exponentiation
     | Minus | MinusDot
     | Plus | PlusDot | PlusPlus | PlusEqual
@@ -779,8 +815,7 @@ module Token = struct
     | Module
     | Of
     | With
-    | Mod | Land | Lor | Lxor
-    | Lsl | Lsr | Asr
+    | Land | Lor
     | Band (* Bitwise and: & *)
     | BangEqual | BangEqualEqual
     | LessEqual | GreaterEqual
@@ -795,6 +830,7 @@ module Token = struct
     | BarGreater
     | Try | Catch
     | Import
+    | Export
 
   let precedence = function
     | HashEqual | ColonEqual -> 1
@@ -802,8 +838,8 @@ module Token = struct
     | Land -> 3
     | Equal | EqualEqual | EqualEqualEqual | LessThan | GreaterThan
     | BangEqual | BangEqualEqual | LessEqual | GreaterEqual | BarGreater -> 4
-    | Plus | PlusDot | Minus | MinusDot | Lxor | PlusPlus -> 5
-    | Asterisk | AsteriskDot | Forwardslash | ForwardslashDot  | Lsl | Lsr | Mod -> 6
+    | Plus | PlusDot | Minus | MinusDot | PlusPlus -> 5
+    | Asterisk | AsteriskDot | Forwardslash | ForwardslashDot -> 6
     | Exponentiation -> 7
     | Hash | HashHash | MinusGreater -> 8
     | Dot -> 9
@@ -839,7 +875,6 @@ module Token = struct
     | Plus -> "+" | PlusDot -> "+." | PlusPlus -> "++" | PlusEqual -> "+="
     | Backslash -> "\\"
     | Forwardslash -> "/" | ForwardslashDot -> "/."
-    | TupleEnding -> "/ (tuple ending)"
     | Exception -> "exception"
     | Hash -> "#" | HashHash -> "##" | HashEqual -> "#="
     | GreaterThan -> ">"
@@ -869,8 +904,7 @@ module Token = struct
     | Module -> "module"
     | Of -> "of"
     | With -> "with"
-    | Mod -> "mod"  | Lor -> "||" | Lxor -> "lxor"
-    | Lsl -> "lsl"| Lsr -> "lsr" | Asr -> "asr"
+    | Lor -> "||"
     | Band -> "&" | Land -> "&&"
     | BangEqual -> "!=" | BangEqualEqual -> "!=="
     | GreaterEqual -> ">=" | LessEqual -> "<="
@@ -885,6 +919,7 @@ module Token = struct
     | BarGreater -> "|>"
     | Try -> "try" | Catch -> "catch"
     | Import -> "import"
+    | Export -> "export"
 
   let keywordTable =
     let keywords = [|
@@ -915,15 +950,12 @@ module Token = struct
       "include", Include;
       "module", Module;
       "of", Of;
-      "mod", Mod; "land", Land;  "lxor", Lxor;
-      "lsl", Lsl;
-      "lsr", Lsr;
-      "asr", Asr;
       "list", List;
       "with", With;
       "try", Try;
       "catch", Catch;
       "import", Import;
+      "export", Export;
     |] in
     let t = Hashtbl.create 50 in
     Array.iter (fun (k, v) ->
@@ -935,9 +967,9 @@ module Token = struct
     | True | False | Open | Let | Rec | And | As
     | Exception | Assert | Lazy | If | Else | For | In | To
     | Downto | While | Switch | When | External | Typ | Private
-    | Mutable | Constraint | Include | Module | Of | Mod
-    | Land | Lor | Lxor | Lsl | Lsr | Asr | List | With
-    | Try | Catch | Import -> true
+    | Mutable | Constraint | Include | Module | Of
+    | Land | Lor | List | With
+    | Try | Catch | Import | Export -> true
     | _ -> false
 
   let lookupKeyword str =
@@ -948,8 +980,6 @@ module Token = struct
       else Lident str
 end
 
-exception InfiniteLoop of Lexing.position * Token.t
-
 module Grammar = struct
   type t =
     | OpenDescription (* open Belt *)
@@ -958,6 +988,7 @@ module Grammar = struct
     | Es6ArrowExpr
     | Jsx
     | JsxAttribute
+    | JsxChild
     | ExprOperand
     | ExprUnary
     | ExprSetField
@@ -1061,12 +1092,13 @@ module Grammar = struct
     | ListExpr -> "an ocaml list expr"
     | PackageConstraint -> "a package constraint"
     | JsFfiImport -> "js ffi import"
+    | JsxChild -> "jsx child"
 
   let isSignatureItemStart = function
     | Token.At
     | Let
     | Typ
-    | External | Import
+    | External
     | Exception
     | Open
     | Include
@@ -1077,7 +1109,7 @@ module Grammar = struct
 
   let isAtomicPatternStart = function
     | Token.Int _ | String _ | Character _
-    | Lparen | Lbracket | Lbrace | Forwardslash
+    | Lparen | Lbracket | Lbrace
     | Underscore
     | Lident _ | Uident _ | List
     | Exception | Lazy
@@ -1093,7 +1125,6 @@ module Grammar = struct
     | List
     | Lbracket
     | Lbrace
-    | Forwardslash
     | LessThan
     | Module
     | Percent -> true
@@ -1101,7 +1132,7 @@ module Grammar = struct
 
   let isAtomicTypExprStart = function
     | Token.SingleQuote | Underscore
-    | Forwardslash | Lparen | Lbrace
+    | Lparen | Lbrace
     | Uident _ | Lident _ | List
     | Percent -> true
     | _ -> false
@@ -1110,10 +1141,10 @@ module Grammar = struct
     | Token.True | False
     | Int _ | String _ | Float _ | Character _ | Backtick
     | Uident _ | Lident _
-    | Lparen | List | Lbracket | Lbrace | Forwardslash
+    | Lparen | List | Module | Lbracket | Lbrace
     | LessThan
     | Minus | MinusDot | Plus | PlusDot | Bang | Band
-    | Percent | At | Module
+    | Percent | At
     | If | Switch | While | For | Assert | Lazy | Try -> true
     | _ -> false
 
@@ -1125,7 +1156,7 @@ module Grammar = struct
     | Token.Open
     | Let
     | Typ
-    | External | Import
+    | External | Import | Export
     | Exception
     | Include
     | Module
@@ -1135,10 +1166,9 @@ module Grammar = struct
     | t when isExprStart t -> true
     | _ -> false
 
-
   let isPatternStart = function
     | Token.Int _ | String _ | Character _ | True | False
-    | Lparen | Lbracket | Lbrace | Forwardslash | List
+    | Lparen | Lbracket | Lbrace | List
     | Underscore
     | Lident _ | Uident _
     | Exception | Lazy | Percent | Module
@@ -1173,7 +1203,6 @@ module Grammar = struct
     | Token.At
     | SingleQuote
     | Underscore
-    | Forwardslash
     | Lparen
     | Uident _ | Lident _ | List
     | Module
@@ -1203,6 +1232,7 @@ module Grammar = struct
     | _ -> false
 
   let isRecordRowStart = function
+    | Token.DotDotDot -> true
     | Token.Uident _ | Lident _ -> true
     (* TODO *)
     | t when Token.isKeyword t -> true
@@ -1239,11 +1269,21 @@ module Grammar = struct
     | Token.Lident _ | At -> true
     | _ -> false
 
+  let isJsxChildStart = isAtomicExprStart
+
+  let isBlockExprStart = function
+    | Token.At | Percent | Minus | MinusDot | Plus | PlusDot | Bang | Band
+    | True | False | Int _ | String _ | Character _ | Lident _ | Uident _
+    | Lparen | List | Lbracket | Lbrace | Forwardslash | Assert
+    | Lazy | If | For | While | Switch | Open | Module | Exception | Let
+    | LessThan | Backtick | Try | Underscore -> true
+    | _ -> false
+
   let isListElement grammar token =
     match grammar with
-    | ExprList -> isExprStart token
+    | ExprList -> token = Token.DotDotDot || isExprStart token
     | ListExpr -> token = DotDotDot || isExprStart token
-    | PatternList -> isPatternStart token
+    | PatternList -> token = DotDotDot || isPatternStart token
     | ParameterList -> isParameterStart token
     | StringFieldDeclarations -> isStringFieldDeclStart token
     | FieldDeclarations -> isFieldDeclStart token
@@ -1719,7 +1759,7 @@ end = struct
       | _ ->
         (* TODO: match on circumstance to verify Lident needed ? *)
         if Token.isKeyword t then
-          name ^ " is a reserved keyword, Try `" ^ name ^ "_` or `_" ^ name ^ "` instead"
+          name ^ " is a reserved keyword, Try `" ^ name ^ "_` instead"
         else
         "I'm not sure what to parse here when looking at \"" ^ name ^ "\"."
       end
@@ -2077,15 +2117,10 @@ module Scanner = struct
       next scanner
     done;
     let endPos = position scanner in
-    if CharacterCodes.isLineBreak scanner.ch then (
-      scanner.lineOffset <- scanner.offset + 1;
-      scanner.lnum <- scanner.lnum + 1;
-    );
-    next scanner;
     Token.Comment (
       Comment.makeSingleLineComment
         ~loc:(Location.{loc_start = startPos; loc_end = endPos; loc_ghost = false})
-        (Bytes.sub_string scanner.src startOff (scanner.offset - 1 - startOff))
+        (Bytes.sub_string scanner.src startOff (scanner.offset - startOff))
     )
 
   let scanMultiLineComment scanner =
@@ -2282,9 +2317,6 @@ module Scanner = struct
           next scanner;
           Token.ForwardslashDot
         ) else (
-          if inTupleMode scanner then
-            scanForwardSlashOrTupleEnding scanner
-          else
           Token.Forwardslash
         )
       else if ch == CharacterCodes.minus then
@@ -2392,25 +2424,6 @@ module Scanner = struct
     let endPos = position scanner in
     (startPos, endPos, token)
 
-  and scanForwardSlashOrTupleEnding scanner =
-    let cb scanner =
-      let (_, _, token) = scan scanner in
-      match token with
-      | Lident _ ->
-        next scanner;
-        if scanner.ch != CharacterCodes.equal then
-          Token.TupleEnding
-        else
-          Token.Forwardslash
-      | GreaterThan
-      | Int _ | Uident _ | Lparen | Minus | Plus
-      | Lazy | If | For | While | Switch | At -> Token.Forwardslash
-      | _ -> TupleEnding
-    in
-    let result = lookahead scanner cb in
-    if result = TupleEnding then popMode scanner Tuple;
-    result
-
   (* Imagine: <div> <Navbar /> <
    * is `<` the start of a jsx-child? <div …
    * or is it the start of a closing tag?  </div>
@@ -2424,6 +2437,32 @@ module Scanner = struct
       Token.LessThanSlash
     else
       Token.LessThan
+
+  (* If an operator has whitespace around both sides, it's a binary operator *)
+  let isBinaryOp src startCnum endCnum =
+    if startCnum == 0 then false
+    else
+      let leftOk =
+        let c =
+          (startCnum - 1)
+          |> Bytes.get src
+          |> Char.code
+        in
+        c == CharacterCodes.space ||
+        c == CharacterCodes.tab ||
+        CharacterCodes.isLineBreak c
+      in
+      let rightOk =
+        let c =
+          if endCnum == Bytes.length src then -1
+          else endCnum |> Bytes.get src |> Char.code
+        in
+        c == CharacterCodes.space ||
+        c == CharacterCodes.tab ||
+        CharacterCodes.isLineBreak c ||
+        c == CharacterCodes.eof
+      in
+      leftOk && rightOk
 end
 
 (* AST for js externals *)
@@ -2440,9 +2479,14 @@ module JsFfi = struct
     jld_type: Parsetree.core_type;
     jld_loc:  Location.t
   }
+
+  type importSpec =
+    | Default of label_declaration
+    | Spec of label_declaration list
+
   type import_description = {
     jid_loc: Location.t;
-    jid_declarations: label_declaration list;
+    jid_spec: importSpec;
     jid_scope: scope;
     jid_attributes:  Parsetree.attributes;
   }
@@ -2455,9 +2499,9 @@ module JsFfi = struct
     jld_type = typ
   }
 
-  let importDescr ~attrs ~scope ~loc ~decls = {
+  let importDescr ~attrs ~scope ~importSpec ~loc = {
     jid_loc = loc;
-    jid_declarations = decls;
+    jid_spec = importSpec;
     jid_scope = scope;
     jid_attributes = attrs;
   }
@@ -2466,14 +2510,16 @@ module JsFfi = struct
     let bsVal = (Location.mknoloc "bs.val", Parsetree.PStr []) in
     let attrs = match importDescr.jid_scope with
     | Global -> [bsVal]
-    | Module s -> (* bs.module *)
+    (* @genType.import("./MyMath"),
+     * @genType.import(/"./MyMath", "default"/) *)
+    | Module s ->
       let structure = [
         Parsetree.Pconst_string (s, None)
         |> Ast_helper.Exp.constant
         |> Ast_helper.Str.eval
       ] in
-      let bsModule = (Location.mknoloc "bs.module", Parsetree.PStr structure) in
-      [bsModule]
+      let genType = (Location.mknoloc "genType.import", Parsetree.PStr structure) in
+      [genType]
     | Scope longident ->
       let structureItem =
         let expr = match Longident.flatten longident |> List.map (fun s ->
@@ -2490,35 +2536,54 @@ module JsFfi = struct
       ) in
       [bsVal; bsScope]
     in
-    let valueDescrs = List.map (fun decl ->
+    let valueDescrs = match importDescr.jid_spec with
+    | Default decl ->
       let prim = [decl.jld_name] in
-      let allAttrs = List.concat [attrs; importDescr.jid_attributes] in
-      Ast_helper.Val.mk
+      let allAttrs =
+        List.concat [attrs; importDescr.jid_attributes]
+        |> List.map (fun attr -> match attr with
+          | (
+              {Location.txt = "genType.import"} as id,
+              Parsetree.PStr [{pstr_desc = Parsetree.Pstr_eval (moduleName, _) }]
+            ) ->
+            let default =
+              Parsetree.Pconst_string ("default", None) |> Ast_helper.Exp.constant
+            in
+            let structureItem =
+              [moduleName; default]
+              |> Ast_helper.Exp.tuple
+              |> Ast_helper.Str.eval
+            in
+            (id, Parsetree.PStr [structureItem])
+          | attr -> attr
+        )
+      in
+      [Ast_helper.Val.mk
         ~loc:importDescr.jid_loc
         ~prim
         ~attrs:allAttrs
         (Location.mknoloc decl.jld_alias)
         decl.jld_type
-      |> Ast_helper.Str.primitive
-    ) importDescr.jid_declarations
+      |> Ast_helper.Str.primitive]
+    | Spec decls ->
+      List.map (fun decl ->
+        let prim = [decl.jld_name] in
+        let allAttrs = List.concat [attrs; importDescr.jid_attributes] in
+        Ast_helper.Val.mk
+          ~loc:importDescr.jid_loc
+          ~prim
+          ~attrs:allAttrs
+          (Location.mknoloc decl.jld_alias)
+          decl.jld_type
+        |> Ast_helper.Str.primitive ~loc:decl.jld_loc
+      ) decls
     in
-    Ast_helper.Mod.structure valueDescrs
-    |> Ast_helper.Incl.mk
-    |> Ast_helper.Str.include_
+    Ast_helper.Mod.structure ~loc:importDescr.jid_loc valueDescrs
+    |> Ast_helper.Incl.mk ~loc:importDescr.jid_loc
+    |> Ast_helper.Str.include_ ~loc:importDescr.jid_loc
 end
 
 module Parser = struct
-  (* type directive = DirDisabled | DirIfTrue | DirIfFalse *)
-
-  (* type directiveNode = *)
-    (* | DirBool of bool *)
-    (* | DirString of string *)
-    (* | DirInt of int *)
-    (* | DirFloat of float *)
-    (* | DirBinary of (Token.t * directiveNode * directiveNode) *)
-    (* | DirError *)
-
-
   type t = {
     mutable scanner: Scanner.t;
     mutable token: Token.t;
@@ -2528,7 +2593,6 @@ module Parser = struct
     mutable breadcrumbs: (Grammar.t * Lexing.position) list;
     mutable errors: Reporting.parseError list;
     mutable diagnostics: Diagnostics.t list;
-    (* mutable directive: directive; *)
     mutable comments: Comment.t list;
   }
 
@@ -2553,169 +2617,26 @@ module Parser = struct
     | _::ds -> p.diagnostics <- ds
     | [] -> ()
 
-   let isDirectiveOp = function
-   | Token.LessThan
-   | GreaterThan
-   | GreaterEqual
-   | LessEqual
-   | EqualEqual
-   | EqualEqualEqual
-   | BangEqual
-   | BangEqualEqual -> true
-   | _ -> false
+   (* Advance to the next non-comment token and store any encountered comment
+    * in the parser's state. Every comment contains the end position of it's
+    * previous token to facilite comment interleaving *)
+   let rec next ?prevEndPos p =
+     let prevEndPos = match prevEndPos with Some pos -> pos | None -> p.endPos in
+     let (startPos, endPos, token) = Scanner.scan p.scanner in
+     match token with
+     | Comment c ->
+       Comment.setPrevTokEndPos c p.endPos;
+       p.comments <- c::p.comments;
+       p.prevEndPos <- p.endPos;
+       p.endPos <- endPos;
+       next ~prevEndPos p
+     | _ ->
+       p.token <- token;
+       (* p.prevEndPos <- prevEndPos; *)
+       p.prevEndPos <- prevEndPos;
+       p.startPos <- startPos;
+       p.endPos <- endPos
 
-  let rec advance p =
-    let (startPos, endPos, token) = Scanner.scan p.scanner in
-    match token with
-    | Comment c ->
-        p.comments <- c::p.comments;
-        advance p
-    | _ ->
-      p.token <- token;
-      p.prevEndPos <- p.endPos;
-      p.startPos <- startPos;
-      p.endPos <- endPos
-
-  (* let rec skipTokens p cont = *)
-    (* advance p; *)
-    (* if p.token = Eof then *)
-      (* err p (Diagnostics.message "Missing #endif") *)
-    (* else if p.token = Hash then ( *)
-      (* advance p; *)
-      (* match p.token with *)
-      (* | Lident "endif" -> *)
-        (* p.directive <- DirDisabled; *)
-        (* cont p *)
-      (* | Lident "elseif" -> *)
-        (* advance p; *)
-        (* let v = parseDirectiveExpr p in *)
-        (* interpretDirective p v cont *)
-      (* | Else -> *)
-        (* if p.directive = DirIfTrue then skipTokens p cont else cont p *)
-      (* | _ -> skipTokens p cont *)
-    (* ) *)
-    (* else *)
-      (* skipTokens p cont *)
-
-  (* and parseDirectiveOperand p = *)
-    (* match p.token with *)
-    (* | Uident uident -> *)
-        (* advance p; *)
-        (* DirString ( *)
-        (* match Sys.getenv_opt uident with *)
-        (* | Some v -> v *)
-        (* | None -> "" *)
-      (* ) *)
-    (* | True -> advance p; DirBool true *)
-    (* | False -> advance p; DirBool false *)
-    (* | Int (n, _) -> advance p; DirInt (int_of_string n) *)
-    (* | Float (n, _) -> advance p; DirFloat (float_of_string n) *)
-    (* | String s -> advance p; DirString s *)
-    (* | Lparen -> advance p; parseDirectiveExpr p *)
-    (* | _ -> DirError *)
-
-  (* and parseDirectiveBinaryExpr p prec = *)
-    (* let rec loop a = *)
-      (* let token = p.token in *)
-      (* if isDirectiveOp token then *)
-        (* let tokenPrec = Token.precedence token in *)
-        (* let () = advance p in *)
-        (* if tokenPrec < prec then a *)
-        (* else ( *)
-          (* let b = parseDirectiveBinaryExpr p (tokenPrec + 1) in *)
-          (* let expr = DirBinary (token, a, b) in *)
-          (* loop expr *)
-        (* ) *)
-      (* else *)
-        (* a *)
-    (* in *)
-    (* let operand = parseDirectiveOperand p in *)
-    (* loop operand *)
-
- (* and eval exp = *)
-   (* let f_of_op = function *)
-   (* | Token.LessThan -> (<) *)
-   (* | GreaterThan -> (>) *)
-   (* | GreaterEqual -> (>=) *)
-   (* | LessEqual -> (<=) *)
-   (* | EqualEqual -> (=) *)
-   (* | EqualEqualEqual -> (==) *)
-   (* | BangEqual -> (<>) *)
-   (* | BangEqualEqual -> (!=) *)
-   (* | _ -> assert false *)
-   (* in *)
-   (* match exp with *)
-    (* | DirBool b -> b *)
-    (* | DirInt n -> n <> 0 *)
-    (* | DirFloat n -> n <> 0.0 *)
-    (* | DirBinary (op, DirString a, DirString b) -> *)
-      (* (f_of_op op) a b *)
-    (* | DirBinary (op, DirInt a, DirInt b) -> *)
-      (* (f_of_op op) a b *)
-    (* | DirBinary (op, DirFloat a, DirFloat b) -> *)
-      (* (f_of_op op) a b *)
-    (* | _ -> false *)
-
-  (* and parseDirectiveExpr p = *)
-    (* parseDirectiveBinaryExpr p 1 *)
-
-  (* and interpretDirective p v cont = *)
-    (* if eval v then ( *)
-      (* p.directive <- DirIfTrue *)
-    (* ) else ( *)
-      (* p.directive <- DirIfFalse; *)
-      (* skipTokens p cont *)
-    (* ) *)
-
-  let rec next p =
-    let (startPos, endPos, token) = Scanner.scan p.scanner in
-    match token with
-    | Comment c ->
-      p.comments <- c::p.comments;
-      next p
-    | _ ->
-      p.token <- token;
-      p.prevEndPos <- p.endPos;
-      p.startPos <- startPos;
-      p.endPos <- endPos
-
-    (* advance p *)
-    (* match p.token with *)
-    (* | Hash -> *)
-      (* advance p; *)
-      (* begin match (p.token, p.directive) with *)
-      (* | If, DirDisabled -> *)
-        (* advance p; *)
-        (* let v = parseDirectiveExpr p in *)
-        (* interpretDirective p v next *)
-      (* | (Lident "elseif" | Else), DirIfTrue -> *)
-        (* advance p; *)
-        (* let rec skip p = *)
-          (* let token = p.token in *)
-          (* if token = Eof then *)
-            (* () *)
-          (* else ( *)
-            (* advance p; *)
-            (* if token = Hash then ( *)
-              (* match p.token with *)
-              (* | Lident "endif" -> *)
-                (* p.directive <- DirDisabled; *)
-                (* next p *)
-              (* | _ -> skip p *)
-            (* ) else ( *)
-              (* skip p *)
-            (* ) *)
-          (* ) *)
-        (* in *)
-        (* skip p *)
-      (* | Else, DirIfFalse -> *)
-        (* advance p *)
-      (* | Lident "endif", (DirIfTrue | DirIfFalse) -> *)
-        (* p.directive <- DirDisabled; *)
-        (* next p *)
-      (* | _ -> () *)
-      (* end *)
-    (* | _ -> () *)
 
   let make src filename =
     let scanner = Scanner.make (Bytes.of_string src) filename in
@@ -2728,7 +2649,6 @@ module Parser = struct
       breadcrumbs = [];
       errors = [];
       diagnostics = [];
-      (* directive = DirDisabled; *)
       comments = [];
     } in
     parserState.scanner.err <- (fun ~startPos ~endPos error ->
@@ -2785,7 +2705,6 @@ module Parser = struct
     let breadcrumbs = p.breadcrumbs in
     let errors = p.errors in
     let diagnostics = p.diagnostics in
-    (* let directive = p.directive in *)
     let comments = p.comments in
 
     let res = callback p in
@@ -2804,7 +2723,6 @@ module Parser = struct
     p.breadcrumbs <- breadcrumbs;
     p.errors <- errors;
     p.diagnostics <- diagnostics;
-    (* p.directive <- directive; *)
     p.comments <- comments;
 
     res
@@ -2823,6 +2741,14 @@ module NapkinScript = struct
     type action =
       | Retry
       | Abort
+
+    let fakeStructureItem =
+      let id = Location.mknoloc "napkinscript.fakeStructureItem" in
+      Ast_helper.Str.extension (id, PStr [])
+
+    let fakeSignatureItem =
+      let id = Location.mknoloc "napkinscript.fakeSignatureItem" in
+      Ast_helper.Sig.extension (id, PStr [])
 
     let defaultStructureItem () =
       let id = Location.mknoloc "napkinscript.strItemHole" in
@@ -2861,40 +2787,33 @@ module NapkinScript = struct
       | _ -> ()
 
     let shouldAbortListParse p =
-      let rec check breadcrumbs i =
-        if i > 1000 then
-          raise (InfiniteLoop (p.Parser.startPos, p.token))
-        else
+      let rec check breadcrumbs =
         match breadcrumbs with
         | [] -> false
         | (grammar, _)::rest ->
           if Grammar.isPartOfList grammar p.Parser.token then
             true
           else
-            check rest (i + 1)
+            check rest
       in
-      check p.breadcrumbs 0
+      check p.breadcrumbs
 
     let recoverLident p =
-      let counter = ref(0) in
-      if Token.isKeyword p.Parser.token
-         && p.Parser.prevEndPos.pos_lnum == p.startPos.pos_lnum
+      if (
+        Token.isKeyword p.Parser.token &&
+        p.Parser.prevEndPos.pos_lnum == p.startPos.pos_lnum
+      )
       then (
         Parser.err p (Diagnostics.lident p.Parser.token);
         Parser.next p;
         Abort
       ) else (
-        while not (shouldAbortListParse p) && !counter < 1000 do
-          let () = counter := !counter + 1 in
+        while not (shouldAbortListParse p) do
           Parser.next p
         done;
-        if !counter > 100 then
-          raise (InfiniteLoop (p.startPos, p.token))
-        else (
-          match p.Parser.token with
-          | Lident _ -> Retry
-          | _ -> Abort
-        )
+        match p.Parser.token with
+        | Lident _ -> Retry
+        | _ -> Abort
       )
 
     let skipTokensAndMaybeRetry p ~isStartOfGrammar =
@@ -2916,13 +2835,26 @@ module NapkinScript = struct
 
   module ErrorMessages = struct
     let listPatternSpread = "List pattern matches only supports one `...` spread, at the end.
-Explanation: a list spread at the tail is efficient, but a spread in the middle would create new list(s); out of performance concern, our pattern matching currently guarantees to never create new intermediate data."
+Explanation: a list spread at the tail is efficient, but a spread in the middle would create new list[s]; out of performance concern, our pattern matching currently guarantees to never create new intermediate data."
 
     let recordPatternSpread = "Record's `...` spread is not supported in pattern matches.
 Explanation: you can't collect a subset of a record's field into its own record, since a record needs an explicit declaration and that subset wouldn't have one.
 Solution: you need to pull out each field you want explicitly."
 
-  let recordPatternUnderscore = "Record patterns only supports one `_`, at the end."
+    let recordPatternUnderscore = "Record patterns only support one `_`, at the end."
+
+    let arrayPatternSpread = "Array's `...` spread is not supported in pattern matches.
+Explanation: such spread would create a subarray; out of performance concern, our pattern matching currently guarantees to never create new intermediate data.
+Solution: if it's to validate the first few elements, use a `when` clause + Array size check + `get` checks on the current pattern. If it's to obtain a subarray, use `Array.sub` or `Belt.Array.slice`."
+
+    let arrayExprSpread = "Arrays can't use the `...` spread currently. Please use `concat` or other Array helpers."
+
+    let recordExprSpread = "Records can only have one `...` spread, at the beginning.
+Explanation: since records have a known, fixed shape, a spread like `{a, ...b}` wouldn't make sense, as `b` would override every field of `a` anyway."
+
+    let listExprSpread =  "Lists can only have one `...` spread, and at the end.
+Explanation: lists are singly-linked list, where a node contains a value and points to the next node. `list[a, ...bc]` efficiently creates a new item and links `bc` as its next nodes. `[...bc, a]` would be expensive, as it'd need to traverse `bc` and prepend each item to `a` one by one. We therefore disallow such syntax sugar.
+Solution: directly use `concat`."
   end
 
 
@@ -3107,7 +3039,7 @@ Solution: you need to pull out each field you want explicitly."
     match token, operand.Parsetree.pexp_desc with
     | (Token.Plus | PlusDot), Pexp_constant((Pconst_integer _ | Pconst_float _)) ->
       operand
-    | (Minus | MinusDot), Pexp_constant(Pconst_integer (n,m)) ->
+    | Minus, Pexp_constant(Pconst_integer (n,m)) ->
       {operand with pexp_desc = Pexp_constant(Pconst_integer (negateString n,m))}
     | (Minus | MinusDot), Pexp_constant(Pconst_float (n,m)) ->
       {operand with pexp_desc = Pexp_constant(Pconst_float (negateString n,m))}
@@ -3160,7 +3092,8 @@ Solution: you need to pull out each field you want explicitly."
           (Location.mkloc (Longident.Lident "::") loc)
           (Some arg)
     in
-    handleSeq seq
+    let expr = handleSeq seq in
+    {expr with pexp_loc = loc}
 
   let makeListPattern loc seq ext_opt =
     let rec handle_seq = function
@@ -3176,7 +3109,8 @@ Solution: you need to pull out each field you want explicitly."
         base_case
     | p1 :: pl ->
         let pat_pl = handle_seq pl in
-        let loc = mkLoc p1.Parsetree.ppat_loc.loc_start pat_pl.ppat_loc.loc_end in
+        let loc =
+          mkLoc p1.Parsetree.ppat_loc.loc_start pat_pl.ppat_loc.loc_end in
         let arg = Ast_helper.Pat.mk ~loc (Ppat_tuple [p1; pat_pl]) in
         Ast_helper.Pat.mk ~loc (Ppat_construct(Location.mkloc (Longident.Lident "::") loc, Some arg))
     in
@@ -3443,37 +3377,31 @@ Solution: you need to pull out each field you want explicitly."
     Parser.next p;
     constant
 
-  let parseCommaDelimitedList p ~grammar ~closing ~f =
+  let parseCommaDelimitedRegion p ~grammar ~closing ~f =
     Parser.leaveBreadcrumb p grammar;
     let rec loop nodes =
-      if Grammar.isListElement grammar p.Parser.token then (
-        let node = f p in
-        if Parser.optional p Comma then
+      match f p with
+      | Some node ->
+        begin match p.Parser.token with
+        | Comma ->
+          Parser.next p;
           loop (node::nodes)
-        else if p.token = closing || p.token = Eof then
+        | token when token = closing || token = Eof ->
           List.rev (node::nodes)
-        else (
-          Parser.expect Comma p;
+        | _ ->
+          if not (p.token = Eof || p.token = closing || Recover.shouldAbortListParse p) then
+            Parser.expect Comma p;
           if p.token = Semicolon then Parser.next p;
           loop (node::nodes)
-        )
-      ) else if p.token = Eof then (
-        List.rev nodes
-      ) else if p.token = closing then (
-        List.rev nodes
-      ) else (
-        if Recover.shouldAbortListParse p then (
-          (* TODO: is it ok to just randomly drop the expect , ???*)
-          Parser.dropLastDiagnostic p; (* we don't expect a `,` *)
+        end
+      | None ->
+        if p.token = Eof || p.token = closing || Recover.shouldAbortListParse p then
           List.rev nodes
-        ) else (
-          (* TODO: is it ok to just randomly drop the expect , ???*)
-          Parser.dropLastDiagnostic p; (* we don't expect a `,` *)
+        else (
           Parser.err p (Diagnostics.unexpected p.token p.breadcrumbs);
           Parser.next p;
           loop nodes
-        )
-      )
+        );
     in
     let nodes = loop [] in
     Parser.eatBreadcrumb p;
@@ -3482,75 +3410,70 @@ Solution: you need to pull out each field you want explicitly."
   let parseCommaDelimitedReversedList p ~grammar ~closing ~f =
     Parser.leaveBreadcrumb p grammar;
     let rec loop nodes =
-      if Grammar.isListElement grammar p.Parser.token then (
-        let node = f p in
-        if Parser.optional p Comma then
+      match f p with
+      | Some node ->
+        begin match p.Parser.token with
+        | Comma ->
+          Parser.next p;
           loop (node::nodes)
-        else if p.token = closing || p.token = Eof then
-          node::nodes
-        else (
-          Parser.expect Comma p;
+        | token when token = closing || token = Eof ->
+          (node::nodes)
+        | _ ->
+          if not (p.token = Eof || p.token = closing || Recover.shouldAbortListParse p) then
+            Parser.expect Comma p;
           if p.token = Semicolon then Parser.next p;
           loop (node::nodes)
-        )
-      ) else if p.token = Eof then (
-        nodes
-      ) else if p.token = closing then (
-        nodes
-      )  else (
-        if Recover.shouldAbortListParse p then (
-          Parser.dropLastDiagnostic p; (* we don't expect a `,` *)
+        end
+      | None ->
+        if p.token = Eof || p.token = closing || Recover.shouldAbortListParse p then
           nodes
-        ) else (
+        else (
           Parser.err p (Diagnostics.unexpected p.token p.breadcrumbs);
           Parser.next p;
           loop nodes
-        )
-      )
+        );
     in
     let nodes = loop [] in
     Parser.eatBreadcrumb p;
     nodes
 
-  let parseDelimitedList p ~grammar ~closing ~f =
+  let parseDelimitedRegion p ~grammar ~closing ~f =
     Parser.leaveBreadcrumb p grammar;
     let rec loop nodes =
-      if p.Parser.token = Token.Eof || p.token = closing then
-        List.rev nodes
-      else if Grammar.isListElement grammar p.token then
-        let node = f p in
+      match f p with
+      | Some node ->
         loop (node::nodes)
-      else (* trouble *) (
-        if Recover.shouldAbortListParse p then
+      | None ->
+        if (
+          p.Parser.token = Token.Eof ||
+          p.token = closing ||
+          Recover.shouldAbortListParse p
+        ) then
           List.rev nodes
         else (
           Parser.err p (Diagnostics.unexpected p.token p.breadcrumbs);
           Parser.next p;
           loop nodes
         )
-      )
-    in
-    let nodes = loop [] in
-    Parser.eatBreadcrumb p;
-    nodes
+      in
+      let nodes = loop [] in
+      Parser.eatBreadcrumb p;
+      nodes
 
-  let parseList p ~grammar ~f =
+  let parseRegion p ~grammar ~f =
     Parser.leaveBreadcrumb p grammar;
     let rec loop nodes =
-      if p.Parser.token = Token.Eof then
-        List.rev nodes
-      else if Grammar.isListElement grammar p.token then
-        let node = f p in
+      match f p with
+      | Some node ->
         loop (node::nodes)
-      else (* trouble *) (
-        if Recover.shouldAbortListParse p then
+      | None ->
+        if p.Parser.token = Token.Eof || Recover.shouldAbortListParse p then
           List.rev nodes
         else (
           Parser.err p (Diagnostics.unexpected p.token p.breadcrumbs);
           Parser.next p;
           loop nodes
         )
-      )
     in
     let nodes = loop [] in
     Parser.eatBreadcrumb p;
@@ -3595,22 +3518,25 @@ Solution: you need to pull out each field you want explicitly."
       begin match p.token with
       | Rparen ->
         Parser.next p;
-        let endPos = p.endPos in
-        let loc = mkLoc startPos endPos in
+        let loc = mkLoc startPos p.prevEndPos in
         let lid = Location.mkloc (Longident.Lident "()") loc in
         Ast_helper.Pat.construct ~loc lid None
       | _ ->
         let pat = parseConstrainedPattern p in
-        Parser.expect Token.Rparen p;
-        let loc = mkLoc startPos p.prevEndPos in
-        {pat with ppat_loc = loc}
+        begin match p.token with
+        | Comma ->
+          Parser.next p;
+          parseTuplePattern ~attrs ~first:pat ~startPos p
+        | _ ->
+          Parser.expect Rparen p;
+          let loc = mkLoc startPos p.prevEndPos in
+          {pat with ppat_loc = loc}
+        end
       end
     | Lbracket ->
       parseArrayPattern ~attrs p
     | Lbrace ->
       parseRecordPattern ~attrs p
-    | Forwardslash ->
-      parseTuplePattern ~attrs p
     | Underscore ->
       let endPos = p.endPos in
       let loc = mkLoc startPos endPos in
@@ -3637,14 +3563,15 @@ Solution: you need to pull out each field you want explicitly."
     | Lazy ->
       Parser.next p;
       let pat = parsePattern ~alias:false ~or_:false p in
-      let loc = mkLoc startPos pat.ppat_loc.loc_end in
+      let loc = mkLoc startPos p.prevEndPos in
       Ast_helper.Pat.lazy_ ~loc ~attrs pat
     | List ->
       parseListPattern ~attrs p
     | Module ->
       parseModulePattern ~attrs p
     | Percent ->
-      let (loc, extension) = parseExtension p in
+      let extension = parseExtension p in
+      let loc = mkLoc startPos p.prevEndPos in
       Ast_helper.Pat.extension ~loc ~attrs extension
     | token ->
       Parser.err p (Diagnostics.unexpected token p.breadcrumbs);
@@ -3684,6 +3611,27 @@ Solution: you need to pull out each field you want explicitly."
       Ast_helper.Pat.or_ ~loc pattern1 pattern2
     | _ -> pattern1
 
+
+  and parseNonSpreadPattern ~msg p =
+    let () = match p.Parser.token with
+    | DotDotDot ->
+      Parser.err p (Diagnostics.message msg);
+      Parser.next p;
+    | _ -> ()
+    in
+    match p.Parser.token with
+    | token when Grammar.isPatternStart token ->
+      let pat = parsePattern p in
+      begin match p.Parser.token with
+      | Colon ->
+        Parser.next p;
+        let typ = parseTypExpr p in
+        let loc = mkLoc pat.ppat_loc.loc_start typ.Parsetree.ptyp_loc.loc_end in
+        Some (Ast_helper.Pat.constraint_ ~loc pat typ)
+      | _ -> Some pat
+      end
+    | _ -> None
+
   and parseConstrainedPattern p =
     let pat = parsePattern p in
     match p.Parser.token with
@@ -3693,6 +3641,12 @@ Solution: you need to pull out each field you want explicitly."
       let loc = mkLoc pat.ppat_loc.loc_start typ.Parsetree.ptyp_loc.loc_end in
       Ast_helper.Pat.constraint_ ~loc pat typ
     | _ -> pat
+
+  and parseConstrainedPatternRegion p =
+    match p.Parser.token with
+    | token when Grammar.isPatternStart token ->
+      Some (parseConstrainedPattern p)
+    | _ -> None
 
 	(* field ::=
 	 *   | longident
@@ -3728,21 +3682,21 @@ Solution: you need to pull out each field you want explicitly."
       in
       (Location.mkloc label.txt (mkLoc startPos aliasPattern.ppat_loc.loc_end), aliasPattern)
 		| _ ->
-    (Location.mkloc label.txt (mkLoc startPos pattern.ppat_loc.loc_end), pattern)
+      (label, pattern)
 
    (* TODO: there are better representations than PatField|Underscore ? *)
   and parseRecordPatternItem p =
     match p.Parser.token with
     | DotDotDot ->
       Parser.next p;
-      (true, PatField (parseRecordPatternField p))
+      Some (true, PatField (parseRecordPatternField p))
     | Uident _ | Lident _ ->
-      (false, PatField (parseRecordPatternField p))
+      Some (false, PatField (parseRecordPatternField p))
     | Underscore ->
       Parser.next p;
-      (false, PatUnderscore)
+      Some (false, PatUnderscore)
     | _ ->
-      (false, PatField (parseRecordPatternField p))
+      None
 
   and parseRecordPattern ~attrs p =
     let startPos = p.startPos in
@@ -3777,26 +3731,25 @@ Solution: you need to pull out each field you want explicitly."
     let loc = mkLoc startPos p.prevEndPos in
     Ast_helper.Pat.record ~loc ~attrs fields closedFlag
 
-  and parseTuplePattern ~attrs p =
-    let startPos = p.startPos in
-    Parser.expect Forwardslash p;
+  and parseTuplePattern ~attrs ~first ~startPos p =
     let patterns =
-      parseCommaDelimitedList p
+      parseCommaDelimitedRegion p
         ~grammar:Grammar.PatternList
-        ~closing:Forwardslash
-        ~f:parseConstrainedPattern
+        ~closing:Rparen
+        ~f:parseConstrainedPatternRegion
     in
-    Parser.expect Forwardslash p;
+    Parser.expect Rparen p;
     let loc = mkLoc startPos p.prevEndPos in
-    Ast_helper.Pat.tuple ~loc ~attrs patterns
+    Ast_helper.Pat.tuple ~loc ~attrs (first::patterns)
 
-  and parsePatternListItem p =
+  and parsePatternRegion p =
     match p.Parser.token with
     | DotDotDot ->
       Parser.next p;
-      (true, parseConstrainedPattern p)
-    | _ ->
-      (false, parseConstrainedPattern p)
+      Some (true, parseConstrainedPattern p)
+    | token when Grammar.isPatternStart token ->
+      Some (false, parseConstrainedPattern p)
+    | _ -> None
 
   and parseModulePattern ~attrs p =
     let startPos = p.Parser.startPos in
@@ -3812,9 +3765,10 @@ Solution: you need to pull out each field you want explicitly."
     in
     begin match p.token with
     | Colon ->
+      let colonStart = p.Parser.startPos in
       Parser.next p;
       let packageTypAttrs = parseAttributes p in
-      let packageType = parsePackageType ~attrs:packageTypAttrs p in
+      let packageType = parsePackageType ~startPos:colonStart ~attrs:packageTypAttrs p in
       Parser.expect Rparen p;
       let loc = mkLoc startPos p.prevEndPos in
       let unpack = Ast_helper.Pat.unpack ~loc:uident.loc uident in
@@ -3829,23 +3783,24 @@ Solution: you need to pull out each field you want explicitly."
       Ast_helper.Pat.unpack ~loc ~attrs uident
     end
 
-
   and parseListPattern ~attrs p =
     let startPos = p.Parser.startPos in
     Parser.expect List p;
-    Parser.expect Lparen p;
+    Parser.expect Lbracket p;
     let listPatterns =
       parseCommaDelimitedReversedList p
         ~grammar:Grammar.PatternOcamlList
-        ~closing:Rparen
-        ~f:parsePatternListItem
+        ~closing:Rbracket
+        ~f:parsePatternRegion
     in
-    Parser.expect Rparen p;
-    let endPos = p.prevEndPos in
-    let loc = mkLoc startPos endPos in
+    Parser.expect Rbracket p;
+    let loc = mkLoc startPos p.prevEndPos in
     let filterSpread (hasSpread, pattern) =
       if hasSpread then (
-        Parser.err ~startPos:pattern.Parsetree.ppat_loc.loc_start p (Diagnostics.message ErrorMessages.listPatternSpread);
+        Parser.err
+          ~startPos:pattern.Parsetree.ppat_loc.loc_start
+          p
+          (Diagnostics.message ErrorMessages.listPatternSpread);
         pattern
       ) else
         pattern
@@ -3853,17 +3808,22 @@ Solution: you need to pull out each field you want explicitly."
     match listPatterns with
     | (true, pattern)::patterns ->
       let patterns = patterns |> List.map filterSpread |> List.rev in
-      makeListPattern loc patterns (Some pattern)
+      let pat = makeListPattern loc patterns (Some pattern) in
+      {pat with ppat_loc = loc}
     | patterns ->
       let patterns = patterns |> List.map filterSpread |> List.rev in
-      makeListPattern loc patterns None
+      let pat = makeListPattern loc patterns None in
+      {pat with ppat_loc = loc}
 
   and parseArrayPattern ~attrs p =
     let startPos = p.startPos in
     Parser.expect Lbracket p;
     let patterns =
-      parseCommaDelimitedList
-        p ~grammar:Grammar.PatternList ~closing:Rbracket ~f:parseConstrainedPattern
+      parseCommaDelimitedRegion
+        p
+        ~grammar:Grammar.PatternList
+        ~closing:Rbracket
+        ~f:(parseNonSpreadPattern ~msg:ErrorMessages.arrayPatternSpread)
     in
     Parser.expect Rbracket p;
     let loc = mkLoc startPos p.prevEndPos in
@@ -3873,12 +3833,12 @@ Solution: you need to pull out each field you want explicitly."
     let lparen = p.startPos in
     Parser.expect Lparen p;
     let args = match
-      parseCommaDelimitedList
-        p ~grammar:Grammar.PatternList ~closing:Rparen ~f:parseConstrainedPattern
+      parseCommaDelimitedRegion
+        p ~grammar:Grammar.PatternList ~closing:Rparen ~f:parseConstrainedPatternRegion
     with
     | [pattern] -> Some pattern
     | patterns ->
-        Some (Ast_helper.Pat.tuple ~loc:(mkLoc lparen p.prevEndPos) patterns)
+        Some (Ast_helper.Pat.tuple ~loc:(mkLoc lparen p.endPos) patterns)
     in
     Parser.expect Rparen p;
     Ast_helper.Pat.construct ~loc:(mkLoc startPos p.prevEndPos) ~attrs constr args
@@ -3902,7 +3862,9 @@ Solution: you need to pull out each field you want explicitly."
         loc_start = leftOperand.pexp_loc.loc_start;
         loc_end = falseBranch.Parsetree.pexp_loc.loc_end;
       } in
-      Ast_helper.Exp.ifthenelse ~attrs:[ternaryAttr] ~loc leftOperand trueBranch (Some falseBranch)
+      Ast_helper.Exp.ifthenelse
+        ~attrs:[ternaryAttr] ~loc
+        leftOperand trueBranch (Some falseBranch)
     | _ ->
       leftOperand
 
@@ -3964,85 +3926,92 @@ Solution: you need to pull out each field you want explicitly."
 	 * labelName ::= lident
    *)
   and parseParameter p =
-    let startPos = p.Parser.startPos in
-    let uncurried = Parser.optional p Token.Dot in
-    (* two scenarios:
-     *   attrs ~lbl ...
-     *   attrs pattern
-     * Attributes before a labelled arg, indicate that it's on the whole arrow expr
-     * Otherwise it's part of the pattern
-     *  *)
-    let attrs = parseAttributes p in
-    if p.Parser.token = Typ then (
-      Parser.next p;
-      let lidents = parseLidentList p in
-      TypeParameter (uncurried, attrs, lidents, startPos)
-    ) else (
-    let (attrs, lbl, pat) = match p.Parser.token with
-    | Tilde ->
-      Parser.next p;
-      let (lblName, _loc) = parseLident p in
-      begin match p.Parser.token with
-      | Comma | Equal | Rparen ->
-        let loc = mkLoc startPos p.prevEndPos in
-        (
-          attrs,
-          Asttypes.Labelled lblName,
-          Ast_helper.Pat.var ~loc (Location.mkloc lblName loc)
-        )
-      | Colon ->
-        let lblEnd = p.prevEndPos in
+    if (
+      p.Parser.token = Token.Typ ||
+      p.token = Tilde ||
+      p.token = Dot ||
+      Grammar.isPatternStart p.token
+    ) then (
+      let startPos = p.Parser.startPos in
+      let uncurried = Parser.optional p Token.Dot in
+      (* two scenarios:
+       *   attrs ~lbl ...
+       *   attrs pattern
+       * Attributes before a labelled arg, indicate that it's on the whole arrow expr
+       * Otherwise it's part of the pattern
+       *  *)
+      let attrs = parseAttributes p in
+      if p.Parser.token = Typ then (
         Parser.next p;
-        let typ = parseTypExpr p in
-        let loc = mkLoc startPos lblEnd in
-        let pat =
-          let pat = Ast_helper.Pat.var ~loc (Location.mkloc lblName loc) in
+        let lidents = parseLidentList p in
+        Some (TypeParameter (uncurried, attrs, lidents, startPos))
+      ) else (
+      let (attrs, lbl, pat) = match p.Parser.token with
+      | Tilde ->
+        Parser.next p;
+        let (lblName, _loc) = parseLident p in
+        begin match p.Parser.token with
+        | Comma | Equal | Rparen ->
           let loc = mkLoc startPos p.prevEndPos in
-          Ast_helper.Pat.constraint_ ~loc pat typ in
-        (attrs, Asttypes.Labelled lblName, pat)
-      | As ->
-        Parser.next p;
-        let pat = parseConstrainedPattern p in
-        (attrs, Asttypes.Labelled lblName, pat)
-      | t ->
-        Parser.err p (Diagnostics.unexpected t p.breadcrumbs);
-        let loc = mkLoc startPos p.prevEndPos in
-        (
-          attrs,
-          Asttypes.Labelled lblName,
-          Ast_helper.Pat.var ~loc (Location.mkloc lblName loc)
-        )
-      end
-    | _ ->
-      let pattern = parseConstrainedPattern p in
-      let attrs = List.concat [attrs; pattern.ppat_attributes] in
-      ([], Asttypes.Nolabel, {pattern with ppat_attributes = attrs})
-    in
-    let parameter = match p.Parser.token with
-    | Equal ->
-      Parser.next p;
-			let lbl = match lbl with
-			| Asttypes.Labelled lblName -> Asttypes.Optional lblName
-			| Asttypes.Optional _ as lbl -> lbl
-			| Asttypes.Nolabel -> Asttypes.Nolabel
-			in
-      begin match p.Parser.token with
-      | Question ->
-        Parser.next p;
-        (uncurried, attrs, lbl, None, pat, startPos)
+          (
+            attrs,
+            Asttypes.Labelled lblName,
+            Ast_helper.Pat.var ~loc (Location.mkloc lblName loc)
+          )
+        | Colon ->
+          let lblEnd = p.prevEndPos in
+          Parser.next p;
+          let typ = parseTypExpr p in
+          let loc = mkLoc startPos lblEnd in
+          let pat =
+            let pat = Ast_helper.Pat.var ~loc (Location.mkloc lblName loc) in
+            let loc = mkLoc startPos p.prevEndPos in
+            Ast_helper.Pat.constraint_ ~loc pat typ in
+          (attrs, Asttypes.Labelled lblName, pat)
+        | As ->
+          Parser.next p;
+          let pat = parseConstrainedPattern p in
+          (attrs, Asttypes.Labelled lblName, pat)
+        | t ->
+          Parser.err p (Diagnostics.unexpected t p.breadcrumbs);
+          let loc = mkLoc startPos p.prevEndPos in
+          (
+            attrs,
+            Asttypes.Labelled lblName,
+            Ast_helper.Pat.var ~loc (Location.mkloc lblName loc)
+          )
+        end
       | _ ->
-        let expr = parseExpr p in
-        (uncurried, attrs, lbl, Some expr, pat, startPos)
-      end
-    | _ ->
-      (uncurried, attrs, lbl, None, pat, startPos)
-    in
-    TermParameter parameter
-  )
+        let pattern = parseConstrainedPattern p in
+        let attrs = List.concat [attrs; pattern.ppat_attributes] in
+        ([], Asttypes.Nolabel, {pattern with ppat_attributes = attrs})
+      in
+      let parameter = match p.Parser.token with
+      | Equal ->
+        Parser.next p;
+        let lbl = match lbl with
+        | Asttypes.Labelled lblName -> Asttypes.Optional lblName
+        | Asttypes.Optional _ as lbl -> lbl
+        | Asttypes.Nolabel -> Asttypes.Nolabel
+        in
+        begin match p.Parser.token with
+        | Question ->
+          Parser.next p;
+          (uncurried, attrs, lbl, None, pat, startPos)
+        | _ ->
+          let expr = parseExpr p in
+          (uncurried, attrs, lbl, Some expr, pat, startPos)
+        end
+      | _ ->
+        (uncurried, attrs, lbl, None, pat, startPos)
+      in
+      Some (TermParameter parameter)
+    )
+    ) else None
 
   and parseParameterList p =
     let parameters =
-      parseCommaDelimitedList
+      parseCommaDelimitedRegion
         ~grammar:Grammar.ParameterList
         ~f:parseParameter
         ~closing:Rparen
@@ -4119,6 +4088,21 @@ Solution: you need to pull out each field you want explicitly."
       Ast_helper.Exp.constraint_ ~loc expr typ
     | _ -> expr
 
+
+  and parseConstrainedExprRegion p =
+    match p.Parser.token with
+    | token when Grammar.isExprStart token ->
+      let expr = parseExpr p in
+      begin match p.Parser.token with
+      | Colon ->
+        Parser.next p;
+        let typ = parseTypExpr p in
+        let loc = mkLoc expr.pexp_loc.loc_start typ.ptyp_loc.loc_end in
+        Some (Ast_helper.Exp.constraint_ ~loc expr typ)
+      | _ -> Some expr
+      end
+    | _ -> None
+
   (* Atomic expressions represent unambiguous expressions.
    * This means that regardless of the context, these expressions
    * are always interpreted correctly. *)
@@ -4127,14 +4111,14 @@ Solution: you need to pull out each field you want explicitly."
     let startPos = p.Parser.startPos in
     let expr = match p.Parser.token with
       | (True | False) as token ->
-        let endPos = p.endPos in
         Parser.next p;
-        let loc = mkLoc startPos endPos in
-        Ast_helper.Exp.construct
+        let loc = mkLoc startPos p.prevEndPos in
+        Ast_helper.Exp.construct ~loc
           (Location.mkloc (Longident.Lident (Token.toString token)) loc) None
       | Int _ | String _ | Float _ | Character _ ->
         let c = parseConstant p in
-        Ast_helper.Exp.constant c
+        let loc = mkLoc startPos p.prevEndPos in
+        Ast_helper.Exp.constant ~loc c
       | Backtick ->
         parseTemplateExpr p
       | Uident _ | Lident _ ->
@@ -4149,24 +4133,29 @@ Solution: you need to pull out each field you want explicitly."
             ~loc (Location.mkloc (Longident.Lident "()") loc) None
         | t ->
           let expr = parseConstrainedExpr p in
-          Parser.expect Rparen p;
-          {expr with pexp_loc = mkLoc startPos p.startPos}
+          begin match p.token with
+          | Comma ->
+            Parser.next p;
+            parseTupleExpr ~startPos ~first:expr p
+          | _ ->
+            Parser.expect Rparen p;
+            {expr with pexp_loc = mkLoc startPos p.startPos}
+          end
         end
       | List ->
         parseListExpr p
       | Module ->
         Parser.next p;
-        parseFirstClassModuleExpr p
+        parseFirstClassModuleExpr ~startPos p
       | Lbracket ->
         parseArrayExp p
       | Lbrace ->
         parseBracedOrRecordExpr p
-      | Forwardslash ->
-        parseTupleExpr p
       | LessThan ->
         parseJsx p
       | Percent ->
-        let (loc, extension) = parseExtension p in
+        let extension = parseExtension p in
+        let loc = mkLoc startPos p.prevEndPos in
         Ast_helper.Exp.extension ~loc extension
       | token ->
         let errPos = p.prevEndPos in
@@ -4182,17 +4171,17 @@ Solution: you need to pull out each field you want explicitly."
 
   (* module(module-expr)
    * module(module-expr : package-type) *)
-  and parseFirstClassModuleExpr p =
-    let startPos = p.Parser.startPos in
+  and parseFirstClassModuleExpr ~startPos p =
     Parser.expect Lparen p;
 
     let modExpr = parseModuleExpr p in
     let modEndLoc = p.prevEndPos in
     begin match p.Parser.token with
     | Colon ->
+      let colonStart = p.Parser.startPos in
       Parser.next p;
       let attrs = parseAttributes p in
-      let packageType = parsePackageType ~attrs p in
+      let packageType = parsePackageType ~startPos:colonStart ~attrs p in
       Parser.expect Rparen p;
       let loc = mkLoc startPos modEndLoc in
       let firstClassModule = Ast_helper.Exp.pack ~loc modExpr in
@@ -4281,12 +4270,8 @@ Solution: you need to pull out each field you want explicitly."
    *
    *  The "operand" represents the expression that is operated on
    *)
-  and parsePrimaryExpr ?operand ?(noCall=false) p =
-    let startPos = p.Parser.startPos in
-    let e1 = match operand with
-      | Some e -> e
-      | None -> parseAtomicExpr p
-    in
+  and parsePrimaryExpr ~operand ?(noCall=false) p =
+    let startPos = operand.pexp_loc.loc_start in
     let rec loop p expr =
       match p.Parser.token with
       | Dot ->
@@ -4312,9 +4297,7 @@ Solution: you need to pull out each field you want explicitly."
         loop p (parseCallExpr p expr)
       | _ -> expr
     in
-    let expr = loop p e1 in
-    {expr with pexp_loc = mkLoc startPos p.prevEndPos}
-
+    loop p operand
 
   (* a unary expression is an expression with only one operand and
    * unary operator. Examples:
@@ -4334,7 +4317,7 @@ Solution: you need to pull out each field you want explicitly."
       Parser.eatBreadcrumb p;
       unaryExpr
     | _ ->
-      parsePrimaryExpr p
+      parsePrimaryExpr ~operand:(parseAtomicExpr p) p
 
   (* Represents an "operand" in a binary expression.
    * If you have `a + b`, `a` and `b` both represent
@@ -4371,10 +4354,11 @@ Solution: you need to pull out each field you want explicitly."
       else
         parseUnaryExpr p
     in
-    let endPos = p.Parser.prevEndPos in
+    (* let endPos = p.Parser.prevEndPos in *)
     {expr with
       pexp_attributes = List.concat[expr.Parsetree.pexp_attributes; attrs];
-      pexp_loc = mkLoc startPos endPos}
+      (* pexp_loc = mkLoc startPos endPos *)
+    }
 
   (* a binary expression is an expression that combines two expressions with an
    * operator. Examples:
@@ -4389,20 +4373,24 @@ Solution: you need to pull out each field you want explicitly."
     let rec loop a =
       let token = p.Parser.token in
       let tokenPrec =
-        (* Disambiguate division VS start of a tuple:
-         *  foo() / 1
-         *  VS
-         *  foo()
-         *  /1, 2/
-         * The newline indicates the difference between the two.
-         * Branching here has a performance impact.
-         * TODO: totally different tuple syntax *)
-        if (token = Token.Forwardslash || token = Token.Minus) &&
-            p.startPos.pos_lnum > p.prevEndPos.pos_lnum
-        then
-          -1
-        else
-          Token.precedence token
+        match token with
+        (* Can the minus be interpreted as a binary operator? Or is it a unary?
+         * let w = {
+         *   x
+         *   -10
+         * }
+         * vs
+         * let w = {
+         *   width
+         *   - gap
+         * }
+         *
+         * First case is unary, second is a binary operator.
+         * See Scanner.isBinaryOp *)
+        | Minus | MinusDot when not (
+            Scanner.isBinaryOp p.scanner.src p.startPos.pos_cnum p.endPos.pos_cnum
+          ) && p.startPos.pos_lnum > p.prevEndPos.pos_lnum -> -1
+        | token -> Token.precedence token
       in
       if tokenPrec < prec then a
       else begin
@@ -4481,7 +4469,6 @@ Solution: you need to pull out each field you want explicitly."
 
   and parseLetBindingBody ~startPos ~attrs p =
     Parser.leaveBreadcrumb p Grammar.LetBinding;
-    let startPos = p.Parser.startPos in
     let pat, exp =
       let pat = parsePattern p in
       match p.Parser.token with
@@ -4512,9 +4499,7 @@ Solution: you need to pull out each field you want explicitly."
         let exp = parseExpr p in
         (pat, exp)
     in
-    let loc = {pat.ppat_loc with
-      loc_end = exp.Parsetree.pexp_loc.loc_end
-    } in
+    let loc = mkLoc startPos p.prevEndPos in
     let vb = Ast_helper.Vb.mk ~loc ~attrs pat exp in
     Parser.eatBreadcrumb p;
     vb
@@ -4549,7 +4534,6 @@ Solution: you need to pull out each field you want explicitly."
     let breadcrumbs = p.breadcrumbs in
     let errors = p.errors in
     let diagnostics = p.diagnostics in
-    (* let directive = p.directive in *)
     let comments = p.comments in
 
     match p.Parser.token with
@@ -4573,7 +4557,6 @@ Solution: you need to pull out each field you want explicitly."
         p.breadcrumbs <- breadcrumbs;
         p.errors <- errors;
         p.diagnostics <- diagnostics;
-        (* p.directive <- directive; *)
         p.comments <- comments;
         []
       end
@@ -4582,7 +4565,7 @@ Solution: you need to pull out each field you want explicitly."
   (* definition	::=	let [rec] let-binding  { and let-binding }   *)
   and parseLetBindings ~attrs p =
     let startPos = p.Parser.startPos in
-    Parser.expect Let p;
+    Parser.optional p Let |> ignore;
     let recFlag = if Parser.optional p Token.Rec then
       Asttypes.Recursive
     else
@@ -4591,11 +4574,19 @@ Solution: you need to pull out each field you want explicitly."
     let first = parseLetBindingBody ~startPos ~attrs p in
 
     let rec loop p bindings =
-      let attrs = parseAttributesAndBinding p in
       let startPos = p.Parser.startPos in
+      let attrs = parseAttributesAndBinding p in
       match p.Parser.token with
       | And ->
         Parser.next p;
+        let attrs = match p.token with
+        | Export ->
+          let exportLoc = mkLoc p.startPos p.endPos in
+          Parser.next p;
+          let genTypeAttr = (Location.mkloc "genType" exportLoc, Parsetree.PStr []) in
+          genTypeAttr::attrs
+        | _ -> attrs
+        in
         ignore(Parser.optional p Let); (* overparse for fault tolerance *)
         let letBinding = parseLetBindingBody ~startPos ~attrs p in
         loop p (letBinding::bindings)
@@ -4628,7 +4619,7 @@ Solution: you need to pull out each field you want explicitly."
     in
     Ast_helper.Exp.ident ~loc:longident.loc longident
 
-  and parseJsxOpeningOrSelfClosingElement p =
+  and parseJsxOpeningOrSelfClosingElement ~startPos p =
     let jsxStartPos = p.Parser.startPos in
     let name = parseJsxName p in
     let jsxProps = parseJsxProps p in
@@ -4649,6 +4640,7 @@ Solution: you need to pull out each field you want explicitly."
       let () = match p.token with
       | LessThanSlash -> Parser.next p
       | LessThan -> Parser.next p; Parser.expect Forwardslash p
+      | token when Grammar.isStructureItemStart token -> ()
       | _ -> Parser.expect LessThanSlash p
       in
       begin match p.Parser.token with
@@ -4659,11 +4651,18 @@ Solution: you need to pull out each field you want explicitly."
           List.hd children
         else
           makeListExpression loc children None
-      | _ ->
-        let opening = "</" ^ (string_of_pexp_ident name) ^ ">" in
-        let msg = "Closing jsx name should be the same as the opening name. Did you mean " ^ opening ^ " ?" in
-        Parser.err p (Diagnostics.message msg);
-        Parser.expect GreaterThan p;
+      | token ->
+        let () = if Grammar.isStructureItemStart token then (
+          let closing = "</" ^ (string_of_pexp_ident name) ^ ">" in
+          let msg = Diagnostics.message ("Missing " ^ closing) in
+          Parser.err ~startPos ~endPos:p.prevEndPos p msg;
+        ) else (
+          let opening = "</" ^ (string_of_pexp_ident name) ^ ">" in
+          let msg = "Closing jsx name should be the same as the opening name. Did you mean " ^ opening ^ " ?" in
+          Parser.err ~startPos ~endPos:p.prevEndPos p (Diagnostics.message msg);
+          Parser.expect GreaterThan p
+        )
+        in
         let loc = mkLoc childrenStartPos childrenEndPos in
         if spread then
           List.hd children
@@ -4694,10 +4693,11 @@ Solution: you need to pull out each field you want explicitly."
    *)
   and parseJsx p =
     Parser.leaveBreadcrumb p Grammar.Jsx;
+    let startPos = p.Parser.startPos in
     Parser.expect LessThan p;
     let jsxExpr = match p.Parser.token with
     | Lident _ | Uident _ ->
-      parseJsxOpeningOrSelfClosingElement p
+      parseJsxOpeningOrSelfClosingElement ~startPos p
     | GreaterThan -> (* fragment: <> foo </> *)
       parseJsxFragment p
     | _ ->
@@ -4731,35 +4731,46 @@ Solution: you need to pull out each field you want explicitly."
    *)
   and parseJsxProp p =
     Parser.leaveBreadcrumb p Grammar.JsxAttribute;
-    let optional = Parser.optional p Question in
-    let (name, _loc) = parseLident p in
-    (* optional punning: <foo ?a /> *)
-    if optional then
-      (Asttypes.Optional name, Ast_helper.Exp.ident (Location.mknoloc
-        (Longident.Lident name)))
-    else begin
-      match p.Parser.token with
-      | Equal ->
-        Parser.next p;
-        (* no punning *)
-        let optional = Parser.optional p Question in
-        let attrExpr = parsePrimaryExpr p in
-        let label =
-          if optional then Asttypes.Optional name else Asttypes.Labelled name
-        in
-        (label, attrExpr)
-      | _ ->
-        let optional = Parser.optional p Question in
-        let attrExpr = Ast_helper.Exp.ident (Location.mknoloc (Longident.Lident
-        name)) in
-        let label =
-          if optional then Asttypes.Optional name else Asttypes.Labelled name
-        in
-        (label, attrExpr)
-    end
+    match p.Parser.token with
+    | Question | Lident _ ->
+      let optional = Parser.optional p Question in
+      let (name, loc) = parseLident p in
+      let propLocAttr = (Location.mkloc "ns.jsxPropLoc" loc, Parsetree.PStr []) in
+      (* optional punning: <foo ?a /> *)
+      if optional then
+        Some (
+          Asttypes.Optional name,
+          Ast_helper.Exp.ident ~attrs:[propLocAttr]
+            ~loc (Location.mkloc (Longident.Lident name) loc)
+        )
+      else begin
+        match p.Parser.token with
+        | Equal ->
+          Parser.next p;
+          (* no punning *)
+          let optional = Parser.optional p Question in
+          let attrExpr =
+            let e = parsePrimaryExpr ~operand:(parseAtomicExpr p) p in
+            {e with pexp_attributes = propLocAttr::e.pexp_attributes}
+          in
+          let label =
+            if optional then Asttypes.Optional name else Asttypes.Labelled name
+          in
+          Some (label, attrExpr)
+        | _ ->
+          let attrExpr =
+            Ast_helper.Exp.ident ~loc ~attrs:[propLocAttr]
+              (Location.mknoloc (Longident.Lident name)) in
+          let label =
+            if optional then Asttypes.Optional name else Asttypes.Labelled name
+          in
+          Some (label, attrExpr)
+      end
+    | _ ->
+      None
 
   and parseJsxProps p =
-    parseList
+    parseRegion
       ~grammar:Grammar.JsxAttribute
       ~f:parseJsxProp
       p
@@ -4778,20 +4789,23 @@ Solution: you need to pull out each field you want explicitly."
          * determines the correct token to disambiguate *)
         let token = Scanner.reconsiderLessThan p.scanner in
         if token = LessThan then
-          let child = parsePrimaryExpr ~noCall:true p in
+          let child = parsePrimaryExpr ~operand:(parseAtomicExpr p) ~noCall:true p in
           loop p (child::children)
         else (* LessThanSlash *)
           let () = p.token <- token in
           let () = Scanner.popMode p.scanner Jsx in
           List.rev children
-      | _ ->
-        let child = parsePrimaryExpr ~noCall:true p in
+      | token when Grammar.isJsxChildStart token ->
+        let child = parsePrimaryExpr ~operand:(parseAtomicExpr p) ~noCall:true p in
         loop p (child::children)
+      | _ ->
+        Scanner.popMode p.scanner Jsx;
+        List.rev children
     in
     match p.Parser.token with
     | DotDotDot ->
       Parser.next p;
-      (true, [parsePrimaryExpr ~noCall:true p])
+      (true, [parsePrimaryExpr ~operand:(parseAtomicExpr p) ~noCall:true p])
     | _ -> (false, loop p [])
 
   and parseBracedOrRecordExpr p =
@@ -4799,7 +4813,7 @@ Solution: you need to pull out each field you want explicitly."
     Parser.expect Lbrace p;
     let expr = match p.Parser.token with
     | Rbrace ->
-      Parser.err  p (Diagnostics.unexpected Rbrace p.breadcrumbs);
+      Parser.err p (Diagnostics.unexpected Rbrace p.breadcrumbs);
       let loc = mkLoc p.prevEndPos p.endPos in
       Ast_helper.Exp.construct
         ~loc (Location.mkloc (Longident.Lident "()") loc) None
@@ -4808,7 +4822,7 @@ Solution: you need to pull out each field you want explicitly."
       Parser.next p;
       let spreadExpr = parseConstrainedExpr p in
       Parser.expect Comma p;
-      parseRecordExpr ~spread:(Some spreadExpr) [] p
+      parseRecordExpr ~startPos ~spread:(Some spreadExpr) [] p
     | String s ->
       let field =
         let loc = mkLoc p.startPos p.endPos in
@@ -4820,7 +4834,7 @@ Solution: you need to pull out each field you want explicitly."
         Parser.next p;
         let fieldExpr = parseExpr p in
         Parser.optional p Comma |> ignore;
-        parseRecordExprWithStringKeys (field, fieldExpr) p
+        parseRecordExprWithStringKeys ~startPos (field, fieldExpr) p
       | _ ->
         let constant = Ast_helper.Exp.constant ~loc:field.loc (Parsetree.Pconst_string(s, None)) in
         let a = parsePrimaryExpr ~operand:constant p in
@@ -4842,31 +4856,32 @@ Solution: you need to pull out each field you want explicitly."
         begin match p.Parser.token with
         | Comma ->
           Parser.next p;
-          parseRecordExpr [(pathIdent, valueOrConstructor)] p
+          parseRecordExpr ~startPos [(pathIdent, valueOrConstructor)] p
         | Colon ->
           Parser.next p;
           let fieldExpr = parseExpr p in
           begin match p.token with
           | Rbrace ->
-            Ast_helper.Exp.record [(pathIdent, fieldExpr)] None
+            let loc = mkLoc startPos p.endPos in
+            Ast_helper.Exp.record ~loc [(pathIdent, fieldExpr)] None
           | _ ->
             Parser.expect Comma p;
-            parseRecordExpr [(pathIdent, fieldExpr)] p
+            parseRecordExpr ~startPos [(pathIdent, fieldExpr)] p
           end
         (* error case *)
         | Lident _ ->
           if p.prevEndPos.pos_lnum < p.startPos.pos_lnum then (
             Parser.expect Comma p;
-            parseRecordExpr [(pathIdent, valueOrConstructor)] p
+            parseRecordExpr ~startPos [(pathIdent, valueOrConstructor)] p
           ) else (
             Parser.expect Colon p;
-            parseRecordExpr [(pathIdent, valueOrConstructor)] p
+            parseRecordExpr ~startPos [(pathIdent, valueOrConstructor)] p
           )
         | Semicolon ->
           Parser.next p;
           parseExprBlock ~first:(Ast_helper.Exp.ident pathIdent) p
         | Rbrace ->
-          Ast_helper.Exp.ident pathIdent
+          Ast_helper.Exp.ident ~loc:pathIdent.loc pathIdent
         | EqualGreater ->
             let loc = mkLoc startPos identEndPos in
             let ident = Location.mkloc (Longident.last pathIdent.txt) loc in
@@ -4913,59 +4928,71 @@ Solution: you need to pull out each field you want explicitly."
       parseExprBlock p
     in
     Parser.expect Rbrace p;
-    {expr with pexp_loc = mkLoc startPos p.prevEndPos}
+    expr
 
   and parseRecordRowWithStringKey p =
-    let field = match p.Parser.token with
+    match p.Parser.token with
     | String s ->
       let loc = mkLoc p.startPos p.endPos in
       Parser.next p;
-      Location.mkloc (Longident.Lident s) loc
-    | t ->
-      Parser.err p (Diagnostics.unexpected t p.breadcrumbs);
-      Location.mknoloc (Longident.Lident "_")
-    in
-    match p.Parser.token with
-    | Colon ->
-      Parser.next p;
-      let fieldExpr = parseExpr p in
-      (field, fieldExpr)
-    | _ ->
-      (field, Ast_helper.Exp.ident ~loc:field.loc field)
+      let field = Location.mkloc (Longident.Lident s) loc in
+      begin match p.Parser.token with
+      | Colon ->
+        Parser.next p;
+        let fieldExpr = parseExpr p in
+        Some (field, fieldExpr)
+      | _ ->
+        Some (field, Ast_helper.Exp.ident ~loc:field.loc field)
+      end
+    | _ -> None
 
   and parseRecordRow p =
-    let field = parseValuePath p in
-    match p.Parser.token with
-    | Colon ->
+    let () = match p.Parser.token with
+    | Token.DotDotDot ->
+      Parser.err p (Diagnostics.message ErrorMessages.recordExprSpread);
       Parser.next p;
-      let fieldExpr = parseExpr p in
-      (field, fieldExpr)
-    | _ ->
-      (field, Ast_helper.Exp.ident ~loc:field.loc  field)
+    | _ -> ()
+    in
+    match p.Parser.token with
+    | Lident _ | Uident _ | List ->
+      let field = parseValuePath p in
+      begin match p.Parser.token with
+      | Colon ->
+        Parser.next p;
+        let fieldExpr = parseExpr p in
+        Some (field, fieldExpr)
+      | _ ->
+        Some (field, Ast_helper.Exp.ident ~loc:field.loc  field)
+      end
+    | _ -> None
 
-  and parseRecordExprWithStringKeys firstRow p =
+  and parseRecordExprWithStringKeys ~startPos firstRow p =
     let rows = firstRow::(
-      parseCommaDelimitedList ~grammar:Grammar.RecordRowsStringKey ~closing:Rbrace ~f:parseRecordRowWithStringKey p
+      parseCommaDelimitedRegion ~grammar:Grammar.RecordRowsStringKey ~closing:Rbrace ~f:parseRecordRowWithStringKey p
     ) in
-    let loc = mkLoc ((fst firstRow).loc.loc_start) p.endPos in
+    let loc = mkLoc startPos p.endPos in
     let recordStrExpr = Ast_helper.Str.eval ~loc (
       Ast_helper.Exp.record ~loc rows None
     ) in
     Ast_helper.Exp.extension ~loc
       (Location.mkloc "bs.obj" loc, Parsetree.PStr [recordStrExpr])
 
-  and parseRecordExpr ?(spread=None) rows p =
+  and parseRecordExpr ~startPos ?(spread=None) rows p =
     let exprs =
-      parseCommaDelimitedList ~grammar:Grammar.RecordRows ~closing:Rbrace ~f:parseRecordRow p
+      parseCommaDelimitedRegion
+        ~grammar:Grammar.RecordRows
+        ~closing:Rbrace
+        ~f:parseRecordRow p
     in
-    let rows = List.concat[rows; exprs] in
+    let rows = List.concat [rows; exprs] in
     let () = match rows with
     | [] ->
       let msg = "Record spread needs at least one field that's updated" in
       Parser.err p (Diagnostics.message msg);
     | rows -> ()
     in
-    Ast_helper.Exp.record rows spread
+    let loc = mkLoc startPos p.endPos in
+    Ast_helper.Exp.record ~loc rows spread
 
   and parseExprBlockItem p =
     let startPos = p.Parser.startPos in
@@ -4974,12 +5001,12 @@ Solution: you need to pull out each field you want explicitly."
       Parser.next p;
       begin match p.token with
       | Lparen ->
-        parseFirstClassModuleExpr p
+        parseFirstClassModuleExpr ~startPos p
       | _ ->
         let name = match p.Parser.token with
         | Uident ident ->
+          let loc = mkLoc p.startPos p.endPos in
           Parser.next p;
-          let loc = mkLoc startPos p.prevEndPos in
           Location.mkloc ident loc
         | t ->
           Parser.err p (Diagnostics.uident t);
@@ -4988,71 +5015,53 @@ Solution: you need to pull out each field you want explicitly."
         let body = parseModuleBindingBody p in
         Parser.optional p Semicolon |> ignore;
         let expr = parseExprBlock p in
-        let endPos = p.prevEndPos in
-        let loc = mkLoc startPos endPos in
+        let loc = mkLoc startPos p.prevEndPos in
         Ast_helper.Exp.letmodule ~loc name body expr
       end
     | Exception ->
       let extensionConstructor = parseExceptionDef ~attrs:[] p in
       Parser.optional p Semicolon |> ignore;
       let blockExpr = parseExprBlock  p in
-      let endPos = p.prevEndPos in
-      let loc = mkLoc startPos endPos in
+      let loc = mkLoc startPos p.prevEndPos in
       Ast_helper.Exp.letexception ~loc extensionConstructor blockExpr
     | Open ->
       let od = parseOpenDescription ~attrs:[] p in
       Parser.optional p Semicolon |> ignore;
       let blockExpr = parseExprBlock p in
-      let endPos = p.prevEndPos in
-      let loc = mkLoc startPos endPos in
+      let loc = mkLoc startPos p.prevEndPos in
       Ast_helper.Exp.open_ ~loc od.popen_override od.popen_lid blockExpr
     | Let ->
       let (recFlag, letBindings) = parseLetBindings ~attrs:[] p in
-      let endPos = p.prevEndPos in
-      let loc = mkLoc startPos endPos in
-
       let next = match p.Parser.token with
       | Semicolon ->
         Parser.next p;
-        begin match p.Parser.token with
-        (* seq expr start *)
-        | At | Minus | MinusDot | Plus | PlusDot | Bang | Band
-        | True | False | Int _ | Float _ | String _ | Lident _ | Uident _
-        | Lparen | List | Lbracket | Lbrace | Forwardslash | Assert
-        | Lazy | If | For | While | Switch | Open | Module | Exception | Let
-        | LessThan | Backtick | Percent | Try | Underscore ->
+        if Grammar.isBlockExprStart p.Parser.token then
           parseExprBlock p
-        | _ ->
+        else
           let loc = mkLoc p.startPos p.endPos in
           Ast_helper.Exp.construct ~loc
             (Location.mkloc (Longident.Lident "()") loc) None
-        end
-      (* High danger, TODO check if we really can omit semi in these case*)
-      | Bang | Band
-      | True | False | Int _ | Float _ | String _ | Lident _ | Uident _
-      | Lparen | List | Lbracket | Lbrace | Forwardslash | Assert
-      | Lazy | If | For | While | Switch | Open | Module | Exception | Let
-      | LessThan | Backtick | Percent | Try | Underscore ->
+      | token when Grammar.isBlockExprStart token ->
         parseExprBlock p
       | _ ->
         let loc = mkLoc p.startPos p.endPos in
         Ast_helper.Exp.construct ~loc (Location.mkloc (Longident.Lident "()") loc) None
       in
+      let loc = mkLoc startPos p.prevEndPos in
       Ast_helper.Exp.let_ ~loc recFlag letBindings next
     | _ ->
       let e1 = parseExpr p in
       ignore (Parser.optional p Semicolon);
-      begin match p.Parser.token with
-      (* seq expr start *)
-      | At | Minus | MinusDot | Plus | PlusDot | Bang | Band
-      | True | False | Int _ | Float _ | String _ | Lident _ | Uident _
-      | Lparen | List | Lbracket | Lbrace | Forwardslash | Assert
-      | Lazy | If | For | While | Switch | Open | Module | Exception | Let
-      | LessThan | Backtick | Percent | Try | Underscore ->
+      if Grammar.isBlockExprStart p.Parser.token then
+        let fakeUnitPat =
+          let unitLid = Location.mknoloc (Longident.Lident "()") in
+          Ast_helper.Pat.construct unitLid None
+        in
         let e2 = parseExprBlock p in
-        Ast_helper.Exp.sequence e1 e2
-      | _ -> e1
-      end
+        let vb = Ast_helper.Vb.mk ~loc:e1.pexp_loc fakeUnitPat e1 in
+        let loc = {e1.pexp_loc with loc_end = e2.pexp_loc.loc_end} in
+        Ast_helper.Exp.let_ ~loc Asttypes.Nonrecursive [vb] e2
+      else e1
 
   (* blockExpr ::= expr
    *            |  expr          ;
@@ -5068,54 +5077,41 @@ Solution: you need to pull out each field you want explicitly."
    *  a block of expression is always
    *)
   and parseExprBlock ?first p =
-      Parser.leaveBreadcrumb p Grammar.ExprBlock;
-      let item = match first with
-      | Some e -> e
-      | None -> parseExprBlockItem p
-      in
-      let blockExpr = match p.Parser.token with
-      | Semicolon ->
-        Parser.next p;
-        begin match p.Parser.token with
-        (* seq expr start *)
-        | At | Percent | Minus | MinusDot | Plus | PlusDot | Bang | Band
-        | True | False | Int _ | String _ | Character _ | Lident _ | Uident _
-        | Lparen | List | Lbracket | Lbrace | Forwardslash | Assert
-        | Lazy | If | For | While | Switch | Open | Module | Exception | Let
-        | LessThan | Backtick | Try | Underscore ->
-          let next = parseExprBlockItem p in
-          ignore(Parser.optional p Semicolon);
-          Ast_helper.Exp.sequence item next
-        | _ -> item
-        end
-      (* semicolon recovery *)
-      | token when
-          begin match token with
-          | Bang | Band
-          | True | False | Int _ | String _ | Character _ | Lident _ | Uident _
-          | Lparen | List | Lbracket | Lbrace | Forwardslash | Assert
-          | Lazy | If | For | While | Switch | Open | Module | Exception | Let
-          | LessThan | Backtick | Percent | Try | Underscore -> true
-          | _ -> false
-          end
-        ->
-          begin match p.Parser.token with
-          (* seq expr start *)
-          | At | Minus | MinusDot | Plus | PlusDot | Bang | Band
-          | True | False | Int _ | String _ | Character _ | Lident _ | Uident _
-          | Lparen | List | Lbracket | Lbrace | Forwardslash | Assert
-          | Lazy | If | For | While | Switch | Open | Module | Exception | Let
-          | LessThan | Backtick | Percent | Try | Underscore ->
-            let next = parseExprBlockItem p in
-            ignore(Parser.optional p Semicolon);
-            Ast_helper.Exp.sequence item next
-          | _ -> item
-          end
-      | _ ->
+    Parser.leaveBreadcrumb p Grammar.ExprBlock;
+    let item = match first with
+    | Some e -> e
+    | None -> parseExprBlockItem p
+    in
+    let blockExpr = match p.Parser.token with
+    | Semicolon ->
+      Parser.next p;
+      if Grammar.isBlockExprStart p.Parser.token then
+        let next = parseExprBlockItem p in
+        ignore(Parser.optional p Semicolon);
+        let fakeUnitPat =
+          let unitLid = Location.mknoloc (Longident.Lident "()") in
+          Ast_helper.Pat.construct unitLid None
+        in
+        let vb = Ast_helper.Vb.mk ~loc:item.pexp_loc fakeUnitPat item in
+        let loc = {vb.pvb_loc with loc_end = next.pexp_loc.loc_end} in
+        Ast_helper.Exp.let_ ~loc Asttypes.Nonrecursive [vb] next
+      else
         item
+    | token when Grammar.isBlockExprStart token ->
+      let next = parseExprBlockItem p in
+      ignore(Parser.optional p Semicolon);
+      let fakeUnitPat =
+        let unitLid = Location.mknoloc (Longident.Lident "()") in
+        Ast_helper.Pat.construct unitLid None
       in
-      Parser.eatBreadcrumb p;
-      blockExpr
+      let vb = Ast_helper.Vb.mk ~loc:item.pexp_loc fakeUnitPat item in
+      let loc = {vb.pvb_loc with loc_end = next.pexp_loc.loc_end} in
+      Ast_helper.Exp.let_ ~loc Asttypes.Nonrecursive [vb] next
+    | _ ->
+      item
+    in
+    Parser.eatBreadcrumb p;
+    blockExpr
 
   and parseTryExpression p =
     let startPos = p.Parser.startPos in
@@ -5187,8 +5183,8 @@ Solution: you need to pull out each field you want explicitly."
     Parser.expect For p;
 		match p.token with
 		| Lparen ->
+			let lparen = p.startPos in
 			Parser.next p;
-			let lparen = p.prevEndPos in
 			begin match p.token with
 			| Rparen ->
 				Parser.next p;
@@ -5198,26 +5194,22 @@ Solution: you need to pull out each field you want explicitly."
 					Ast_helper.Pat.construct lid None
 				in
         parseForRest false (parseAliasPattern ~attrs:[] unitPattern p) startPos p
-      | Let ->
-        let (recFlag, letBindings) = parseLetBindings ~attrs:[] p in
-        Parser.expect Semicolon p;
-        let condition = parseExpr p in
-        Parser.expect Semicolon p;
-        let after = parseExpr p in
-        Parser.expect Rparen p;
-        Parser.expect Lbrace p;
-        let block = parseExprBlock p in
-        Parser.expect Rbrace p;
-        let while_ = Ast_helper.Exp.while_ condition (
-          Ast_helper.Exp.sequence block after
-        ) in
-        Ast_helper.Exp.let_ recFlag letBindings while_
 			| _ ->
-        parseForRest true (parsePattern p) startPos p
+        let pat = parsePattern p in
+        begin match p.token with
+        | Comma ->
+          Parser.next p;
+          let tuplePattern =
+            parseTuplePattern ~attrs:[] ~startPos:lparen ~first:pat p
+          in
+          let pattern = parseAliasPattern ~attrs:[] tuplePattern p in
+          parseForRest false pattern startPos p
+        | _ ->
+          parseForRest true pat startPos p
+        end
 			end
 		| _ ->
       parseForRest false (parsePattern p) startPos p
-
 
   and parseWhileExpression p =
     let startPos = p.Parser.startPos in
@@ -5231,31 +5223,41 @@ Solution: you need to pull out each field you want explicitly."
 
   and parsePatternMatchCase p =
     Parser.leaveBreadcrumb p Grammar.PatternMatchCase;
-    Parser.expect Bar p;
-    let lhs = parsePattern p in
-    let guard = match p.Parser.token with
-    | When ->
+    match p.Parser.token with
+    | Token.Bar ->
       Parser.next p;
-      Some (parseExpr ~context:WhenExpr p)
+      let lhs = parsePattern p in
+      let guard = match p.Parser.token with
+      | When ->
+        Parser.next p;
+        Some (parseExpr ~context:WhenExpr p)
+      | _ ->
+        None
+      in
+      let () = match p.token with
+      | EqualGreater -> Parser.next p
+      | _ -> Recover.recoverEqualGreater p
+      in
+      let rhs = parseExprBlock p in
+      Parser.eatBreadcrumb p;
+      Some (Ast_helper.Exp.case lhs ?guard rhs)
     | _ ->
       None
-    in
-    let () = match p.token with
-    | EqualGreater -> Parser.next p
-    | _ -> Recover.recoverEqualGreater p
-    in
-    let rhs = parseExprBlock p in
-    Parser.eatBreadcrumb p;
-    Ast_helper.Exp.case lhs ?guard rhs
 
   and parsePatternMatching p =
     Parser.leaveBreadcrumb p Grammar.PatternMatching;
     let cases =
-      parseDelimitedList
+      parseDelimitedRegion
         ~grammar:Grammar.PatternMatching
         ~closing:Rbrace
         ~f:parsePatternMatchCase
         p
+    in
+    let () = match cases with
+    | [] -> Parser.err ~startPos:p.prevEndPos p (
+        Diagnostics.message "Pattern matching needs at least one case"
+      )
+    | _ -> ()
     in
     cases
 
@@ -5288,7 +5290,34 @@ Solution: you need to pull out each field you want explicitly."
    *   | . argument
    *)
   and parseArgument p =
-    let uncurried = Parser.optional p Dot in
+    if (
+      p.Parser.token = Token.Tilde ||
+      p.token = Dot ||
+      p.token = Underscore ||
+      Grammar.isExprStart p.token
+    ) then (
+      match p.Parser.token with
+      | Dot ->
+        let uncurried = true in
+        let startPos = p.Parser.startPos in
+        Parser.next(p);
+        begin match p.token with
+          (* apply(.) *)
+          | Rparen ->
+            let loc = mkLoc startPos p.prevEndPos in
+            let unitExpr = Ast_helper.Exp.construct ~loc
+              (Location.mkloc (Longident.Lident "()") loc) None
+            in
+            Some (uncurried, Asttypes.Nolabel, unitExpr)
+          | _ ->
+            parseArgument2 p ~uncurried
+        end
+      | _ ->
+        parseArgument2 p ~uncurried:false
+    ) else
+      None
+
+  and parseArgument2 p ~uncurried =
     match p.Parser.token with
     (* foo(_), do not confuse with foo(_ => x), TODO: performance *)
     | Underscore when not (isEs6ArrowExpression ~inTernary:false p) ->
@@ -5297,7 +5326,7 @@ Solution: you need to pull out each field you want explicitly."
       let exp = Ast_helper.Exp.ident ~loc (
         Location.mkloc (Longident.Lident "_") loc
       ) in
-      (uncurried, Asttypes.Nolabel, exp)
+      Some (uncurried, Asttypes.Nolabel, exp)
     | Tilde ->
       Parser.next p;
       (* TODO: nesting of pattern matches not intuitive for error recovery *)
@@ -5313,7 +5342,7 @@ Solution: you need to pull out each field you want explicitly."
         begin match p.Parser.token with
         | Question ->
           Parser.next p;
-          (uncurried, Asttypes.Optional ident, identExpr)
+          Some (uncurried, Asttypes.Optional ident, identExpr)
         | Equal ->
           Parser.next p;
           let label = match p.Parser.token with
@@ -5332,28 +5361,22 @@ Solution: you need to pull out each field you want explicitly."
             )
           | _ -> parseConstrainedExpr p
           in
-          (uncurried, label, expr)
+          Some (uncurried, label, expr)
         | _ ->
-          (uncurried, Labelled ident, identExpr)
+          Some (uncurried, Labelled ident, identExpr)
         end
       | t ->
         Parser.err p (Diagnostics.lident t);
-        (uncurried, Nolabel, Recover.defaultExpr ())
+        Some (uncurried, Nolabel, Recover.defaultExpr ())
       end
-    (* apply(.) *)
-    | Rparen when uncurried ->
-      let unitExpr = Ast_helper.Exp.construct
-        (Location.mknoloc (Longident.Lident "()")) None
-      in
-      (uncurried, Nolabel, unitExpr)
-    | _ -> (uncurried, Nolabel, parseConstrainedExpr p)
+    | _ -> Some (uncurried, Nolabel, parseConstrainedExpr p)
 
   and parseCallExpr p funExpr =
     Parser.expect Lparen p;
     let startPos = p.Parser.startPos in
     Parser.leaveBreadcrumb p Grammar.ExprCall;
     let args =
-      parseCommaDelimitedList
+      parseCommaDelimitedRegion
         ~grammar:Grammar.ArgumentList
         ~closing:Rparen
         ~f:parseArgument p
@@ -5370,7 +5393,7 @@ Solution: you need to pull out each field you want explicitly."
       ]
     | args -> args
     in
-    let loc = {funExpr.pexp_loc with loc_end = p.prevEndPos } in
+    let loc = {funExpr.pexp_loc with loc_end = p.prevEndPos} in
 
     let rec group grp acc = function
     | (uncurried, lbl, expr)::xs ->
@@ -5407,6 +5430,7 @@ Solution: you need to pull out each field you want explicitly."
     let rec aux p acc =
       match p.Parser.token with
       | Uident ident ->
+        let endPosLident = p.endPos in
         Parser.next p;
         begin match p.Parser.token with
         | Dot ->
@@ -5425,7 +5449,8 @@ Solution: you need to pull out each field you want explicitly."
             Some (Ast_helper.Exp.tuple ~loc args)
           in
           let loc = mkLoc startPos p.prevEndPos in
-          Ast_helper.Exp.construct (Location.mkloc lident loc) tail
+          let identLoc = mkLoc startPos endPosLident in
+          Ast_helper.Exp.construct ~loc (Location.mkloc lident identLoc) tail
         | _ ->
           let loc = mkLoc startPos p.prevEndPos in
           let lident = buildLongident (ident::acc) in
@@ -5447,8 +5472,8 @@ Solution: you need to pull out each field you want explicitly."
     let lparen = p.Parser.startPos in
     Parser.expect Lparen p;
     let args =
-      parseCommaDelimitedList
-        ~grammar:Grammar.ExprList ~f:parseConstrainedExpr ~closing:Rparen p
+      parseCommaDelimitedRegion
+        ~grammar:Grammar.ExprList ~f:parseConstrainedExprRegion ~closing:Rparen p
     in
     Parser.expect Rparen p;
     match args with
@@ -5458,58 +5483,79 @@ Solution: you need to pull out each field you want explicitly."
         ~loc (Location.mkloc (Longident.Lident "()") loc) None]
     | args -> args
 
-  and parseTupleExpr p =
-    let startPos = p.Parser.startPos in
-    Parser.expect Forwardslash p;
-    Scanner.setTupleMode p.scanner;
+  and parseTupleExpr ~first ~startPos p =
     let exprs =
-      parseCommaDelimitedList
-        p ~grammar:Grammar.ExprList ~closing:TupleEnding ~f:parseConstrainedExpr
+      parseCommaDelimitedRegion
+        p ~grammar:Grammar.ExprList ~closing:Rparen ~f:parseConstrainedExprRegion
     in
-    Parser.expect TupleEnding p;
-    Ast_helper.Exp.tuple ~loc:(mkLoc startPos p.prevEndPos) exprs
+    Parser.expect Rparen p;
+    Ast_helper.Exp.tuple ~loc:(mkLoc startPos p.prevEndPos) (first::exprs)
 
-  and parseListExprItem p =
+  and parseSpreadExprRegion p =
     match p.Parser.token with
     | DotDotDot ->
       Parser.next p;
       let expr = parseConstrainedExpr p in
-      (true, expr)
-    | _ ->
-      (false, parseConstrainedExpr p)
+      Some (true, expr)
+    | token when Grammar.isExprStart token ->
+      Some (false, parseConstrainedExpr p)
+    | _ -> None
 
   and parseListExpr p =
     let startPos = p.Parser.startPos in
     Parser.expect List p;
-    Parser.expect Lparen p;
+    Parser.expect Lbracket p;
     let listExprs =
       parseCommaDelimitedReversedList
-      p ~grammar:Grammar.ListExpr ~closing:Rparen ~f:parseListExprItem
+      p ~grammar:Grammar.ListExpr ~closing:Rbracket ~f:parseSpreadExprRegion
     in
-    Parser.expect Rparen p;
+    Parser.expect Rbracket p;
     let loc = mkLoc startPos p.prevEndPos in
     match listExprs with
     | (true, expr)::exprs ->
-      let exprs =
-        exprs
-        |> List.map snd
-        |> List.rev
-      in
+      let exprs = exprs |> List.map snd |> List.rev in
       makeListExpression loc exprs (Some expr)
     | exprs ->
      let exprs =
         exprs
-        |> List.map snd
+        |> List.map (fun (spread, expr) ->
+            if spread then
+              Parser.err p (Diagnostics.message ErrorMessages.listExprSpread);
+            expr)
         |> List.rev
       in
       makeListExpression loc exprs None
+
+  (* Overparse ... and give a nice error message *)
+  and parseNonSpreadExp ~msg p =
+    let () = match p.Parser.token with
+    | DotDotDot ->
+      Parser.err p (Diagnostics.message msg);
+      Parser.next p;
+    | _ -> ()
+    in
+    match p.Parser.token with
+    | token when Grammar.isExprStart token ->
+      let expr = parseExpr p in
+      begin match p.Parser.token with
+      | Colon ->
+        Parser.next p;
+        let typ = parseTypExpr p in
+        let loc = mkLoc expr.pexp_loc.loc_start typ.ptyp_loc.loc_end in
+        Some (Ast_helper.Exp.constraint_ ~loc expr typ)
+      | _ -> Some expr
+      end
+    | _ -> None
 
   and parseArrayExp p =
     let startPos = p.Parser.startPos in
     Parser.expect Lbracket p;
     let exprs =
-      parseCommaDelimitedList
-        p ~grammar:Grammar.ExprList ~closing:Rbracket ~f:parseConstrainedExpr
+      parseCommaDelimitedRegion
+        p
+        ~grammar:Grammar.ExprList
+        ~closing:Rbracket
+        ~f:(parseNonSpreadExp ~msg:ErrorMessages.arrayExprSpread)
     in
     Parser.expect Rbracket p;
     Ast_helper.Exp.array ~loc:(mkLoc startPos p.prevEndPos) exprs
@@ -5566,9 +5612,9 @@ Solution: you need to pull out each field you want explicitly."
     let rec loop p ls =
       match p.Parser.token with
       | Lident lident ->
-        Parser.next p;
         let loc = mkLoc p.startPos p.endPos in
-        loop p ((Location.mkloc lident loc )::ls)
+        Parser.next p;
+        loop p ((Location.mkloc lident loc)::ls)
       | _ ->
         List.rev ls
     in
@@ -5586,8 +5632,6 @@ Solution: you need to pull out each field you want explicitly."
       let endPos = p.endPos in
       Parser.next p;
       Ast_helper.Typ.any ~loc:(mkLoc startPos endPos) ~attrs ()
-    | Forwardslash ->
-      parseTupleType ~attrs p
     | Lparen ->
       Parser.next p;
       begin match p.Parser.token with
@@ -5598,10 +5642,16 @@ Solution: you need to pull out each field you want explicitly."
         Ast_helper.Typ.constr ~attrs unitConstr []
       | _ ->
         let t = parseTypExpr p in
-        Parser.expect Rparen p;
-        {t with
-          ptyp_loc = mkLoc startPos p.prevEndPos;
-          ptyp_attributes = List.concat[attrs; t.ptyp_attributes]}
+        begin match p.token with
+        | Comma ->
+          Parser.next p;
+          parseTupleType ~attrs ~first:t ~startPos p
+        | _ ->
+          Parser.expect Rparen p;
+          {t with
+            ptyp_loc = mkLoc startPos p.prevEndPos;
+            ptyp_attributes = List.concat [attrs; t.ptyp_attributes]}
+        end
       end
     | Uident _ | Lident _ | List ->
       let constr = parseValuePath p in
@@ -5610,11 +5660,12 @@ Solution: you need to pull out each field you want explicitly."
     | Module ->
       Parser.next p;
       Parser.expect Lparen p;
-      let packageType = parsePackageType ~attrs p in
+      let packageType = parsePackageType ~startPos ~attrs p in
       Parser.expect Rparen p;
-      packageType
+      {packageType with ptyp_loc = mkLoc startPos p.prevEndPos}
     | Percent ->
-      let (loc, extension) = parseExtension p in
+      let extension = parseExtension p in
+      let loc = mkLoc startPos p.prevEndPos in
       Ast_helper.Typ.extension ~attrs ~loc extension
     | Lbrace ->
       parseBsObjectType ~attrs p
@@ -5634,8 +5685,7 @@ Solution: you need to pull out each field you want explicitly."
       | modtype-path
       ∣ modtype-path with package-constraint  { and package-constraint }
    *)
-  and parsePackageType ~attrs p =
-    let startPos = p.Parser.startPos in
+  and parsePackageType ~startPos ~attrs p =
     let modTypePath = parseModuleLongIdent p in
     begin match p.Parser.token with
     | With ->
@@ -5650,22 +5700,31 @@ Solution: you need to pull out each field you want explicitly."
 
   (* package-constraint  { and package-constraint } *)
   and parsePackageConstraints p =
-    let first = parsePackageConstraint p in
-    let rest = parseList
+    let first =
+      Parser.expect Typ p;
+      let typeConstr = parseValuePath p in
+      Parser.expect Equal p;
+      let typ = parseTypExpr p in
+      (typeConstr, typ)
+    in
+    let rest = parseRegion
       ~grammar:Grammar.PackageConstraint
       ~f:parsePackageConstraint
       p
     in
     first::rest
 
-  (* type typeconstr = typexpr *)
+  (* and type typeconstr = typexpr *)
   and parsePackageConstraint p =
-    let _ = Parser.optional p And in
-    Parser.expect Typ p;
-    let typeConstr = parseValuePath p in
-    Parser.expect Equal p;
-    let typ = parseTypExpr p in
-    (typeConstr, typ)
+    match p.Parser.token with
+    | And ->
+      Parser.next p;
+      Parser.expect Typ p;
+      let typeConstr = parseValuePath p in
+      Parser.expect Equal p;
+      let typ = parseTypExpr p in
+      Some (typeConstr, typ)
+    | _ -> None
 
   and parseBsObjectType ~attrs p =
     let startPos = p.Parser.startPos in
@@ -5675,7 +5734,7 @@ Solution: you need to pull out each field you want explicitly."
       Parser.next p;
       let closedFlag = Asttypes.Open in
       let fields =
-        parseCommaDelimitedList
+        parseCommaDelimitedRegion
           ~grammar:Grammar.StringFieldDeclarations
           ~closing:Rbrace
           ~f:parseStringFieldDeclaration
@@ -5687,7 +5746,7 @@ Solution: you need to pull out each field you want explicitly."
     | _ ->
       let closedFlag = Asttypes.Closed in
       let fields =
-        parseCommaDelimitedList
+        parseCommaDelimitedRegion
           ~grammar:Grammar.StringFieldDeclarations
           ~closing:Rbrace
           ~f:parseStringFieldDeclaration
@@ -5724,27 +5783,34 @@ Solution: you need to pull out each field you want explicitly."
     *  | . type_parameter
     *)
   and parseTypeParameter p =
-    let startPos = p.Parser.startPos in
-    let uncurried = Parser.optional p Dot in
-    let attrs = parseAttributes p in
-    match p.Parser.token with
-    | Tilde ->
-      Parser.next p;
-      let (name, _loc) = parseLident p in
-      Parser.expect Colon p;
-      let typ = parseTypExpr p in
-      begin match p.Parser.token with
-      | Equal ->
+    if (
+      p.Parser.token = Token.Tilde ||
+      p.token = Dot ||
+      Grammar.isTypExprStart p.token
+    ) then (
+      let startPos = p.Parser.startPos in
+      let uncurried = Parser.optional p Dot in
+      let attrs = parseAttributes p in
+      match p.Parser.token with
+      | Tilde ->
         Parser.next p;
-        Parser.expect Question p;
-        (uncurried, attrs, Asttypes.Optional name, typ, startPos)
+        let (name, _loc) = parseLident p in
+        Parser.expect Colon p;
+        let typ = parseTypExpr p in
+        begin match p.Parser.token with
+        | Equal ->
+          Parser.next p;
+          Parser.expect Question p;
+          Some (uncurried, attrs, Asttypes.Optional name, typ, startPos)
+        | _ ->
+          Some (uncurried, attrs, Asttypes.Labelled name, typ, startPos)
+        end
       | _ ->
-        (uncurried, attrs, Asttypes.Labelled name, typ, startPos)
-      end
-    | _ ->
-      let typ = parseTypExpr p in
-      let typWithAttributes = {typ with ptyp_attributes = List.concat[attrs; typ.ptyp_attributes]} in
-      (uncurried, [], Asttypes.Nolabel, typWithAttributes, startPos)
+        let typ = parseTypExpr p in
+        let typWithAttributes = {typ with ptyp_attributes = List.concat[attrs; typ.ptyp_attributes]} in
+        Some (uncurried, [], Asttypes.Nolabel, typWithAttributes, startPos)
+    ) else
+      None
 
   (* (int, ~x:string, float) *)
   and parseTypeParameters p =
@@ -5759,12 +5825,13 @@ Solution: you need to pull out each field you want explicitly."
       [(false, [], Asttypes.Nolabel, typ, startPos)]
     | _ ->
       let params =
-        parseCommaDelimitedList ~grammar:Grammar.TypeParameters ~closing:Rparen ~f:parseTypeParameter p
+        parseCommaDelimitedRegion ~grammar:Grammar.TypeParameters ~closing:Rparen ~f:parseTypeParameter p
       in
       Parser.expect Rparen p;
       params
 
   and parseEs6ArrowType ~attrs p =
+    let startPos = p.Parser.startPos in
     match p.Parser.token with
     | Tilde ->
       Parser.next p;
@@ -5792,7 +5859,9 @@ Solution: you need to pull out each field you want explicitly."
         Ast_helper.Typ.arrow ~loc:(mkLoc startPos endPos) ~attrs argLbl typ t
       ) parameters returnType
       in
-      {typ with ptyp_attributes = List.concat [typ.ptyp_attributes; attrs]}
+      {typ with
+        ptyp_attributes = List.concat [typ.ptyp_attributes; attrs];
+        ptyp_loc = mkLoc startPos p.prevEndPos}
 
   (*
    * typexpr ::=
@@ -5816,6 +5885,7 @@ Solution: you need to pull out each field you want explicitly."
    *)
   and parseTypExpr ?(es6Arrow=true) ?(alias=true) p =
     (* Parser.leaveBreadcrumb p Grammar.TypeExpression; *)
+    let startPos = p.Parser.startPos in
     let attrs = parseAttributes p in
     let typ = if es6Arrow && isEs6ArrowType p then
       parseEs6ArrowType ~attrs p
@@ -5829,7 +5899,7 @@ Solution: you need to pull out each field you want explicitly."
         );
         Parser.next p;
         let returnType = parseTypExpr ~alias:false p in
-        let loc = mkLoc typ.Parsetree.ptyp_loc.loc_start p.prevEndPos in
+        let loc = mkLoc startPos p.prevEndPos in
         Ast_helper.Typ.arrow ~loc Asttypes.Nolabel typ returnType
       | _ -> typ
     in
@@ -5837,20 +5907,38 @@ Solution: you need to pull out each field you want explicitly."
     (* Parser.eatBreadcrumb p; *)
     typ
 
-  and parseTupleType ~attrs p =
-    let startPos = p.Parser.startPos in
-    Parser.expect Forwardslash p;
-    let types =
-      parseCommaDelimitedList ~grammar:Grammar.TypExprList ~closing:Forwardslash ~f:parseTypExpr p
+  and parseTypExprRegion p =
+    if Grammar.isTypExprStart p.Parser.token then
+      Some (parseTypExpr p)
+    else
+      None
+
+  and parseTupleType ~attrs ~first ~startPos p =
+    let typexprs =
+      parseCommaDelimitedRegion
+        ~grammar:Grammar.TypExprList
+        ~closing:Rparen
+        ~f:parseTypExprRegion
+        p
     in
-    Parser.expect Forwardslash p;
-    Ast_helper.Typ.tuple ~attrs ~loc:(mkLoc startPos p.prevEndPos) types
+    Parser.expect Rparen p;
+    let tupleLoc = mkLoc startPos p.prevEndPos in
+    Ast_helper.Typ.tuple ~attrs ~loc:tupleLoc (first::typexprs)
 
   (* be more robust: option(<node<int>>) option<<node<int>> *)
   and parseTypeConstructorArg p =
     if p.Parser.token = Token.LessThan then Parser.next p;
     let typ = parseTypExpr p in
     typ
+
+  and parseTypeConstructorArgRegion p =
+    if Grammar.isTypExprStart p.Parser.token then
+      Some (parseTypExpr p)
+    else if p.token = LessThan then (
+      Parser.next p;
+      parseTypeConstructorArgRegion p
+    ) else
+      None
 
   (* Js.Nullable.value<'a> *)
   and parseTypeConstructorArgs p =
@@ -5865,7 +5953,11 @@ Solution: you need to pull out each field you want explicitly."
       Parser.next p;
       let typeArgs =
         (* TODO: change Grammar.TypExprList to TypArgList!!! *)
-        parseCommaDelimitedList ~grammar:Grammar.TypExprList ~closing:GreaterThan ~f:parseTypeConstructorArg p
+        parseCommaDelimitedRegion
+          ~grammar:Grammar.TypExprList
+          ~closing:GreaterThan
+          ~f:parseTypeConstructorArgRegion
+          p
       in
       let () = match p.token with
       | Rparen when opening = Token.Lparen ->
@@ -5881,7 +5973,7 @@ Solution: you need to pull out each field you want explicitly."
 		Scanner.setDiamondMode p.Parser.scanner;
 		Parser.expect LessThan p;
 		let typeArgs =
-      parseCommaDelimitedList ~grammar:Grammar.TypExprList ~closing:GreaterThan ~f:parseTypExpr p
+      parseCommaDelimitedRegion ~grammar:Grammar.TypExprList ~closing:GreaterThan ~f:parseTypExprRegion p
 		in
 		Parser.expect GreaterThan p;
 		Scanner.popMode p.scanner Diamond;
@@ -5892,19 +5984,17 @@ Solution: you need to pull out each field you want explicitly."
    *  | attributes string-field-decl *)
   and parseStringFieldDeclaration p =
     let attrs = parseAttributes p in
-    let fieldName = match p.Parser.token with
+    match p.Parser.token with
     | String name ->
       let nameStartPos = p.startPos in
       let nameEndPos = p.endPos in
       Parser.next p;
-      Location.mkloc name (mkLoc nameStartPos nameEndPos)
+      let fieldName = Location.mkloc name (mkLoc nameStartPos nameEndPos) in
+      Parser.expect ~grammar:Grammar.TypeExpression Colon p;
+      let typ = parsePolyTypeExpr p in
+      Some(Parsetree.Otag (fieldName, attrs, typ))
     | token ->
-      Parser.err p (Diagnostics.unexpected token p.breadcrumbs);
-      Location.mknoloc "_"
-    in
-    Parser.expect ~grammar:Grammar.TypeExpression Colon p;
-    let typ = parsePolyTypeExpr p in
-    Parsetree.Otag (fieldName, attrs, typ)
+      None
 
   (* field-decl	::=
    *  | [mutable] field-name : poly-typexpr
@@ -5929,6 +6019,31 @@ Solution: you need to pull out each field you want explicitly."
     let loc = mkLoc startPos typ.ptyp_loc.loc_end in
     Ast_helper.Type.field ~attrs ~loc ~mut name typ
 
+
+  and parseFieldDeclarationRegion p =
+    let attrs = parseAttributes p in
+    let startPos = p.Parser.startPos in
+    let mut = if Parser.optional p Token.Mutable then
+      Asttypes.Mutable
+    else
+      Asttypes.Immutable
+    in
+    match p.token with
+    | Lident _ ->
+      let (lident, loc) = parseLident p in
+      let name = Location.mkloc lident loc in
+      let typ = match p.Parser.token with
+      | Colon ->
+        Parser.next p;
+        parsePolyTypeExpr p
+      | _ ->
+        Ast_helper.Typ.constr ~loc:name.loc {name with txt = Lident name.txt} []
+      in
+      let loc = mkLoc startPos typ.ptyp_loc.loc_end in
+      Some(Ast_helper.Type.field ~attrs ~loc ~mut name typ)
+    | _ ->
+      None
+
   (* record-decl ::=
    *  | { field-decl }
    *  | { field-decl, field-decl }
@@ -5938,10 +6053,10 @@ Solution: you need to pull out each field you want explicitly."
     Parser.leaveBreadcrumb p Grammar.RecordDecl;
     Parser.expect Lbrace p;
     let rows =
-      parseCommaDelimitedList
+      parseCommaDelimitedRegion
         ~grammar:Grammar.RecordDecl
         ~closing:Rbrace
-        ~f:parseFieldDeclaration
+        ~f:parseFieldDeclarationRegion
         p
     in
     Parser.expect Rbrace p;
@@ -5971,7 +6086,7 @@ Solution: you need to pull out each field you want explicitly."
           Parser.next p;
           let closedFlag = Asttypes.Open in
           let fields =
-            parseCommaDelimitedList
+            parseCommaDelimitedRegion
               ~grammar:Grammar.StringFieldDeclarations
               ~closing:Rbrace
               ~f:parseStringFieldDeclaration
@@ -5982,10 +6097,10 @@ Solution: you need to pull out each field you want explicitly."
           let typ = makeBsObjType ~attrs:[] ~loc ~closed:closedFlag fields in
           Parser.optional p Comma |> ignore;
           let moreArgs =
-            parseCommaDelimitedList
+            parseCommaDelimitedRegion
             ~grammar:Grammar.TypExprList
             ~closing:Rparen
-            ~f:parseTypExpr
+            ~f:parseTypExprRegion
             p
           in
           Parser.expect Rparen p;
@@ -5997,7 +6112,7 @@ Solution: you need to pull out each field you want explicitly."
             let closedFlag = Asttypes.Closed in
             let fields = match attrs with
             | [] ->
-              parseCommaDelimitedList
+              parseCommaDelimitedRegion
                 ~grammar:Grammar.StringFieldDeclarations
                 ~closing:Rbrace
                 ~f:parseStringFieldDeclaration
@@ -6005,7 +6120,10 @@ Solution: you need to pull out each field you want explicitly."
             | attrs ->
               let first =
                 Parser.leaveBreadcrumb p Grammar.StringFieldDeclarations;
-                let field = parseStringFieldDeclaration p in
+                let field = match parseStringFieldDeclaration p with
+                | Some field -> field
+                | None -> assert false
+                in
                 (* parse comma after first *)
                 let () = match p.Parser.token with
                 | Rbrace | Eof -> ()
@@ -6019,7 +6137,7 @@ Solution: you need to pull out each field you want explicitly."
                 end
               in
               first::(
-                parseCommaDelimitedList
+                parseCommaDelimitedRegion
                   ~grammar:Grammar.StringFieldDeclarations
                   ~closing:Rbrace
                   ~f:parseStringFieldDeclaration
@@ -6030,20 +6148,20 @@ Solution: you need to pull out each field you want explicitly."
               let typ = makeBsObjType ~attrs:[]  ~loc ~closed:closedFlag fields in
               Parser.optional p Comma |> ignore;
               let moreArgs =
-                parseCommaDelimitedList
+                parseCommaDelimitedRegion
                   ~grammar:Grammar.TypExprList
                   ~closing:Rparen
-                  ~f:parseTypExpr p
+                  ~f:parseTypExprRegion p
               in
               Parser.expect Rparen p;
               Parsetree.Pcstr_tuple (typ::moreArgs)
             | _ ->
               let fields = match attrs with
               | [] ->
-                parseCommaDelimitedList
+                parseCommaDelimitedRegion
                   ~grammar:Grammar.FieldDeclarations
                   ~closing:Rbrace
-                  ~f:parseFieldDeclaration
+                  ~f:parseFieldDeclarationRegion
                   p
               | attrs ->
                 let first =
@@ -6052,10 +6170,10 @@ Solution: you need to pull out each field you want explicitly."
                   {field with Parsetree.pld_attributes = attrs}
                 in
                 first::(
-                  parseCommaDelimitedList
+                  parseCommaDelimitedRegion
                     ~grammar:Grammar.FieldDeclarations
                     ~closing:Rbrace
-                    ~f:parseFieldDeclaration
+                    ~f:parseFieldDeclarationRegion
                     p
                 )
               in
@@ -6067,10 +6185,10 @@ Solution: you need to pull out each field you want explicitly."
         end
         | _ ->
           let args =
-            parseCommaDelimitedList
+            parseCommaDelimitedRegion
               ~grammar:Grammar.TypExprList
               ~closing:Rparen
-              ~f:parseTypExpr
+              ~f:parseTypExprRegion
               p
           in
           Parser.expect Rparen p;
@@ -6092,20 +6210,24 @@ Solution: you need to pull out each field you want explicitly."
    *  | constr-name const-args
    *  | attrs constr-name const-args *)
    and parseTypeConstructorDeclarationWithBar p =
-    Parser.expect Bar p;
-    parseTypeConstructorDeclaration p
+    match p.Parser.token with
+    | Bar ->
+      let startPos = p.Parser.startPos in
+      Parser.next p;
+      Some (parseTypeConstructorDeclaration ~startPos p)
+    | _ -> None
 
-   and parseTypeConstructorDeclaration p =
+   and parseTypeConstructorDeclaration ~startPos p =
      Parser.leaveBreadcrumb p Grammar.ConstructorDeclaration;
-     let startPos = p.Parser.startPos in
      let attrs = parseAttributes p in
      match p.Parser.token with
      | Uident uident ->
+       let uidentLoc = mkLoc p.startPos p.endPos in
        Parser.next p;
        let (args, res) = parseConstrDeclArgs p in
        Parser.eatBreadcrumb p;
        let loc = mkLoc startPos p.prevEndPos in
-       Ast_helper.Type.constructor ~loc ~attrs ?res ~args (Location.mkloc uident loc)
+       Ast_helper.Type.constructor ~loc ~attrs ?res ~args (Location.mkloc uident uidentLoc)
      | t ->
       Parser.err p (Diagnostics.uident t);
       Ast_helper.Type.constructor (Location.mknoloc "_")
@@ -6114,13 +6236,14 @@ Solution: you need to pull out each field you want explicitly."
    and parseTypeConstructorDeclarations ?first p =
     let firstConstrDecl = match first with
     | None ->
+      let startPos = p.Parser.startPos in
       ignore (Parser.optional p Token.Bar);
-      parseTypeConstructorDeclaration p
+      parseTypeConstructorDeclaration ~startPos p
     | Some firstConstrDecl ->
       firstConstrDecl
     in
     firstConstrDecl::(
-      parseList
+      parseRegion
         ~grammar:Grammar.ConstructorDeclaration
         ~f:parseTypeConstructorDeclarationWithBar
         p
@@ -6170,27 +6293,23 @@ Solution: you need to pull out each field you want explicitly."
    *   | (* empty *)
    *)
   and parseTypeParam p =
-    Parser.leaveBreadcrumb p Grammar.TypeParam;
     let variance = match p.Parser.token with
     | Plus -> Parser.next p; Asttypes.Covariant
     | Minus -> Parser.next p; Contravariant
     | _ -> Invariant
     in
-    let param = match p.Parser.token with
+    match p.Parser.token with
     | SingleQuote ->
       Parser.next p;
       let (ident, loc) = parseLident p in
-      (Ast_helper.Typ.var ~loc ident, variance)
+      Some (Ast_helper.Typ.var ~loc ident, variance)
     | Underscore ->
       let loc = mkLoc p.startPos p.endPos in
       Parser.next p;
-      (Ast_helper.Typ.any ~loc (), variance)
+      Some (Ast_helper.Typ.any ~loc (), variance)
+    (* TODO: should we try parsing lident as 'ident ? *)
     | token ->
-      Parser.err p (Diagnostics.unexpected token p.breadcrumbs);
-      (Ast_helper.Typ.any (), variance)
-    in
-    Parser.eatBreadcrumb p;
-    param
+      None
 
   (* type-params	::=
    *  | <type-param>
@@ -6211,7 +6330,7 @@ Solution: you need to pull out each field you want explicitly."
       );
       Parser.next p;
       let params =
-        parseCommaDelimitedList
+        parseCommaDelimitedRegion
           ~grammar:Grammar.TypeParams
           ~closing:GreaterThan
           ~f:parseTypeParam
@@ -6230,21 +6349,24 @@ Solution: you need to pull out each field you want explicitly."
   (* type-constraint	::=	constraint ' ident =  typexpr *)
   and parseTypeConstraint p =
     let startPos = p.Parser.startPos in
-    Parser.expect Constraint p;
-    Parser.expect SingleQuote p;
-    begin match p.Parser.token with
-    | Lident ident ->
-      let identLoc = mkLoc startPos p.endPos in
+    match p.Parser.token with
+    | Token.Constraint ->
       Parser.next p;
-      Parser.expect Equal p;
-      let typ = parseTypExpr p in
-      let loc = mkLoc startPos p.prevEndPos in
-      (Ast_helper.Typ.var ~loc:identLoc ident, typ, loc)
-    | t ->
-      Parser.err p (Diagnostics.lident t);
-      let loc = mkLoc startPos p.prevEndPos in
-      (Ast_helper.Typ.any (), parseTypExpr p, loc)
-    end
+      Parser.expect SingleQuote p;
+      begin match p.Parser.token with
+      | Lident ident ->
+        let identLoc = mkLoc startPos p.endPos in
+        Parser.next p;
+        Parser.expect Equal p;
+        let typ = parseTypExpr p in
+        let loc = mkLoc startPos p.prevEndPos in
+        Some (Ast_helper.Typ.var ~loc:identLoc ident, typ, loc)
+      | t ->
+        Parser.err p (Diagnostics.lident t);
+        let loc = mkLoc startPos p.prevEndPos in
+        Some (Ast_helper.Typ.any (), parseTypExpr p, loc)
+      end
+    | _ -> None
 
   (* type-constraints ::=
    *  | (* empty *)
@@ -6253,7 +6375,7 @@ Solution: you need to pull out each field you want explicitly."
    *  | type-constraint type-constraint type-constraint (* 0 or more *)
    *)
   and parseTypeConstraints p =
-    parseList
+    parseRegion
       ~grammar:Grammar.TypeConstraint
       ~f:parseTypeConstraint
       p
@@ -6269,14 +6391,22 @@ Solution: you need to pull out each field you want explicitly."
         let typeConstr =
           parseValuePathTail p uidentStartPos (Longident.Lident uident)
         in
+        let loc = mkLoc uidentStartPos p.prevEndPos in
         let typ = parseTypeAlias p (
-          Ast_helper.Typ.constr typeConstr (parseTypeConstructorArgs p)
+          Ast_helper.Typ.constr ~loc typeConstr (parseTypeConstructorArgs p)
         ) in
         begin match p.token with
         | Equal ->
           Parser.next p;
           let (priv, kind) = parseTypeRepresentation p in
           (Some typ, priv, kind)
+        | EqualGreater ->
+          Parser.next p;
+          let returnType = parseTypExpr ~alias:false p in
+          let loc = mkLoc uidentStartPos p.prevEndPos in
+          let arrowType = Ast_helper.Typ.arrow ~loc Asttypes.Nolabel typ returnType in
+          let typ = parseTypeAlias p arrowType in
+          (Some typ, Asttypes.Public, Parsetree.Ptype_abstract)
         | _ -> (Some typ, Asttypes.Public, Parsetree.Ptype_abstract)
         end
       | _ ->
@@ -6305,7 +6435,7 @@ Solution: you need to pull out each field you want explicitly."
       Parser.next p;
       let closedFlag = Asttypes.Open in
       let fields =
-        parseCommaDelimitedList
+        parseCommaDelimitedRegion
           ~grammar:Grammar.StringFieldDeclarations
           ~closing:Rbrace
           ~f:parseStringFieldDeclaration
@@ -6325,7 +6455,7 @@ Solution: you need to pull out each field you want explicitly."
         let closedFlag = Asttypes.Closed in
         let fields = match attrs with
         | [] ->
-          parseCommaDelimitedList
+          parseCommaDelimitedRegion
             ~grammar:Grammar.StringFieldDeclarations
             ~closing:Rbrace
             ~f:parseStringFieldDeclaration
@@ -6333,7 +6463,10 @@ Solution: you need to pull out each field you want explicitly."
         | attrs ->
           let first =
             Parser.leaveBreadcrumb p Grammar.StringFieldDeclarations;
-            let field = parseStringFieldDeclaration p in
+            let field = match parseStringFieldDeclaration p with
+            | Some field -> field
+            | None -> assert false
+            in
             (* parse comma after first *)
             let () = match p.Parser.token with
             | Rbrace | Eof -> ()
@@ -6347,7 +6480,7 @@ Solution: you need to pull out each field you want explicitly."
             end
           in
           first::(
-            parseCommaDelimitedList
+            parseCommaDelimitedRegion
               ~grammar:Grammar.StringFieldDeclarations
               ~closing:Rbrace
               ~f:parseStringFieldDeclaration
@@ -6364,10 +6497,10 @@ Solution: you need to pull out each field you want explicitly."
         Parser.leaveBreadcrumb p Grammar.RecordDecl;
         let fields = match attrs with
         | [] ->
-          parseCommaDelimitedList
+          parseCommaDelimitedRegion
             ~grammar:Grammar.FieldDeclarations
             ~closing:Rbrace
-            ~f:parseFieldDeclaration
+            ~f:parseFieldDeclarationRegion
             p
         | attrs ->
           let first =
@@ -6376,12 +6509,18 @@ Solution: you need to pull out each field you want explicitly."
             {field with Parsetree.pld_attributes = attrs}
           in
           first::(
-            parseCommaDelimitedList
+            parseCommaDelimitedRegion
               ~grammar:Grammar.FieldDeclarations
               ~closing:Rbrace
-              ~f:parseFieldDeclaration
+              ~f:parseFieldDeclarationRegion
               p
           )
+        in
+        let () = match fields with
+        | [] -> Parser.err ~startPos p (
+            Diagnostics.message "A record needs at least one field"
+          )
+        | _ -> ()
         in
         Parser.expect Rbrace p;
         Parser.eatBreadcrumb p;
@@ -6440,20 +6579,16 @@ Solution: you need to pull out each field you want explicitly."
    * type-equation	::=	= typexpr *)
   and parseTypeDef ?attrs ~startPos p =
     Parser.leaveBreadcrumb p Grammar.TypeDef;
-    let startPos = p.Parser.startPos in
     let attrs = match attrs with | Some attrs -> attrs | None -> parseAttributes p in
     Parser.leaveBreadcrumb p Grammar.TypeConstrName;
     let (name, loc) = parseLident p in
     let typeConstrName = Location.mkloc name loc in
     Parser.eatBreadcrumb p;
-    Parser.leaveBreadcrumb p Grammar.TypeParams;
     let params = parseTypeParams p in
-    Parser.eatBreadcrumb p;
     let typeDef =
       let (manifest, priv, kind) = parseTypeEquationAndRepresentation p in
       let cstrs = parseTypeConstraints p in
-      let endPos = p.prevEndPos in
-      let loc = mkLoc startPos endPos in
+      let loc = mkLoc startPos p.prevEndPos in
       Ast_helper.Type.mk
         ~loc ~attrs ~priv ~kind ~params ~cstrs ?manifest typeConstrName
     in
@@ -6500,18 +6635,25 @@ Solution: you need to pull out each field you want explicitly."
       let typeDef =
         let (manifest, priv, kind) = parseTypeEquationAndRepresentation p in
         let cstrs = parseTypeConstraints p in
-        let endPos = p.prevEndPos in
-        let loc = mkLoc startPos endPos in
+        let loc = mkLoc startPos p.prevEndPos in
         Ast_helper.Type.mk
           ~loc ~attrs ~priv ~kind ~params ~cstrs ?manifest
           {name with txt = lidentOfPath name.Location.txt}
       in
       let rec loop p defs =
+        let startPos = p.Parser.startPos in
         let attrs = parseAttributesAndBinding p in
         match p.Parser.token with
         | And ->
-          let startPos = p.Parser.startPos in
           Parser.next p;
+          let attrs = match p.token with
+          | Export ->
+            let exportLoc = mkLoc p.startPos p.endPos in
+            Parser.next p;
+            let genTypeAttr = (Location.mkloc "genType" exportLoc, Parsetree.PStr []) in
+            genTypeAttr::attrs
+          | _ -> attrs
+          in
           let typeDef = parseTypeDef ~attrs ~startPos p in
           loop p (typeDef::defs)
         | _ ->
@@ -6544,11 +6686,11 @@ Solution: you need to pull out each field you want explicitly."
 
   and parsePrimitive p =
     match p.Parser.token with
-    | String s -> Parser.next p; s
-    | _ -> ""
+    | String s -> Parser.next p; Some s
+    | _ -> None
 
   and parsePrimitives p =
-    match (parseList ~grammar:Grammar.Primitive ~f:parsePrimitive p) with
+    match (parseRegion ~grammar:Grammar.Primitive ~f:parsePrimitive p) with
     | [] ->
       let msg = "An external definition should have at least one primitive. Example: \"setTimeout\"" in
       Parser.err p (Diagnostics.message msg);
@@ -6617,17 +6759,114 @@ Solution: you need to pull out each field you want explicitly."
     Ast_helper.Te.constructor ~loc ~attrs name kind
 
   and parseStructure p : Parsetree.structure =
-    parseList p ~grammar:Grammar.Structure ~f:parseStructureItem
+    parseRegion p ~grammar:Grammar.Structure ~f:parseStructureItemRegion
+    [@@progress (Parser.next, Parser.expect, Recover.recoverLident, Recover.skipTokensAndMaybeRetry)]
 
-  and parseStructureItem p =
+  and parseStructureItemRegion p =
     let startPos = p.Parser.startPos in
     let attrs = parseAttributes p in
-    let item = match p.Parser.token with
+    match p.Parser.token with
     | Open ->
-      Ast_helper.Str.open_ (parseOpenDescription ~attrs p)
+      let openDescription = parseOpenDescription ~attrs p in
+      Parser.optional p Semicolon |> ignore;
+      let loc = mkLoc startPos p.prevEndPos in
+      Some (Ast_helper.Str.open_ ~loc openDescription)
     | Let ->
       let (recFlag, letBindings) = parseLetBindings ~attrs p in
-      Ast_helper.Str.value recFlag letBindings
+      Parser.optional p Semicolon |> ignore;
+      let loc = mkLoc startPos p.prevEndPos in
+      Some (Ast_helper.Str.value ~loc recFlag letBindings)
+    | Typ ->
+      begin match parseTypeDefinitionOrExtension ~attrs p with
+      | TypeDef(recFlag, types) ->
+        Parser.optional p Semicolon |> ignore;
+        let loc = mkLoc startPos p.prevEndPos in
+        Some (Ast_helper.Str.type_ ~loc recFlag types)
+      | TypeExt(ext) ->
+        Parser.optional p Semicolon |> ignore;
+        let loc = mkLoc startPos p.prevEndPos in
+        Some (Ast_helper.Str.type_extension ~loc ext)
+      end
+    | External ->
+      let externalDef = parseExternalDef ~attrs p in
+      Parser.optional p Semicolon |> ignore;
+      let loc = mkLoc startPos p.prevEndPos in
+      Some (Ast_helper.Str.primitive ~loc externalDef)
+    | Import ->
+      let importDescr = parseJsImport ~startPos ~attrs p in
+      Parser.optional p Semicolon |> ignore;
+      let loc = mkLoc startPos p.prevEndPos in
+      let structureItem = JsFfi.toParsetree importDescr in
+      Some {structureItem with pstr_loc = loc}
+    | Exception ->
+      let exceptionDef = parseExceptionDef ~attrs p in
+      Parser.optional p Semicolon |> ignore;
+      let loc = mkLoc startPos p.prevEndPos in
+      Some (Ast_helper.Str.exception_ ~loc exceptionDef)
+    | Include ->
+      let includeStatement = parseIncludeStatement ~attrs p in
+      Parser.optional p Semicolon |> ignore;
+      let loc = mkLoc startPos p.prevEndPos in
+      Some (Ast_helper.Str.include_ ~loc includeStatement)
+    | Export ->
+      let structureItem = parseJsExport ~startPos ~attrs p in
+      Parser.optional p Semicolon |> ignore;
+      let loc = mkLoc startPos p.prevEndPos in
+      Some {structureItem with pstr_loc = loc}
+    | Module ->
+      let structureItem = parseModuleOrModuleTypeImplOrPackExpr ~attrs p in
+      Parser.optional p Semicolon |> ignore;
+      let loc = mkLoc startPos p.prevEndPos in
+      Some {structureItem with pstr_loc = loc}
+    | AtAt ->
+      let attr = parseStandaloneAttribute p in
+      Parser.optional p Semicolon |> ignore;
+      let loc = mkLoc startPos p.prevEndPos in
+      Some (Ast_helper.Str.attribute ~loc attr)
+    | PercentPercent ->
+      let extension = parseExtension ~moduleLanguage:true p in
+      Parser.optional p Semicolon |> ignore;
+      let loc = mkLoc startPos p.prevEndPos in
+      Some (Ast_helper.Str.extension ~attrs ~loc extension)
+    | token when Grammar.isExprStart token ->
+      let exp = parseExpr p in
+      Parser.optional p Semicolon |> ignore;
+      let loc = mkLoc startPos p.prevEndPos in
+      begin match exp.pexp_desc with
+      | Pexp_apply _ ->
+        let fakeUnitPat =
+          let unitLid = Location.mknoloc (Longident.Lident "()") in
+          Ast_helper.Pat.construct unitLid None
+        in
+        let vb = Ast_helper.Vb.mk ~attrs fakeUnitPat exp in
+        Some (Ast_helper.Str.value ~loc Asttypes.Nonrecursive [vb])
+       | _ ->
+       Some (Ast_helper.Str.eval ~loc ~attrs exp)
+      end
+    | _ -> None
+
+  and parseJsImport ~startPos ~attrs p =
+    Parser.expect Token.Import p;
+    let importSpec = match p.Parser.token with
+    | Token.Lident _ | Token.At ->
+      let decl = match parseJsFfiDeclaration p with
+      | Some decl -> decl
+      | None -> assert false
+      in
+      JsFfi.Default decl
+    | _ -> JsFfi.Spec(parseJsFfiDeclarations p)
+    in
+    let scope = parseJsFfiScope p in
+    let loc = mkLoc startPos p.prevEndPos in
+    JsFfi.importDescr ~attrs ~importSpec ~scope ~loc
+
+  and parseJsExport ~startPos ~attrs p =
+    let exportStart = p.Parser.startPos in
+    Parser.expect Token.Export p;
+    let exportLoc = mkLoc exportStart p.prevEndPos in
+    let genTypeAttr = (Location.mkloc "genType" exportLoc, Parsetree.PStr []) in
+    let attrs = genTypeAttr::attrs in
+    match p.Parser.token with
     | Typ ->
       begin match parseTypeDefinitionOrExtension ~attrs p with
       | TypeDef(recFlag, types) ->
@@ -6635,49 +6874,9 @@ Solution: you need to pull out each field you want explicitly."
       | TypeExt(ext) ->
         Ast_helper.Str.type_extension ext
       end
-    | External ->
-      Ast_helper.Str.primitive (parseExternalDef ~attrs p)
-    | Import ->
-      let importDescr = parseJsImport ~startPos ~attrs p in
-      JsFfi.toParsetree importDescr
-    | Exception ->
-      Ast_helper.Str.exception_ (parseExceptionDef ~attrs p)
-    | Include ->
-      Ast_helper.Str.include_ (parseIncludeStatement ~attrs p)
-    | Module -> parseModuleOrModuleTypeImpl ~attrs p
-    | AtAt ->
-      let (loc, attr) = parseStandaloneAttribute p in
-      Ast_helper.Str.attribute ~loc attr
-    | PercentPercent ->
-      let (loc, extension) = parseExtension ~moduleLanguage: true p in
-      Ast_helper.Str.extension ~attrs ~loc extension
-    | _ ->
-      let exp = parseExpr p in
-      begin match exp.pexp_desc with
-      | Pexp_apply _ ->
-          let fakeUnitPat =
-            let unitLid = Location.mknoloc (Longident.Lident "()") in
-            Ast_helper.Pat.construct unitLid None
-          in
-          let vb = Ast_helper.Vb.mk ~attrs fakeUnitPat exp in
-          Ast_helper.Str.value Asttypes.Nonrecursive [vb]
-       | _ ->
-         Ast_helper.Str.eval ~attrs exp
-      end
-    in
-    Parser.optional p Semicolon |> ignore;
-    let loc = mkLoc startPos p.prevEndPos in
-    {item with pstr_loc = loc}
-
-  and parseJsImport ~startPos ~attrs p =
-    Parser.expect Token.Import p;
-    let decls = match p.Parser.token with
-    | Token.Lident _ | Token.At -> [parseJsFfiDeclaration p]
-    | _ -> parseJsFfiDeclarations p
-    in
-    let scope = parseJsFfiScope p in
-    let loc = mkLoc startPos p.prevEndPos in
-    JsFfi.importDescr ~attrs ~scope ~decls ~loc
+    | (* Let *) _ ->
+      let (recFlag, letBindings) = parseLetBindings ~attrs p in
+      Ast_helper.Str.value recFlag letBindings
 
   and parseJsFfiScope p =
     match p.Parser.token with
@@ -6694,7 +6893,7 @@ Solution: you need to pull out each field you want explicitly."
 
   and parseJsFfiDeclarations p =
     Parser.expect Token.Lbrace p;
-    let decls = parseCommaDelimitedList
+    let decls = parseCommaDelimitedRegion
       ~grammar:Grammar.JsFfiImport
       ~closing:Rbrace
       ~f:parseJsFfiDeclaration
@@ -6706,19 +6905,22 @@ Solution: you need to pull out each field you want explicitly."
   and parseJsFfiDeclaration p =
     let startPos = p.Parser.startPos in
     let attrs = parseAttributes p in
-    let (ident, _) = parseLident p in
-    let alias = match p.token with
-    | As ->
-      Parser.next p;
+    match p.Parser.token with
+    | Lident _ ->
       let (ident, _) = parseLident p in
-      ident
-    | _ ->
-      ident
-    in
-    Parser.expect Token.Colon p;
-    let typ = parseTypExpr p in
-    let loc = mkLoc startPos p.prevEndPos in
-    JsFfi.decl ~loc ~alias ~attrs ~name:ident ~typ
+      let alias = match p.token with
+      | As ->
+        Parser.next p;
+        let (ident, _) = parseLident p in
+        ident
+      | _ ->
+        ident
+      in
+      Parser.expect Token.Colon p;
+      let typ = parseTypExpr p in
+      let loc = mkLoc startPos p.prevEndPos in
+      Some (JsFfi.decl ~loc ~alias ~attrs ~name:ident ~typ)
+    | _ -> None
 
   (* include-statement ::= include module-expr *)
   and parseIncludeStatement ~attrs p =
@@ -6737,10 +6939,10 @@ Solution: you need to pull out each field you want explicitly."
     | Lbrace ->
       Parser.next p;
       let structure = Ast_helper.Mod.structure (
-        parseDelimitedList
+        parseDelimitedRegion
           ~grammar:Grammar.Structure
           ~closing:Rbrace
-          ~f:parseStructureItem
+          ~f:parseStructureItemRegion
           p
       ) in
       Parser.expect Rbrace p;
@@ -6757,9 +6959,10 @@ Solution: you need to pull out each field you want explicitly."
       let expr = parseExpr p in
       begin match p.Parser.token with
       | Colon ->
+        let colonStart = p.Parser.startPos in
         Parser.next p;
         let attrs = parseAttributes p in
-        let packageType = parsePackageType ~attrs p in
+        let packageType = parsePackageType ~startPos:colonStart ~attrs p in
         Parser.expect Rparen p;
         let loc = mkLoc startPos p.prevEndPos in
         let constraintExpr = Ast_helper.Exp.constraint_
@@ -6773,7 +6976,8 @@ Solution: you need to pull out each field you want explicitly."
         Ast_helper.Mod.unpack ~loc expr
       end
     | Percent ->
-      let (loc, extension) = parseExtension p in
+      let extension = parseExtension p in
+      let loc = mkLoc startPos p.prevEndPos in
       Ast_helper.Mod.extension ~loc extension
     | token ->
       Parser.err p (Diagnostics.unexpected token p.breadcrumbs);
@@ -6827,7 +7031,7 @@ Solution: you need to pull out each field you want explicitly."
         let moduleType = parseModuleType p in
         let loc = mkLoc startPos uidentEndPos in
         let argName = Location.mkloc ident loc in
-        (attrs, argName, Some moduleType, startPos)
+        Some (attrs, argName, Some moduleType, startPos)
       | Dot ->
         Parser.next p;
         let moduleType =
@@ -6836,30 +7040,28 @@ Solution: you need to pull out each field you want explicitly."
           Ast_helper.Mty.ident ~loc:moduleLongIdent.loc moduleLongIdent
         in
         let argName = Location.mknoloc "_" in
-        (attrs, argName, Some moduleType, startPos)
+        Some (attrs, argName, Some moduleType, startPos)
       | _ ->
         let loc = mkLoc startPos uidentEndPos in
         let modIdent = Location.mkloc (Longident.Lident ident) loc in
         let moduleType = Ast_helper.Mty.ident ~loc modIdent in
         let argName = Location.mknoloc "_" in
-        (attrs, argName, Some moduleType, startPos)
+        Some (attrs, argName, Some moduleType, startPos)
       end
     | Underscore ->
       Parser.next p;
       let argName = Location.mkloc "_" (mkLoc startPos p.prevEndPos) in
       Parser.expect Colon p;
       let moduleType = parseModuleType p in
-      (attrs, argName, Some moduleType, startPos)
+      Some (attrs, argName, Some moduleType, startPos)
     | _ ->
-      let moduleType = parseModuleType p in
-      let argName = Location.mknoloc "_" in
-      (attrs, argName, Some moduleType, startPos)
+      None
 
   and parseFunctorArgs p =
     let startPos = p.Parser.startPos in
     Parser.expect Lparen p;
     let args =
-      parseCommaDelimitedList
+      parseCommaDelimitedRegion
         ~grammar:Grammar.FunctorArgs
         ~closing:Rparen
         ~f:parseFunctorArg
@@ -6872,6 +7074,7 @@ Solution: you need to pull out each field you want explicitly."
     | args -> args
 
   and parseFunctorModuleExpr p =
+    let startPos = p.Parser.startPos in
     let args = parseFunctorArgs p in
     let returnType = match p.Parser.token with
     | Colon ->
@@ -6890,12 +7093,14 @@ Solution: you need to pull out each field you want explicitly."
       | None -> modExpr
     in
     let endPos = p.prevEndPos in
-    List.fold_right (fun (attrs, name, moduleType, startPos) acc ->
+    let modExpr = List.fold_right (fun (attrs, name, moduleType, startPos) acc ->
       Ast_helper.Mod.functor_
         ~loc:(mkLoc startPos endPos)
         ~attrs
         name moduleType acc
     ) args rhsModuleExpr
+    in
+    {modExpr with pmod_loc = mkLoc startPos endPos}
 
   (* module-expr	::=
    *  | module-path
@@ -6925,11 +7130,21 @@ Solution: you need to pull out each field you want explicitly."
       Ast_helper.Mod.constraint_ ~loc modExpr modType
     | _ -> modExpr
 
+  and parseConstrainedModExprRegion p =
+    if Grammar.isModExprStart p.Parser.token then
+      Some (parseConstrainedModExpr p)
+    else
+      None
+
   and parseModuleApplication p modExpr =
     let startPos = p.Parser.startPos in
     Parser.expect Lparen p;
     let args =
-      parseCommaDelimitedList ~grammar:Grammar.ModExprList ~closing:Rparen ~f:parseConstrainedModExpr p
+      parseCommaDelimitedRegion
+        ~grammar:Grammar.ModExprList
+        ~closing:Rparen
+        ~f:parseConstrainedModExprRegion
+        p
     in
     Parser.expect Rparen p;
     let args = match args with
@@ -6944,12 +7159,15 @@ Solution: you need to pull out each field you want explicitly."
         modExpr arg
     ) modExpr args
 
-  and parseModuleOrModuleTypeImpl ~attrs p =
+  and parseModuleOrModuleTypeImplOrPackExpr ~attrs p =
     let startPos = p.Parser.startPos in
     Parser.expect Module p;
     match p.Parser.token with
     | Typ -> parseModuleTypeImpl ~attrs startPos p
-    | _ -> parseMaybeRecModuleBinding ~attrs p
+    | Lparen ->
+      let expr = parseFirstClassModuleExpr ~startPos p in
+      Ast_helper.Str.eval ~attrs expr
+    | _ -> parseMaybeRecModuleBinding ~attrs ~startPos p
 
   and parseModuleTypeImpl ~attrs startPos p =
     Parser.expect Typ p;
@@ -6978,16 +7196,18 @@ Solution: you need to pull out each field you want explicitly."
   (* definition	::=
     ∣	 module rec module-name :  module-type =  module-expr   { and module-name
     :  module-type =  module-expr } *)
-  and parseMaybeRecModuleBinding ~attrs p =
-    if Parser.optional p Token.Rec then
-      Ast_helper.Str.rec_module (parseModuleBindings ~attrs p)
-    else
-      Ast_helper.Str.module_ (parseModuleBinding ~attrs p)
+  and parseMaybeRecModuleBinding ~attrs ~startPos p =
+    match p.Parser.token with
+    | Token.Rec ->
+      Parser.next p;
+      Ast_helper.Str.rec_module (parseModuleBindings ~startPos ~attrs p)
+    | _ ->
+      Ast_helper.Str.module_ (parseModuleBinding ~attrs ~startPos:p.Parser.startPos p)
 
-  and parseModuleBinding ~attrs p =
-    let startPos = p.Parser.startPos in
+  and parseModuleBinding ~attrs ~startPos p =
     let name = match p.Parser.token with
     | Uident ident ->
+      let startPos = p.Parser.startPos in
       Parser.next p;
       let loc = mkLoc startPos p.prevEndPos in
       Location.mkloc ident loc
@@ -7019,18 +7239,19 @@ Solution: you need to pull out each field you want explicitly."
 
   (* module-name :  module-type =  module-expr
    * { and module-name :  module-type =  module-expr } *)
-  and parseModuleBindings ~attrs p =
+  and parseModuleBindings ~attrs ~startPos p =
     let rec loop p acc =
+      let startPos = p.Parser.startPos in
       let attrs = parseAttributesAndBinding p in
       match p.Parser.token with
       | And ->
         Parser.next p;
         ignore(Parser.optional p Module); (* over-parse for fault-tolerance *)
-        let modBinding = parseModuleBinding ~attrs p in
+        let modBinding = parseModuleBinding ~attrs ~startPos p in
         loop p (modBinding::acc)
       | _ -> List.rev acc
     in
-    let first = parseModuleBinding ~attrs p in
+    let first = parseModuleBinding ~attrs ~startPos p in
     loop p [first]
 
   and parseAtomicModuleType p =
@@ -7050,7 +7271,8 @@ Solution: you need to pull out each field you want explicitly."
     | Module -> (* TODO: check if this is still atomic when implementing first class modules*)
       parseModuleTypeOf p
     | Percent ->
-      let (loc, extension) = parseExtension p in
+      let extension = parseExtension p in
+      let loc = mkLoc startPos p.prevEndPos in
       Ast_helper.Mty.extension ~loc extension
     | token ->
       Parser.err p (Diagnostics.unexpected token p.breadcrumbs);
@@ -7060,16 +7282,19 @@ Solution: you need to pull out each field you want explicitly."
     {moduleType with pmty_loc = moduleTypeLoc}
 
   and parseFunctorModuleType p =
+    let startPos = p.Parser.startPos in
     let args = parseFunctorArgs p in
     Parser.expect EqualGreater p;
     let rhs = parseModuleType p in
     let endPos = p.prevEndPos in
-    List.fold_right (fun (attrs, name, moduleType, startPos) acc ->
+    let modType = List.fold_right (fun (attrs, name, moduleType, startPos) acc ->
       Ast_helper.Mty.functor_
         ~loc:(mkLoc startPos endPos)
         ~attrs
         name moduleType acc
     ) args rhs
+    in
+    {modType with pmty_loc = mkLoc startPos endPos}
 
   (* Module types are the module-level equivalent of type expressions: they
    * specify the general shape and type properties of modules.
@@ -7213,70 +7438,107 @@ Solution: you need to pull out each field you want explicitly."
   and parseSpecification p =
     Parser.expect Lbrace p;
     let spec =
-      parseDelimitedList ~grammar:Grammar.Signature ~closing:Rbrace ~f:parseSignatureItem p
+      parseDelimitedRegion
+        ~grammar:Grammar.Signature
+        ~closing:Rbrace
+        ~f:parseSignatureItemRegion
+        p
     in
     Parser.expect Rbrace p;
     Ast_helper.Mty.signature spec
 
   and parseSignature p =
-    parseList ~grammar:Grammar.Signature ~f:parseSignatureItem p
+    parseRegion ~grammar:Grammar.Signature ~f:parseSignatureItemRegion p
+    [@@progress (Parser.next, Parser.expect, Recover.recoverLident, Recover.skipTokensAndMaybeRetry)]
 
-  and parseSignatureItem p =
+  and parseSignatureItemRegion p =
     let startPos = p.Parser.startPos in
     let attrs = parseAttributes p in
-    let item = match p.Parser.token with
+    match p.Parser.token with
     | Let ->
-      parseSignLetDesc ~attrs p
+      let valueDesc = parseSignLetDesc ~attrs p in
+      Parser.optional p Semicolon |> ignore;
+      let loc = mkLoc startPos p.prevEndPos in
+      Some (Ast_helper.Sig.value ~loc valueDesc)
     | Typ ->
       begin match parseTypeDefinitionOrExtension ~attrs p with
       | TypeDef(recFlag, types) ->
-        Ast_helper.Sig.type_ recFlag types
+        Parser.optional p Semicolon |> ignore;
+        let loc = mkLoc startPos p.prevEndPos in
+        Some (Ast_helper.Sig.type_ ~loc recFlag types)
       | TypeExt(ext) ->
-        Ast_helper.Sig.type_extension ext
+        Parser.optional p Semicolon |> ignore;
+        let loc = mkLoc startPos p.prevEndPos in
+        Some (Ast_helper.Sig.type_extension ~loc ext)
       end
     | External ->
-      Ast_helper.Sig.value (parseExternalDef ~attrs p)
+      let externalDef = parseExternalDef ~attrs p in
+      Parser.optional p Semicolon |> ignore;
+      let loc = mkLoc startPos p.prevEndPos in
+      Some (Ast_helper.Sig.value ~loc externalDef)
     | Exception ->
-      Ast_helper.Sig.exception_ (parseExceptionDef ~attrs p)
+      let exceptionDef = parseExceptionDef ~attrs p in
+      Parser.optional p Semicolon |> ignore;
+      let loc = mkLoc startPos p.prevEndPos in
+      Some (Ast_helper.Sig.exception_ ~loc exceptionDef)
     | Open ->
-      Ast_helper.Sig.open_ (parseOpenDescription ~attrs p)
+      let openDescription = parseOpenDescription ~attrs p in
+      Parser.optional p Semicolon |> ignore;
+      let loc = mkLoc startPos p.prevEndPos in
+      Some (Ast_helper.Sig.open_ ~loc openDescription)
     | Include ->
       Parser.next p;
       let moduleType = parseModuleType p in
-      let includeDescription = Ast_helper.Incl.mk ~attrs moduleType in
-      Ast_helper.Sig.include_ includeDescription
+      let includeDescription = Ast_helper.Incl.mk
+        ~loc:(mkLoc startPos p.prevEndPos)
+        ~attrs
+        moduleType
+      in
+      Parser.optional p Semicolon |> ignore;
+      let loc = mkLoc startPos p.prevEndPos in
+      Some (Ast_helper.Sig.include_ ~loc includeDescription)
     | Module ->
       Parser.next p;
       begin match p.Parser.token with
       | Uident _ ->
-        parseModuleDeclarationOrAlias ~attrs p
+        let modDecl = parseModuleDeclarationOrAlias ~attrs p in
+        Parser.optional p Semicolon |> ignore;
+        let loc = mkLoc startPos p.prevEndPos in
+        Some (Ast_helper.Sig.module_ ~loc modDecl)
       | Rec ->
-        Ast_helper.Sig.rec_module (
-          parseRecModuleSpec ~attrs p
-        )
+        let recModule = parseRecModuleSpec ~attrs ~startPos p in
+        Parser.optional p Semicolon |> ignore;
+        let loc = mkLoc startPos p.prevEndPos in
+        Some (Ast_helper.Sig.rec_module ~loc recModule)
       | Typ ->
-        parseModuleTypeDeclaration ~attrs p
+        Some (parseModuleTypeDeclaration ~attrs ~startPos p)
       | t ->
-        Parser.err p (Diagnostics.uident t);
-        parseModuleDeclarationOrAlias ~attrs p
+        let modDecl = parseModuleDeclarationOrAlias ~attrs p in
+        Parser.optional p Semicolon |> ignore;
+        let loc = mkLoc startPos p.prevEndPos in
+        Some (Ast_helper.Sig.module_ ~loc modDecl)
       end
     | AtAt ->
-      let (loc, attr) = parseStandaloneAttribute p in
-      Ast_helper.Sig.attribute ~loc attr
+      let attr = parseStandaloneAttribute p in
+      Parser.optional p Semicolon |> ignore;
+      let loc = mkLoc startPos p.prevEndPos in
+      Some (Ast_helper.Sig.attribute ~loc attr)
     | PercentPercent ->
-      let (loc, extension) = parseExtension ~moduleLanguage:true p in
-      Ast_helper.Sig.extension ~attrs ~loc extension
-    | token ->
-      Parser.err p (Diagnostics.unexpected token p.breadcrumbs);
-      Recover.defaultSignatureItem()
-    in
-    Parser.optional p Semicolon |> ignore;
-    {item with psig_loc = mkLoc startPos p.prevEndPos}
+      let extension = parseExtension ~moduleLanguage:true p in
+      Parser.optional p Semicolon |> ignore;
+      let loc = mkLoc startPos p.prevEndPos in
+      Some (Ast_helper.Sig.extension ~attrs ~loc extension)
+    | Import ->
+      Parser.next p;
+      parseSignatureItemRegion p
+    | _ ->
+      None
 
   (* module rec module-name :  module-type  { and module-name:  module-type } *)
-  and parseRecModuleSpec ~attrs p =
+  and parseRecModuleSpec ~attrs ~startPos p =
     Parser.expect Rec p;
     let rec loop p spec =
+      let startPos = p.Parser.startPos in
       let attrs = parseAttributesAndBinding p in
       match p.Parser.token with
       | And ->
@@ -7287,16 +7549,16 @@ Solution: you need to pull out each field you want explicitly."
          * `with-constraint`
          *)
         Parser.expect And p;
-        let decl = parseRecModuleDeclaration ~attrs p in
+        let decl = parseRecModuleDeclaration ~attrs ~startPos p in
         loop p (decl::spec)
       | _ ->
         List.rev spec
     in
-    let first = parseRecModuleDeclaration ~attrs p in
+    let first = parseRecModuleDeclaration ~attrs ~startPos p in
     loop p [first]
 
   (* module-name : module-type *)
-  and parseRecModuleDeclaration ~attrs p =
+  and parseRecModuleDeclaration ~attrs ~startPos p =
     let name = match p.Parser.token with
     | Uident modName ->
       let loc = mkLoc p.startPos p.endPos in
@@ -7308,13 +7570,15 @@ Solution: you need to pull out each field you want explicitly."
     in
     Parser.expect Colon p;
     let modType = parseModuleType p in
-    Ast_helper.Md.mk ~attrs name modType
+    Ast_helper.Md.mk ~loc:(mkLoc startPos p.prevEndPos) ~attrs name modType
 
   and parseModuleDeclarationOrAlias ~attrs p =
+    let startPos = p.Parser.startPos in
     let moduleName = match p.Parser.token with
     | Uident ident ->
+      let loc = mkLoc p.Parser.startPos p.endPos in
       Parser.next p;
-      Location.mknoloc ident
+      Location.mkloc ident loc
     | t ->
       Parser.err p (Diagnostics.uident t);
       Location.mknoloc "_"
@@ -7331,16 +7595,17 @@ Solution: you need to pull out each field you want explicitly."
       Parser.err p (Diagnostics.unexpected token p.breadcrumbs);
       Recover.defaultModuleType()
     in
-    Ast_helper.Sig.module_ (Ast_helper.Md.mk ~attrs moduleName body)
+    let loc = mkLoc startPos p.prevEndPos in
+    Ast_helper.Md.mk ~loc ~attrs moduleName body
 
-  and parseModuleTypeDeclaration ~attrs p =
-    let startPos = p.Parser.startPos in
+  and parseModuleTypeDeclaration ~attrs ~startPos p =
     Parser.expect Typ p;
     (* We diverge from ocaml here by requiring uident instead of ident *)
     let moduleName = match p.Parser.token with
     | Uident ident ->
+      let loc = mkLoc p.startPos p.endPos in
       Parser.next p;
-      Location.mknoloc ident
+      Location.mkloc ident loc
     | t ->
       Parser.err p (Diagnostics.uident t);
       Location.mknoloc "_"
@@ -7355,13 +7620,14 @@ Solution: you need to pull out each field you want explicitly."
     Ast_helper.Sig.modtype ~loc:(mkLoc startPos p.prevEndPos) moduleDecl
 
   and parseSignLetDesc ~attrs p =
+    let startPos = p.Parser.startPos in
     Parser.expect Let p;
     let (name, loc) = parseLident p in
     let name = Location.mkloc name loc in
     Parser.expect Colon p;
     let typExpr = parsePolyTypeExpr p in
-    let valueDesc = Ast_helper.Val.mk ~attrs name typExpr in
-    Ast_helper.Sig.value valueDesc
+    let loc = mkLoc startPos p.prevEndPos in
+    Ast_helper.Val.mk ~loc ~attrs name typExpr
 
 (*    attr-id	::=	lowercase-ident
  	∣	  capitalized-ident
@@ -7406,22 +7672,30 @@ Solution: you need to pull out each field you want explicitly."
     let structure = match p.Parser.token with
     | Lparen when p.startPos.pos_cnum = p.prevEndPos.pos_cnum  ->
       Parser.next p;
-      let item = parseStructureItem p in
+      let items = parseDelimitedRegion
+        ~grammar:Grammar.Structure
+        ~closing:Rparen
+        ~f:parseStructureItemRegion
+        p
+      in
       Parser.expect Rparen p;
-      [item]
+      items
     | _ -> []
     in
     Parsetree.PStr structure
 
   (* type attribute = string loc * payload *)
   and parseAttribute p =
-    Parser.expect At p;
-    let attrId = parseAttributeId p in
-    let payload = parsePayload p in
-    (attrId, payload)
+    match p.Parser.token with
+    | At ->
+      Parser.next p;
+      let attrId = parseAttributeId p in
+      let payload = parsePayload p in
+      Some(attrId, payload)
+    | _ -> None
 
   and parseAttributes p =
-    parseList p
+    parseRegion p
       ~grammar:Grammar.Attribute
       ~f:parseAttribute
 
@@ -7431,13 +7705,10 @@ Solution: you need to pull out each field you want explicitly."
    *  | @@ attribute-id ( structure-item )
    *)
   and parseStandaloneAttribute p =
-    let startPos = p.Parser.startPos in
     Parser.expect AtAt p;
     let attrId = parseAttributeId p in
     let payload = parsePayload p in
-    let attribute = (attrId, payload) in
-    let loc = mkLoc startPos p.prevEndPos in
-    (loc, attribute)
+    (attrId, payload)
 
   (* extension	::=	% attr-id  attr-payload
    *              | %% attr-id(
@@ -7473,15 +7744,13 @@ Solution: you need to pull out each field you want explicitly."
    *  ~moduleLanguage represents whether we're on the module level or not
    *)
   and parseExtension ?(moduleLanguage=false) p =
-    let startPos = p.Parser.startPos in
     if moduleLanguage then
       Parser.expect PercentPercent p
     else
       Parser.expect Percent p;
     let attrId = parseAttributeId p in
     let payload = parsePayload p in
-    let loc = mkLoc startPos p.prevEndPos in
-    (loc, (attrId, payload))
+    (attrId, payload)
 end
 
 (* Collection of utilities to view the ast in a more a convenient form,
@@ -7575,6 +7844,14 @@ module ParsetreeViewer : sig
     (Parsetree.attributes * string Asttypes.loc * Parsetree.module_type option) list *
     Parsetree.module_expr
   )
+
+  val splitGenTypeAttr : Parsetree.attributes -> (bool * Parsetree.attributes)
+
+  val collectPatternsFromListConstruct:
+    Parsetree.pattern list -> Parsetree.pattern ->
+      (Parsetree.pattern list * Parsetree.pattern)
+
+  val isBlockExpr : Parsetree.expression -> bool
 end = struct
   open Parsetree
 
@@ -7651,10 +7928,14 @@ end = struct
     let rec collectNewTypes acc returnExpr =
       match returnExpr with
       | {pexp_desc = Pexp_newtype (stringLoc, returnExpr); pexp_attributes = []} ->
-        collectNewTypes (stringLoc.txt::acc) returnExpr
+        collectNewTypes (stringLoc::acc) returnExpr
       | returnExpr ->
-        let txt = List.fold_right (fun curr acc -> acc ^ " " ^ curr) acc "type" in
-        (txt, returnExpr)
+        let loc = match (acc, List.rev acc) with
+        | (startLoc::_, endLoc::_) -> { startLoc.loc with loc_end = endLoc.loc.loc_end }
+        | _ -> Location.none
+        in
+        let txt = List.fold_right (fun curr acc -> acc ^ " " ^ curr.Location.txt) acc "type" in
+        (Location.mkloc txt loc, returnExpr)
     in
     (* For simplicity reason Pexp_newtype gets converted to a Nolabel parameter,
      * otherwise this function would need to return a variant:
@@ -7667,9 +7948,13 @@ end = struct
       let parameter = ([], lbl, defaultExpr, pattern) in
       collect attrsBefore (parameter::acc) returnExpr
     | {pexp_desc = Pexp_newtype (stringLoc, rest); pexp_attributes = attrs} ->
-      let (txt, returnExpr) = collectNewTypes [stringLoc.txt] rest in
-      let var = {stringLoc with txt = txt} in
-      let parameter = (attrs, Asttypes.Nolabel, None, Ast_helper.Pat.var var) in
+      let (var, returnExpr) = collectNewTypes [stringLoc] rest in
+      let parameter = (
+        attrs,
+        Asttypes.Nolabel,
+        None,
+        Ast_helper.Pat.var ~loc:stringLoc.loc var
+      ) in
       collect attrsBefore (parameter::acc) returnExpr
     | {pexp_desc = Pexp_fun (lbl, defaultExpr, pattern, returnExpr); pexp_attributes = [({txt = "bs"}, _)] as attrs} ->
       let parameter = (attrs, lbl, defaultExpr, pattern) in
@@ -7686,8 +7971,6 @@ end = struct
     begin match expr with
     | {pexp_desc = Pexp_fun (Nolabel, defaultExpr, pattern, returnExpr); pexp_attributes = attrs} as expr ->
       collect attrs [] {expr with pexp_attributes = []}
-    (* | {pexp_desc = Pexp_newtype (_stringLoc, _rest); pexp_attributes = attrs} as expr -> *)
-      (* collect attrs [] {expr with pexp_attributes = []} *)
     | expr -> collect [] [] expr
     end
 
@@ -7907,6 +8190,30 @@ end = struct
       (List.rev acc, returnModExpr)
     in
     loop [] modExpr
+
+  let splitGenTypeAttr attrs =
+    match attrs with
+    | ({Location.txt = "genType"}, _)::attrs -> (true, attrs)
+    | attrs -> (false, attrs)
+
+  let rec collectPatternsFromListConstruct acc pattern =
+    let open Parsetree in
+    match pattern.ppat_desc with
+    | Ppat_construct(
+        {txt = Longident.Lident "::"},
+        Some {ppat_desc=Ppat_tuple (pat::rest::[])}
+      ) ->
+      collectPatternsFromListConstruct (pat::acc) rest
+    | _ -> List.rev acc, pattern
+
+  let isBlockExpr expr =
+    match expr.pexp_desc with
+    | Pexp_letmodule _
+    | Pexp_letexception _
+    | Pexp_let _
+    | Pexp_open _
+    | Pexp_sequence _ -> true
+    | _ -> false
 end
 
 module Parens: sig
@@ -7974,7 +8281,7 @@ end = struct
         {pexp_desc = Pexp_pack _},
         {ptyp_desc = Ptyp_package _}
       )} -> false
-    | {pexp_desc = Pexp_constraint _ | Pexp_tuple _ | Pexp_fun _ | Pexp_function _ | Pexp_newtype _} -> true
+    | {pexp_desc = Pexp_constraint _ | Pexp_fun _ | Pexp_function _ | Pexp_newtype _} -> true
     | expr when ParsetreeViewer.isBinaryExpression expr -> true
     | expr when ParsetreeViewer.isTernaryExpr expr -> true
     | {pexp_desc =
@@ -8008,7 +8315,6 @@ end = struct
       ) -> false
     | Pexp_fun _
     | Pexp_newtype _
-    | Pexp_tuple _
     | Pexp_setfield _
     | Pexp_constraint _ -> true
     | _ when ParsetreeViewer.isTernaryExpr rhs -> true
@@ -8181,18 +8487,1779 @@ end = struct
     | _ -> false
 end
 
-module Printer = struct
-  (* TODO: should this go inside a ast utility module? *)
-  let rec collectPatternsFromListConstruct acc pattern =
+module CommentTable = struct
+  type t = {
+    leading: (Location.t, Comment.t list) Hashtbl.t;
+    inside: (Location.t, Comment.t list) Hashtbl.t;
+    trailing: (Location.t, Comment.t list) Hashtbl.t;
+    (* Remember last printed trailing comment *)
+    printedTrailing: (Location.t, Comment.t list) Hashtbl.t;
+  }
+
+  let make () = {
+    leading = Hashtbl.create 100;
+    inside = Hashtbl.create 100;
+    trailing = Hashtbl.create 100;
+    printedTrailing = Hashtbl.create 100;
+  }
+
+  let empty = make ()
+
+  let log t =
+    let open Location in
+    let leadingStuff = Hashtbl.fold (fun (k : Location.t) (v : Comment.t list) acc ->
+      let loc = Doc.concat [
+        Doc.lbracket;
+        Doc.text (string_of_int k.loc_start.pos_lnum);
+        Doc.text ":";
+        Doc.text (string_of_int (k.loc_start.pos_cnum  - k.loc_start.pos_bol));
+        Doc.text "-";
+        Doc.text (string_of_int k.loc_end.pos_lnum);
+        Doc.text ":";
+        Doc.text (string_of_int (k.loc_end.pos_cnum  - k.loc_end.pos_bol));
+        Doc.rbracket;
+      ] in
+      let doc = Doc.breakableGroup ~forceBreak:true (
+        Doc.concat [
+          loc;
+          Doc.indent (
+            Doc.concat [
+              Doc.line;
+              Doc.join ~sep:Doc.comma (List.map (fun c -> Doc.text (Comment.txt c)) v)
+            ]
+          );
+          Doc.line;
+        ]
+      ) in
+      doc::acc
+    ) t.leading []
+    in
+    let trailingStuff = Hashtbl.fold (fun (k : Location.t) (v : Comment.t list) acc ->
+      let loc = Doc.concat [
+        Doc.lbracket;
+        Doc.text (string_of_int k.loc_start.pos_lnum);
+        Doc.text ":";
+        Doc.text (string_of_int (k.loc_start.pos_cnum  - k.loc_start.pos_bol));
+        Doc.text "-";
+        Doc.text (string_of_int k.loc_end.pos_lnum);
+        Doc.text ":";
+        Doc.text (string_of_int (k.loc_end.pos_cnum  - k.loc_end.pos_bol));
+        Doc.rbracket;
+      ] in
+      let doc = Doc.breakableGroup ~forceBreak:true (
+        Doc.concat [
+          loc;
+          Doc.indent (
+            Doc.concat [
+              Doc.line;
+              Doc.join ~sep:(Doc.concat [Doc.comma; Doc.line]) (List.map (fun c -> Doc.text (Comment.txt c)) v)
+            ]
+          );
+          Doc.line;
+        ]
+      ) in
+      doc::acc
+    ) t.trailing []
+    in
+    Doc.breakableGroup ~forceBreak:true (
+      Doc.concat [
+        Doc.text "leading comments:";
+        Doc.line;
+        Doc.indent (Doc.concat leadingStuff);
+        Doc.line;
+        Doc.line;
+        Doc.text "trailing comments:";
+        Doc.indent (Doc.concat trailingStuff);
+        Doc.line;
+        Doc.line;
+      ]
+    ) |> Doc.toString ~width:80 |> print_endline
+
+  let attach tbl loc comments =
+    match comments with
+    | [] -> ()
+    | comments -> Hashtbl.replace tbl loc comments
+
+  let partitionByLoc comments loc =
+    let rec loop (leading, inside, trailing)  comments =
+      let open Location in
+      match comments with
+      | comment::rest ->
+        let cmtLoc = Comment.loc comment in
+        if cmtLoc.loc_end.pos_cnum <= loc.loc_start.pos_cnum then
+          loop (comment::leading, inside, trailing) rest
+        else if cmtLoc.loc_start.pos_cnum >= loc.loc_end.pos_cnum then
+          loop (leading, inside, comment::trailing) rest
+        else
+          loop (leading, comment::inside, trailing) rest
+      | [] -> (List.rev leading, List.rev inside, List.rev trailing)
+    in
+    loop ([], [], []) comments
+
+  let partitionLeadingTrailing comments loc =
+    let rec loop (leading, trailing)  comments =
+      let open Location in
+      match comments with
+      | comment::rest ->
+        let cmtLoc = Comment.loc comment in
+        if cmtLoc.loc_end.pos_cnum <= loc.loc_start.pos_cnum then
+          loop (comment::leading, trailing) rest
+        else
+          loop (leading, comment::trailing) rest
+      | [] -> (List.rev leading, List.rev trailing)
+    in
+    loop ([], []) comments
+
+  let partitionBeforeAfterPos comments pos =
+    let rec loop (before, after)  comments =
+      let open Location in
+      let open Lexing in
+      match comments with
+      | comment::rest ->
+        let cmtLoc = Comment.loc comment in
+        if cmtLoc.loc_end.pos_cnum <= pos.pos_cnum then
+          loop (comment::before, after) rest
+        else
+          loop (before, comment::after) rest
+      | [] -> (List.rev before, List.rev after)
+    in
+    loop ([], []) comments
+
+  let partitionByOnSameLine loc comments =
+    let rec loop (onSameLine, onOtherLine) comments =
+      let open Location in
+      match comments with
+      | [] -> (List.rev onSameLine, List.rev onOtherLine)
+      | comment::rest ->
+        let cmtLoc = Comment.loc comment in
+        if cmtLoc.loc_start.pos_lnum == loc.loc_end.pos_lnum then
+          loop (comment::onSameLine, onOtherLine) rest
+        else
+          loop (onSameLine, comment::onOtherLine) rest
+    in
+    loop ([], []) comments
+
+  let partitionAdjacentTrailing loc1 comments =
+    let open Location in
+    let open Lexing in
+    let rec loop ~prevEndPos afterLoc1 comments =
+      match comments with
+      | [] -> (List.rev afterLoc1, [])
+      | (comment::rest) as comments ->
+        let cmtPrevEndPos = Comment.prevTokEndPos comment in
+        if prevEndPos.Lexing.pos_cnum == cmtPrevEndPos.pos_cnum then
+          let commentEnd = (Comment.loc comment).loc_end in
+          loop ~prevEndPos:commentEnd (comment::afterLoc1) rest
+        else
+          (List.rev afterLoc1, comments)
+    in
+    loop ~prevEndPos:loc1.loc_end [] comments
+
+  let rec collectListPatterns acc pattern =
     let open Parsetree in
     match pattern.ppat_desc with
     | Ppat_construct(
         {txt = Longident.Lident "::"},
         Some {ppat_desc=Ppat_tuple (pat::rest::[])}
       ) ->
-      collectPatternsFromListConstruct (pat::acc) rest
-    | _ -> List.rev acc, pattern
+      collectListPatterns (pat::acc) rest
+    | Ppat_construct ({txt = Longident.Lident "[]"}, None) ->
+      List.rev acc
+    | _ -> List.rev (pattern::acc)
 
+  let rec collectListExprs acc expr =
+    let open Parsetree in
+    match expr.pexp_desc with
+    | Pexp_construct(
+        {txt = Longident.Lident "::"},
+        Some {pexp_desc=Pexp_tuple (expr::rest::[])}
+      ) ->
+      collectListExprs (expr::acc) rest
+    | Pexp_construct ({txt = Longident.Lident "[]"}, _) ->
+      List.rev acc
+    | _ -> List.rev (expr::acc)
+
+  (* TODO: use ParsetreeViewer *)
+  let arrowType ct =
+    let open Parsetree in
+    let rec process attrsBefore acc typ = match typ with
+    | {ptyp_desc = Ptyp_arrow (Nolabel as lbl, typ1, typ2); ptyp_attributes = []} ->
+      let arg = ([], lbl, typ1) in
+      process attrsBefore (arg::acc) typ2
+    | {ptyp_desc = Ptyp_arrow (Nolabel as lbl, typ1, typ2); ptyp_attributes = [({txt ="bs"}, _) ] as attrs} ->
+      let arg = (attrs, lbl, typ1) in
+      process attrsBefore (arg::acc) typ2
+    | {ptyp_desc = Ptyp_arrow (Nolabel, typ1, typ2); ptyp_attributes = attrs} as returnType ->
+      let args = List.rev acc in
+      (attrsBefore, args, returnType)
+    | {ptyp_desc = Ptyp_arrow ((Labelled _ | Optional _) as lbl, typ1, typ2); ptyp_attributes = attrs} ->
+      let arg = (attrs, lbl, typ1) in
+      process attrsBefore (arg::acc) typ2
+    | typ ->
+      (attrsBefore, List.rev acc, typ)
+    in
+    begin match ct with
+    | {ptyp_desc = Ptyp_arrow (Nolabel, _typ1, _typ2); ptyp_attributes = attrs} as typ ->
+      process attrs [] {typ with ptyp_attributes = []}
+    | typ -> process [] [] typ
+    end
+
+  (* TODO: avoiding the dependency on ParsetreeViewer here, is this a good idea? *)
+  let modExprApply modExpr =
+    let rec loop acc modExpr = match modExpr with
+    | {Parsetree.pmod_desc = Pmod_apply (next, arg)} ->
+      loop (arg::acc) next
+    | _ -> (modExpr::acc)
+    in
+    loop [] modExpr
+
+  (* TODO: avoiding the dependency on ParsetreeViewer here, is this a good idea? *)
+  let modExprFunctor modExpr =
+    let rec loop acc modExpr = match modExpr with
+    | {Parsetree.pmod_desc = Pmod_functor (lbl, modType, returnModExpr); pmod_attributes = attrs} ->
+      let param = (attrs, lbl, modType) in
+      loop (param::acc) returnModExpr
+    | returnModExpr ->
+      (List.rev acc, returnModExpr)
+    in
+    loop [] modExpr
+
+  let functorType modtype =
+    let rec process acc modtype = match modtype with
+    | {Parsetree.pmty_desc = Pmty_functor (lbl, argType, returnType); pmty_attributes = attrs} ->
+      let arg = (attrs, lbl, argType) in
+      process (arg::acc) returnType
+    | modType ->
+      (List.rev acc, modType)
+    in
+    process [] modtype
+
+  let funExpr expr =
+    let open Parsetree in
+    (* Turns (type t, type u, type z) into "type t u z" *)
+    let rec collectNewTypes acc returnExpr =
+      match returnExpr with
+      | {pexp_desc = Pexp_newtype (stringLoc, returnExpr); pexp_attributes = []} ->
+        collectNewTypes (stringLoc::acc) returnExpr
+      | returnExpr ->
+        let loc = match (acc, List.rev acc) with
+        | (startLoc::_, endLoc::_) -> { endLoc.loc with loc_end = endLoc.loc.loc_end }
+        | _ -> Location.none
+        in
+        let txt = List.fold_right (fun curr acc -> acc ^ " " ^ curr.Location.txt) acc "type" in
+        (Location.mkloc txt loc, returnExpr)
+    in
+    (* For simplicity reason Pexp_newtype gets converted to a Nolabel parameter,
+     * otherwise this function would need to return a variant:
+     * | NormalParamater(...)
+     * | NewType(...)
+     * This complicates printing with an extra variant/boxing/allocation for a code-path
+     * that is not often used. Lets just keep it simple for now *)
+    let rec collect attrsBefore acc expr = match expr with
+    | {pexp_desc = Pexp_fun (lbl, defaultExpr, pattern, returnExpr); pexp_attributes = []} ->
+      let parameter = ([], lbl, defaultExpr, pattern) in
+      collect attrsBefore (parameter::acc) returnExpr
+    | {pexp_desc = Pexp_newtype (stringLoc, rest); pexp_attributes = attrs} ->
+      let (var, returnExpr) = collectNewTypes [stringLoc] rest in
+      let parameter = (
+        attrs,
+        Asttypes.Nolabel,
+        None,
+        Ast_helper.Pat.var ~loc:stringLoc.loc var
+      ) in
+      Format.sprintf
+        "[%d:%d - %d:%d]"
+        stringLoc.loc.loc_start.pos_lnum
+        (stringLoc.loc.loc_start.pos_cnum - stringLoc.loc.loc_start.pos_bol)
+        stringLoc.loc.loc_end.pos_lnum
+        (stringLoc.loc.loc_end.pos_cnum - stringLoc.loc.loc_end.pos_bol)
+      |> print_endline;
+      collect attrsBefore (parameter::acc) returnExpr
+    | {pexp_desc = Pexp_fun (lbl, defaultExpr, pattern, returnExpr); pexp_attributes = [({txt = "bs"}, _)] as attrs} ->
+      let parameter = (attrs, lbl, defaultExpr, pattern) in
+      collect attrsBefore (parameter::acc) returnExpr
+    | {
+        pexp_desc = Pexp_fun ((Labelled _ | Optional _) as lbl, defaultExpr, pattern, returnExpr);
+        pexp_attributes = attrs
+      } ->
+      let parameter = (attrs, lbl, defaultExpr, pattern) in
+      collect attrsBefore (parameter::acc) returnExpr
+    | expr ->
+      (attrsBefore, List.rev acc, expr)
+    in
+    begin match expr with
+    | {pexp_desc = Pexp_fun (Nolabel, defaultExpr, pattern, returnExpr); pexp_attributes = attrs} as expr ->
+      collect attrs [] {expr with pexp_attributes = []}
+    | expr -> collect [] [] expr
+    end
+
+  let rec isBlockExpr expr =
+    let open Parsetree in
+    match expr.pexp_desc with
+    | Pexp_letmodule _
+    | Pexp_letexception _
+    | Pexp_let _
+    | Pexp_open _
+    | Pexp_sequence _ -> true
+    | Pexp_apply (callExpr, _) when isBlockExpr callExpr -> true
+    | Pexp_constraint (expr, _) when isBlockExpr expr -> true
+    | Pexp_field (expr, _) when isBlockExpr expr -> true
+    | Pexp_setfield (expr, _, _) when isBlockExpr expr -> true
+    | _ -> false
+
+  (* TODO: ParsetreeViewer? *)
+  (* let functorType modtype = *)
+    (* let rec process acc modtype = match modtype with *)
+    (* | {pmty_desc = Pmty_functor (lbl, argType, returnType); pmty_attributes = attrs} -> *)
+      (* let arg = (attrs, lbl, argType) in *)
+      (* process (arg::acc) returnType *)
+    (* | modType -> *)
+      (* (List.rev acc, modType) *)
+    (* in *)
+    (* process [] modtype *)
+
+  let rec walkStructure s t comments =
+    match s with
+    | _ when comments = [] -> ()
+    | [] -> attach t.inside Location.none comments
+    | s ->
+      walkList
+        ~getLoc:(fun n -> n.Parsetree.pstr_loc)
+        ~walkNode:walkStructureItem
+        s
+        t
+        comments
+
+    and walkStructureItem si t comments =
+      match si.Parsetree.pstr_desc with
+      | _ when comments = [] -> ()
+      | Pstr_primitive valueDescription ->
+        walkValueDescription valueDescription t comments
+      | Pstr_open openDescription ->
+        walkOpenDescription openDescription t comments
+      | Pstr_value (_, valueBindings) ->
+        walkValueBindings valueBindings t comments
+      | Pstr_type (_, typeDeclarations) ->
+        walkTypeDeclarations typeDeclarations t comments
+      | Pstr_eval (expr, _) ->
+        walkExpr expr t comments
+      | Pstr_module moduleBinding ->
+        walkModuleBinding moduleBinding t comments
+      | Pstr_recmodule moduleBindings ->
+        walkList
+          ~getLoc:(fun mb -> mb.Parsetree.pmb_loc)
+          ~walkNode:walkModuleBinding
+          moduleBindings
+          t
+          comments
+      | Pstr_modtype modTypDecl ->
+        walkModuleTypeDeclaration modTypDecl t comments
+      | Pstr_attribute attribute ->
+        walkAttribute attribute t comments
+      | Pstr_extension (extension, _) ->
+        walkExtension extension t comments
+      | Pstr_include includeDeclaration ->
+        walkIncludeDeclaration includeDeclaration t comments
+      | Pstr_exception extensionConstructor ->
+        walkExtConstr extensionConstructor t comments
+      | Pstr_typext typeExtension ->
+        walkTypeExtension typeExtension t comments
+      | Pstr_class_type _  | Pstr_class _ -> ()
+
+    and walkValueDescription vd t comments =
+      let (leading, trailing) =
+        partitionLeadingTrailing comments vd.pval_name.loc in
+      attach t.leading vd.pval_name.loc leading;
+      let (afterName, rest) =
+        partitionAdjacentTrailing vd.pval_name.loc trailing in
+      attach t.trailing vd.pval_name.loc afterName;
+      let (before, inside, after) =
+        partitionByLoc rest vd.pval_type.ptyp_loc
+      in
+      attach t.leading vd.pval_type.ptyp_loc before;
+      walkTypExpr vd.pval_type t inside;
+      attach t.trailing vd.pval_type.ptyp_loc after
+
+    and walkTypeExtension te t comments =
+      let (leading, trailing) =
+        partitionLeadingTrailing comments te.ptyext_path.loc in
+      attach t.leading te.ptyext_path.loc leading;
+      let (afterPath, rest) =
+        partitionAdjacentTrailing te.ptyext_path.loc trailing in
+      attach t.trailing te.ptyext_path.loc afterPath;
+
+      (* type params *)
+      let rest = match te.ptyext_params with
+      | [] -> rest
+      | typeParams ->
+        visitListButContinueWithRemainingComments
+          ~getLoc:(fun (typexpr, _variance) -> typexpr.Parsetree.ptyp_loc)
+          ~walkNode:walkTypeParam
+          ~newlineDelimited:false
+          typeParams
+          t
+          rest
+      in
+      walkList
+        ~getLoc:(fun n -> n.Parsetree.pext_loc)
+        ~walkNode:walkExtConstr
+        te.ptyext_constructors
+        t
+        rest
+
+    and walkIncludeDeclaration inclDecl t comments =
+      let (before, inside, after) =
+        partitionByLoc comments inclDecl.pincl_mod.pmod_loc in
+      attach t.leading inclDecl.pincl_mod.pmod_loc before;
+      walkModExpr inclDecl.pincl_mod t inside;
+      attach t.trailing inclDecl.pincl_mod.pmod_loc after
+
+    and walkModuleTypeDeclaration mtd t comments =
+      let (leading, trailing) =
+        partitionLeadingTrailing comments mtd.pmtd_name.loc in
+      attach t.leading mtd.pmtd_name.loc leading;
+      begin match mtd.pmtd_type with
+      | None ->
+        attach t.trailing mtd.pmtd_name.loc trailing
+      | Some modType ->
+        let (afterName, rest) = partitionAdjacentTrailing mtd.pmtd_name.loc trailing in
+        attach t.trailing mtd.pmtd_name.loc afterName;
+        let (before, inside, after) = partitionByLoc rest modType.pmty_loc in
+        attach t.leading modType.pmty_loc before;
+        walkModType modType t inside;
+        attach t.trailing modType.pmty_loc after
+      end
+
+    and walkModuleBinding mb t comments =
+      let (leading, trailing) = partitionLeadingTrailing comments mb.pmb_name.loc in
+      attach t.leading mb.pmb_name.loc leading;
+      let (afterName, rest) = partitionAdjacentTrailing mb.pmb_name.loc trailing in
+      attach t.trailing mb.pmb_name.loc afterName;
+      let (leading, inside, trailing) = partitionByLoc rest mb.pmb_expr.pmod_loc in
+      attach t.leading mb.pmb_expr.pmod_loc leading;
+      walkModExpr mb.pmb_expr t inside;
+      attach t.trailing mb.pmb_expr.pmod_loc trailing
+
+   and walkSignature signature t comments =
+      match signature with
+      | _ when comments = [] -> ()
+      | [] -> attach t.inside Location.none comments
+      | s ->
+        walkList
+          ~getLoc:(fun n -> n.Parsetree.psig_loc)
+          ~walkNode:walkSignatureItem
+          signature
+          t
+          comments
+
+    and walkSignatureItem si t comments =
+      match si.psig_desc with
+      | _ when comments = [] -> ()
+      | Psig_value valueDescription ->
+        walkValueDescription valueDescription t comments
+      | Psig_type (_, typeDeclarations) ->
+        walkTypeDeclarations typeDeclarations t comments
+      | Psig_typext typeExtension ->
+        walkTypeExtension typeExtension t comments
+      | Psig_exception extensionConstructor ->
+        walkExtConstr extensionConstructor t comments
+      | Psig_module moduleDeclaration ->
+        walkModuleDeclaration moduleDeclaration t comments
+      | Psig_recmodule moduleDeclarations ->
+        walkList
+          ~getLoc:(fun n -> n.Parsetree.pmd_loc)
+          ~walkNode:walkModuleDeclaration
+          moduleDeclarations
+          t
+          comments
+      | Psig_modtype moduleTypeDeclaration ->
+        walkModuleTypeDeclaration moduleTypeDeclaration t comments
+      | Psig_open openDescription ->
+        walkOpenDescription openDescription t comments
+      | Psig_include includeDescription ->
+        walkIncludeDescription includeDescription t comments
+      | Psig_attribute attribute ->
+        walkAttribute attribute t comments
+      | Psig_extension (extension, _) ->
+        walkExtension extension t comments
+      | Psig_class _ | Psig_class_type _ -> ()
+
+    and walkIncludeDescription id t comments =
+      let (before, inside, after) =
+        partitionByLoc comments id.pincl_mod.pmty_loc in
+      attach t.leading id.pincl_mod.pmty_loc before;
+      walkModType id.pincl_mod t inside;
+      attach t.trailing id.pincl_mod.pmty_loc after
+
+    and walkModuleDeclaration md t comments =
+      let (leading, trailing) = partitionLeadingTrailing comments md.pmd_name.loc in
+      attach t.leading md.pmd_name.loc leading;
+      let (afterName, rest) = partitionAdjacentTrailing md.pmd_name.loc trailing in
+      attach t.trailing md.pmd_name.loc afterName;
+      let (leading, inside, trailing) = partitionByLoc rest md.pmd_type.pmty_loc in
+      attach t.leading md.pmd_type.pmty_loc leading;
+      walkModType md.pmd_type t inside;
+      attach t.trailing md.pmd_type.pmty_loc trailing
+
+    and walkList:
+      'node.
+      ?prevLoc:Location.t ->
+      getLoc:('node -> Location.t) ->
+      walkNode:('node -> t -> Comment.t list -> unit) ->
+      'node list -> t -> Comment.t list -> unit
+      = fun ?prevLoc ~getLoc ~walkNode l t comments ->
+      let open Location in
+      match l with
+      | _ when comments = [] -> ()
+      | [] ->
+        begin match prevLoc with
+        | Some loc ->
+          attach t.trailing loc comments
+        | None -> ()
+        end
+      | node::rest ->
+        let currLoc = getLoc node in
+        let (leading, inside, trailing) = partitionByLoc comments currLoc in
+        begin match prevLoc with
+        | None -> (* first value binding, all leading comments attach here *)
+          attach t.leading currLoc leading
+        | Some prevLoc ->
+          (* Same line *)
+          if prevLoc.loc_end.pos_lnum == currLoc.loc_start.pos_lnum then
+            let (afterPrev, beforeCurr) = partitionAdjacentTrailing prevLoc leading in
+            let () = attach t.trailing prevLoc afterPrev in
+            attach t.leading currLoc beforeCurr
+          else
+            let (onSameLineAsPrev, afterPrev) = partitionByOnSameLine prevLoc leading in
+            let () = attach t.trailing prevLoc onSameLineAsPrev in
+            let (leading, _inside, _trailing) = partitionByLoc afterPrev currLoc in
+            attach t.leading currLoc leading
+        end;
+        walkNode node t inside;
+        walkList ~prevLoc:currLoc ~getLoc ~walkNode rest t trailing
+
+    (* The parsetree doesn't always contain location info about the opening or
+     * closing token of a "list-of-things". This routine visits the whole list,
+     * but returns any remaining comments that likely fall after the whole list. *)
+    and visitListButContinueWithRemainingComments:
+      'node.
+      ?prevLoc:Location.t ->
+      newlineDelimited:bool ->
+      getLoc:('node -> Location.t) ->
+      walkNode:('node -> t -> Comment.t list -> unit) ->
+      'node list -> t -> Comment.t list -> Comment.t list
+      = fun ?prevLoc ~newlineDelimited ~getLoc ~walkNode l t comments ->
+      let open Location in
+      match l with
+      | _ when comments = [] -> []
+      | [] ->
+        begin match prevLoc with
+        | Some loc ->
+          let (afterPrev, rest) =
+            if newlineDelimited then
+              partitionByOnSameLine loc comments
+            else
+              partitionAdjacentTrailing loc comments
+          in
+          attach t.trailing loc afterPrev;
+          rest
+        | None -> comments
+        end
+      | node::rest ->
+        let currLoc = getLoc node in
+        let (leading, inside, trailing) = partitionByLoc comments currLoc in
+        let () = match prevLoc with
+        | None -> (* first value binding, all leading comments attach here *)
+          attach t.leading currLoc leading;
+          ()
+        | Some prevLoc ->
+          (* Same line *)
+          if prevLoc.loc_end.pos_lnum == currLoc.loc_start.pos_lnum then
+            let (afterPrev, beforeCurr) = partitionAdjacentTrailing prevLoc leading in
+            let () = attach t.trailing prevLoc afterPrev in
+            let () = attach t.leading currLoc beforeCurr in
+            ()
+          else
+            let (onSameLineAsPrev, afterPrev) = partitionByOnSameLine prevLoc leading in
+            let () = attach t.trailing prevLoc onSameLineAsPrev in
+            let (leading, _inside, trailing) = partitionByLoc afterPrev currLoc in
+            let () = attach t.leading currLoc leading in
+            ()
+        in
+        walkNode node t inside;
+        visitListButContinueWithRemainingComments
+          ~prevLoc:currLoc ~getLoc ~walkNode ~newlineDelimited
+          rest t trailing
+
+    and walkValueBindings vbs t comments =
+      walkList
+        ~getLoc:(fun n ->
+          if n.Parsetree.pvb_pat.ppat_loc.loc_ghost then
+            n.pvb_expr.pexp_loc
+          else
+           n.Parsetree.pvb_loc
+        )
+        ~walkNode:walkValueBinding
+        vbs
+        t
+        comments
+
+    and walkOpenDescription openDescription t comments =
+      let loc = openDescription.popen_lid.loc in
+      let (leading, trailing) = partitionLeadingTrailing comments loc in
+      attach t.leading loc leading;
+      attach t.trailing loc trailing;
+
+    and walkTypeDeclarations typeDeclarations t comments =
+      walkList
+        ~getLoc:(fun n -> n.Parsetree.ptype_loc)
+        ~walkNode:walkTypeDeclaration
+        typeDeclarations
+        t
+        comments
+
+    and walkTypeParam (typexpr, _variance) t comments =
+      walkTypExpr typexpr t comments
+
+    and walkTypeDeclaration td t comments =
+      let (beforeName, rest) =
+        partitionLeadingTrailing comments td.ptype_name.loc in
+      attach t.leading td.ptype_name.loc beforeName;
+
+      let (afterName, rest) =
+        partitionAdjacentTrailing td.ptype_name.loc rest in
+      attach t.trailing td.ptype_name.loc afterName;
+
+      (* type params *)
+      let rest = match td.ptype_params with
+      | [] -> rest
+      | typeParams ->
+        visitListButContinueWithRemainingComments
+          ~getLoc:(fun (typexpr, _variance) -> typexpr.Parsetree.ptyp_loc)
+          ~walkNode:walkTypeParam
+          ~newlineDelimited:false
+          typeParams
+          t
+          rest
+      in
+
+      (* manifest:  = typexpr *)
+      let rest = match td.ptype_manifest with
+      | Some typexpr ->
+        let (beforeTyp, insideTyp, afterTyp) =
+          partitionByLoc rest typexpr.ptyp_loc in
+        attach t.leading typexpr.ptyp_loc beforeTyp;
+        walkTypExpr typexpr t insideTyp;
+        let (afterTyp, rest) =
+          partitionAdjacentTrailing typexpr.Parsetree.ptyp_loc afterTyp in
+        attach t.trailing typexpr.ptyp_loc afterTyp;
+        rest
+      | None -> rest
+      in
+
+      let rest = match td.ptype_kind with
+      | Ptype_abstract | Ptype_open -> rest
+      | Ptype_record labelDeclarations ->
+        walkLabelDeclarations labelDeclarations t rest
+      | Ptype_variant constructorDeclarations ->
+        walkConstructorDeclarations constructorDeclarations t rest
+      in
+      attach t.trailing td.ptype_loc rest
+
+    and walkLabelDeclarations lds t comments =
+      visitListButContinueWithRemainingComments
+        ~getLoc:(fun ld -> ld.Parsetree.pld_loc)
+        ~walkNode:walkLabelDeclaration
+        ~newlineDelimited:false
+        lds
+        t
+        comments
+
+    and walkLabelDeclaration ld t comments =
+      let (beforeName, rest) =
+        partitionLeadingTrailing comments ld.pld_name.loc  in
+      attach t.leading ld.pld_name.loc beforeName;
+      let (afterName, rest) = partitionAdjacentTrailing ld.pld_name.loc rest in
+      attach t.trailing ld.pld_name.loc afterName;
+      let (beforeTyp, insideTyp, afterTyp) =
+        partitionByLoc rest ld.pld_type.ptyp_loc in
+      attach t.leading ld.pld_type.ptyp_loc beforeTyp;
+      walkTypExpr ld.pld_type t insideTyp;
+      attach t.trailing ld.pld_type.ptyp_loc afterTyp
+
+    and walkConstructorDeclarations cds t comments =
+      visitListButContinueWithRemainingComments
+        ~getLoc:(fun cd -> cd.Parsetree.pcd_loc)
+        ~walkNode:walkConstructorDeclaration
+        ~newlineDelimited:false
+        cds
+        t
+        comments
+
+    and walkConstructorDeclaration cd t comments =
+      let (beforeName, rest) =
+        partitionLeadingTrailing comments cd.pcd_name.loc  in
+      attach t.leading cd.pcd_name.loc beforeName;
+      let (afterName, rest) =
+        partitionAdjacentTrailing cd.pcd_name.loc rest in
+      attach t.trailing cd.pcd_name.loc afterName;
+      let rest = walkConstructorArguments cd.pcd_args t rest in
+
+      let rest = match cd.pcd_res with
+      | Some typexpr ->
+        let (beforeTyp, insideTyp, afterTyp) =
+          partitionByLoc rest typexpr.ptyp_loc in
+        attach t.leading typexpr.ptyp_loc beforeTyp;
+        walkTypExpr typexpr t insideTyp;
+        let (afterTyp, rest) =
+          partitionAdjacentTrailing typexpr.Parsetree.ptyp_loc afterTyp in
+        attach t.trailing typexpr.ptyp_loc afterTyp;
+        rest
+      | None -> rest
+      in
+      attach t.trailing cd.pcd_loc rest
+
+    and walkConstructorArguments args t comments =
+      match args with
+      | Pcstr_tuple typexprs ->
+        visitListButContinueWithRemainingComments
+          ~getLoc:(fun n -> n.Parsetree.ptyp_loc)
+          ~walkNode:walkTypExpr
+          ~newlineDelimited:false
+          typexprs
+          t
+          comments
+      | Pcstr_record labelDeclarations ->
+        walkLabelDeclarations labelDeclarations t comments
+
+    and walkValueBinding vb t comments =
+      let open Location in
+
+      if vb.pvb_pat.ppat_loc.loc_ghost then
+        walkExpr vb.pvb_expr t comments
+      else
+      let patternLoc = vb.Parsetree.pvb_pat.ppat_loc in
+      let exprLoc = vb.Parsetree.pvb_expr.pexp_loc in
+
+      let (leading, inside, trailing) =
+        partitionByLoc comments patternLoc in
+
+      (* everything before start of pattern can only be leading on the pattern:
+       *   let /* before */ a = 1 *)
+      attach t.leading patternLoc leading;
+      walkPattern vb.Parsetree.pvb_pat t inside;
+      (* let pattern = expr     -> pattern and expr on the same line *)
+      (* if patternLoc.loc_end.pos_lnum == exprLoc.loc_start.pos_lnum then ( *)
+        let (afterPat, surroundingExpr) =
+          partitionAdjacentTrailing patternLoc trailing
+        in
+        attach t.trailing patternLoc afterPat;
+        let (beforeExpr, insideExpr, afterExpr) =
+          partitionByLoc surroundingExpr exprLoc in
+        if isBlockExpr vb.pvb_expr then (
+          walkExpr vb.pvb_expr t (List.concat [beforeExpr; insideExpr; afterExpr])
+        ) else (
+          attach t.leading exprLoc beforeExpr;
+          walkExpr vb.Parsetree.pvb_expr t insideExpr;
+          attach t.trailing exprLoc afterExpr
+        )
+
+    and walkExpr expr t comments =
+      let open Location in
+      match expr.Parsetree.pexp_desc with
+      | _ when comments = [] -> ()
+      | Pexp_constant _ ->
+        let (leading, trailing) =
+          partitionLeadingTrailing comments expr.pexp_loc in
+        attach t.leading expr.pexp_loc leading;
+        attach t.trailing expr.pexp_loc trailing;
+      | Pexp_ident longident ->
+        let (leading, trailing) =
+          partitionLeadingTrailing comments longident.loc in
+        attach t.leading longident.loc leading;
+        attach t.trailing longident.loc trailing;
+      | Pexp_let (_recFlag, valueBindings, expr2) ->
+        let comments = visitListButContinueWithRemainingComments
+          ~getLoc:(fun n ->
+            if n.Parsetree.pvb_pat.ppat_loc.loc_ghost then
+              n.pvb_expr.pexp_loc
+            else
+             n.Parsetree.pvb_loc
+          )
+          ~walkNode:walkValueBinding
+          ~newlineDelimited:true
+          valueBindings
+          t
+          comments
+        in
+        if isBlockExpr expr2 then (
+          walkExpr expr2 t comments;
+        ) else (
+          let (leading, inside, trailing) = partitionByLoc comments expr2.pexp_loc in
+          attach t.leading expr2.pexp_loc leading;
+          walkExpr expr2 t inside;
+          attach t.trailing expr2.pexp_loc trailing
+        )
+      | Pexp_open (_override, longident, expr2) ->
+        let (leading, comments) =
+          partitionLeadingTrailing comments expr.pexp_loc in
+        attach
+          t.leading
+          {expr.pexp_loc with loc_end = longident.loc.loc_end}
+          leading;
+        let (leading, trailing) =
+          partitionLeadingTrailing comments longident.loc in
+        attach t.leading longident.loc leading;
+        let (afterLongident, rest) =
+          partitionByOnSameLine longident.loc trailing in
+        attach t.trailing longident.loc afterLongident;
+        if isBlockExpr expr2 then (
+          walkExpr expr2 t rest
+        ) else (
+          let (leading, inside, trailing) = partitionByLoc rest expr2.pexp_loc in
+          attach t.leading expr2.pexp_loc leading;
+          walkExpr expr2 t inside;
+          attach t.trailing expr2.pexp_loc trailing
+        )
+      | Pexp_extension (
+          {txt = "bs.obj"},
+          PStr [{
+            pstr_desc = Pstr_eval({pexp_desc = Pexp_record (rows, _)}, [])
+          }]
+        ) ->
+        walkList
+          ~getLoc:(fun (
+              (longident, expr): (Longident.t Asttypes.loc * Parsetree.expression)
+            ) -> {
+            longident.loc with loc_end = expr.pexp_loc.loc_end
+          })
+          ~walkNode:walkExprRecordRow
+          rows
+          t
+          comments
+      | Pexp_extension extension ->
+        walkExtension extension t comments
+      | Pexp_letexception (extensionConstructor, expr2) ->
+        let (leading, comments) =
+          partitionLeadingTrailing comments expr.pexp_loc in
+        attach
+          t.leading
+          {expr.pexp_loc with loc_end = extensionConstructor.pext_loc.loc_end}
+          leading;
+        let (leading, inside, trailing) =
+          partitionByLoc comments extensionConstructor.pext_loc in
+        attach t.leading extensionConstructor.pext_loc leading;
+        walkExtConstr extensionConstructor t inside;
+        let (afterExtConstr, rest) =
+          partitionByOnSameLine extensionConstructor.pext_loc trailing in
+        attach t.trailing extensionConstructor.pext_loc afterExtConstr;
+        if isBlockExpr expr2 then (
+          walkExpr expr2 t rest
+        ) else (
+          let (leading, inside, trailing) = partitionByLoc rest expr2.pexp_loc in
+          attach t.leading expr2.pexp_loc leading;
+          walkExpr expr2 t inside;
+          attach t.trailing expr2.pexp_loc trailing
+        )
+      | Pexp_letmodule (stringLoc, modExpr, expr2) ->
+        let (leading, comments) =
+          partitionLeadingTrailing comments expr.pexp_loc in
+        attach t.leading {expr.pexp_loc with loc_end = modExpr.pmod_loc.loc_end} leading;
+        let (leading, trailing) = partitionLeadingTrailing comments stringLoc.loc in
+        attach t.leading stringLoc.loc leading;
+        let (afterString, rest) =
+          partitionAdjacentTrailing stringLoc.loc trailing in
+        attach t.trailing stringLoc.loc afterString;
+        let (beforeModExpr, insideModExpr, afterModExpr) =
+          partitionByLoc rest modExpr.pmod_loc in
+        attach t.leading modExpr.pmod_loc beforeModExpr;
+        walkModExpr modExpr t insideModExpr;
+        let (afterModExpr, rest) =
+          partitionByOnSameLine modExpr.pmod_loc afterModExpr in
+        attach t.trailing modExpr.pmod_loc afterModExpr;
+        if isBlockExpr expr2 then (
+          walkExpr expr2 t rest;
+        ) else (
+          let (leading, inside, trailing) = partitionByLoc rest expr2.pexp_loc in
+          attach t.leading expr2.pexp_loc leading;
+          walkExpr expr2 t inside;
+          attach t.trailing expr2.pexp_loc trailing
+        )
+      | Pexp_assert expr | Pexp_lazy expr ->
+        if isBlockExpr expr then (
+          walkExpr expr t comments
+        ) else (
+          let (leading, inside, trailing) = partitionByLoc comments expr.pexp_loc in
+          attach t.leading expr.pexp_loc leading;
+          walkExpr expr t inside;
+          attach t.trailing expr.pexp_loc trailing
+        )
+      | Pexp_constraint (expr, typexpr) ->
+        let (leading, inside, trailing) = partitionByLoc comments expr.pexp_loc in
+        attach t.leading expr.pexp_loc leading;
+        walkExpr expr t inside;
+        let (afterExpr, rest) =
+          partitionAdjacentTrailing expr.pexp_loc trailing in
+        attach t.trailing expr.pexp_loc afterExpr;
+        let (leading, inside, trailing) = partitionByLoc rest typexpr.ptyp_loc in
+        attach t.leading typexpr.ptyp_loc leading;
+        walkTypExpr typexpr t inside;
+        attach t.trailing typexpr.ptyp_loc trailing
+      | Pexp_tuple [] | Pexp_array [] | Pexp_construct({txt = Longident.Lident "[]"}, _) ->
+        attach t.inside expr.pexp_loc comments
+      | Pexp_construct({txt = Longident.Lident "::"}, _) ->
+        walkList
+          ~getLoc:(fun n -> n.Parsetree.pexp_loc)
+          ~walkNode:walkExpr
+          (collectListExprs [] expr)
+          t
+          comments
+      | Pexp_construct (longident, args) ->
+        let (leading, trailing) =
+          partitionLeadingTrailing comments longident.loc in
+        attach t.leading longident.loc leading;
+        begin match args with
+        | Some expr ->
+          let (afterLongident, rest) =
+            partitionAdjacentTrailing longident.loc trailing in
+          attach t.trailing longident.loc afterLongident;
+          walkExpr expr t rest
+        | None ->
+          attach t.trailing longident.loc trailing
+        end
+      | Pexp_array exprs | Pexp_tuple exprs ->
+        walkList
+          ~getLoc:(fun n -> n.Parsetree.pexp_loc)
+          ~walkNode:walkExpr
+          exprs
+          t
+          comments
+      | Pexp_record (rows, spreadExpr) ->
+        let comments = match spreadExpr with
+        | None -> comments
+        | Some expr ->
+          let (leading, inside, trailing) = partitionByLoc comments expr.pexp_loc in
+          attach t.leading expr.pexp_loc leading;
+          walkExpr expr t inside;
+          let (afterExpr, rest) = partitionAdjacentTrailing expr.pexp_loc trailing in
+          attach t.trailing expr.pexp_loc afterExpr;
+          rest
+        in
+        walkList
+          ~getLoc:(fun (
+              (longident, expr): (Longident.t Asttypes.loc * Parsetree.expression)
+            ) -> {
+            longident.loc with loc_end = expr.pexp_loc.loc_end
+          })
+          ~walkNode:walkExprRecordRow
+          rows
+          t
+          comments
+      | Pexp_field (expr, longident) ->
+        let (leading, inside, trailing) = partitionByLoc comments expr.pexp_loc in
+        let trailing = if isBlockExpr expr then (
+          let (afterExpr, rest) =
+            partitionAdjacentTrailing expr.pexp_loc trailing in
+          walkExpr expr t (List.concat [leading; inside; afterExpr]);
+          rest
+        ) else (
+          attach t.leading expr.pexp_loc leading;
+          walkExpr expr t inside;
+          trailing
+        ) in
+        let (afterExpr, rest) = partitionAdjacentTrailing expr.pexp_loc trailing in
+        attach t.trailing expr.pexp_loc afterExpr;
+        let (leading, trailing) = partitionLeadingTrailing rest longident.loc in
+        attach t.leading longident.loc leading;
+        attach t.trailing longident.loc trailing
+      | Pexp_setfield (expr1, longident, expr2) ->
+        let (leading, inside, trailing) = partitionByLoc comments expr1.pexp_loc in
+        let rest = if isBlockExpr expr1 then (
+          let (afterExpr, rest) =
+            partitionAdjacentTrailing expr1.pexp_loc trailing in
+          walkExpr expr1 t (List.concat [leading; inside; afterExpr]);
+          rest
+        ) else (
+          let (afterExpr, rest) =
+            partitionAdjacentTrailing expr1.pexp_loc trailing in
+          attach t.leading expr1.pexp_loc leading;
+          walkExpr expr1 t inside;
+          attach t.trailing expr1.pexp_loc afterExpr;
+          rest
+        ) in
+        let (beforeLongident, afterLongident) = partitionLeadingTrailing rest longident.loc in
+        attach t.leading longident.loc beforeLongident;
+        let (afterLongident, rest) = partitionAdjacentTrailing longident.loc afterLongident in
+        attach t.trailing longident.loc afterLongident;
+        if isBlockExpr expr2 then
+          walkExpr expr2 t rest
+        else (
+          let (leading, inside, trailing) = partitionByLoc rest expr2.pexp_loc in
+          attach t.leading expr2.pexp_loc leading;
+          walkExpr expr2 t inside;
+          attach t.trailing expr2.pexp_loc trailing
+        )
+      | Pexp_ifthenelse (ifExpr, thenExpr, elseExpr) ->
+        let (leading, inside, trailing) = partitionByLoc comments ifExpr.pexp_loc in
+        let comments = if isBlockExpr ifExpr then (
+          let (afterExpr, comments) = partitionAdjacentTrailing ifExpr.pexp_loc trailing in
+          walkExpr ifExpr t (List.concat [leading; inside; afterExpr]);
+          comments
+        ) else (
+          attach t.leading ifExpr.pexp_loc leading;
+          walkExpr ifExpr t inside;
+          let (afterExpr, comments) = partitionAdjacentTrailing ifExpr.pexp_loc trailing in
+          attach t.trailing ifExpr.pexp_loc afterExpr;
+          comments
+        ) in
+        let (leading, inside, trailing) = partitionByLoc comments thenExpr.pexp_loc in
+        let trailing = if isBlockExpr thenExpr then (
+          let (afterExpr, trailing) = partitionAdjacentTrailing thenExpr.pexp_loc trailing in
+          walkExpr thenExpr t (List.concat [leading; inside; afterExpr]);
+          trailing
+        ) else (
+          attach t.leading thenExpr.pexp_loc leading;
+          walkExpr thenExpr t inside;
+          let (afterExpr, comments) = partitionAdjacentTrailing thenExpr.pexp_loc trailing in
+          attach t.trailing thenExpr.pexp_loc afterExpr;
+          comments
+        ) in
+        begin match elseExpr with
+        | None ->
+            ()
+        | Some expr ->
+          if isBlockExpr expr then
+            walkExpr expr t comments
+          else (
+            let (leading, inside, trailing) = partitionByLoc trailing expr.pexp_loc in
+            attach t.leading expr.pexp_loc leading;
+            walkExpr expr t inside;
+            attach t.trailing expr.pexp_loc trailing
+          )
+        end
+      | Pexp_while (expr1, expr2) ->
+        let (leading, inside, trailing) = partitionByLoc comments expr1.pexp_loc in
+        let rest = if isBlockExpr expr1 then
+          let (afterExpr, rest) = partitionAdjacentTrailing expr1.pexp_loc trailing in
+          walkExpr expr1 t (List.concat [leading; inside; afterExpr]);
+          rest
+        else (
+          attach t.leading expr1.pexp_loc leading;
+          walkExpr expr1 t inside;
+          let (afterExpr, rest) = partitionAdjacentTrailing expr1.pexp_loc trailing in
+          attach t.trailing expr1.pexp_loc afterExpr;
+          rest
+        ) in
+        if isBlockExpr expr2 then (
+          walkExpr expr2 t rest
+        ) else (
+          let (leading, inside, trailing) = partitionByLoc rest expr2.pexp_loc in
+          attach t.leading expr2.pexp_loc leading;
+          walkExpr expr2 t inside;
+          attach t.trailing expr2.pexp_loc trailing
+        )
+      | Pexp_for (pat, expr1, expr2, _, expr3) ->
+        let (leading, inside, trailing) = partitionByLoc comments pat.ppat_loc in
+        attach t.leading pat.ppat_loc leading;
+        walkPattern pat t inside;
+        let (afterPat, rest) = partitionAdjacentTrailing pat.ppat_loc trailing in
+        attach t.trailing pat.ppat_loc afterPat;
+        let (leading, inside, trailing) = partitionByLoc rest expr1.pexp_loc in
+        attach t.leading expr1.pexp_loc leading;
+        walkExpr expr1 t inside;
+        let (afterExpr, rest) = partitionAdjacentTrailing expr1.pexp_loc trailing in
+        attach t.trailing expr1.pexp_loc afterExpr;
+        let (leading, inside, trailing) = partitionByLoc rest expr2.pexp_loc in
+        attach t.leading expr2.pexp_loc leading;
+        walkExpr expr2 t inside;
+        let (afterExpr, rest) = partitionAdjacentTrailing expr2.pexp_loc trailing in
+        attach t.trailing expr2.pexp_loc afterExpr;
+        if isBlockExpr expr3 then (
+          walkExpr expr3 t rest
+        ) else (
+          let (leading, inside, trailing) = partitionByLoc rest expr3.pexp_loc in
+          attach t.leading expr3.pexp_loc leading;
+          walkExpr expr3 t inside;
+          attach t.trailing expr3.pexp_loc trailing
+        )
+      | Pexp_pack modExpr ->
+        let (before, inside, after) = partitionByLoc comments modExpr.pmod_loc in
+        attach t.leading modExpr.pmod_loc before;
+        walkModExpr modExpr t inside;
+        attach t.trailing modExpr.pmod_loc after
+      | Pexp_match (expr, cases) | Pexp_try (expr, cases) ->
+        let (before, inside, after) = partitionByLoc comments expr.pexp_loc in
+        let after = if isBlockExpr expr then (
+          let (afterExpr, rest) =
+            partitionAdjacentTrailing expr.pexp_loc after in
+          walkExpr expr t (List.concat [before; inside; afterExpr]);
+          rest
+        ) else (
+          attach t.leading expr.pexp_loc before;
+          walkExpr expr t inside;
+          after
+        ) in
+        let (afterExpr, rest) = partitionAdjacentTrailing expr.pexp_loc after in
+        attach t.trailing expr.pexp_loc afterExpr;
+        walkList
+          ~getLoc:(fun n -> {n.Parsetree.pc_lhs.ppat_loc with
+            loc_end = n.pc_rhs.pexp_loc.loc_end})
+          ~walkNode:walkCase
+          cases
+          t
+          rest
+        (* unary expression: todo use parsetreeviewer *)
+      | Pexp_apply (
+          {pexp_desc = Pexp_ident {txt = Longident.Lident
+           ("~+" | "~+." | "~-" | "~-." | "not" | "!")
+          }},
+          [Nolabel, argExpr]
+        ) ->
+        let (before, inside, after) = partitionByLoc comments argExpr.pexp_loc in
+        attach t.leading argExpr.pexp_loc before;
+        walkExpr argExpr t inside;
+        attach t.trailing argExpr.pexp_loc after
+      (* binary expression *)
+      | Pexp_apply(
+          {pexp_desc = Pexp_ident {txt = Longident.Lident
+           (":=" | "||" | "&&" | "=" | "==" | "<" | ">"
+            | "!=" | "!==" | "<=" | ">=" | "|>" | "+" | "+."
+            | "-" | "-." | "++" | "^" | "*" | "*." | "/"
+            | "/." | "**" | "|." | "<>") }},
+          [(Nolabel, operand1); (Nolabel, operand2)]
+        ) ->
+        let (before, inside, after) = partitionByLoc comments operand1.pexp_loc in
+        attach t.leading operand1.pexp_loc before;
+        walkExpr operand1 t inside;
+        let (afterOperand1, rest) =
+          partitionAdjacentTrailing operand1.pexp_loc after in
+          (* partitionBeforeAfterPos *)
+          (* operand1.pexp_loc after in *)
+
+        (* print_endline "==============="; *)
+        (* List.iter (fun c -> Comment.toString c |> print_endline) afterOperand1; *)
+        (* print_endline "==============="; *)
+        attach t.trailing operand1.pexp_loc afterOperand1;
+        let (before, inside, after) = partitionByLoc rest operand2.pexp_loc in
+        attach t.leading operand2.pexp_loc before;
+        walkExpr operand2 t inside;
+        attach t.trailing operand2.pexp_loc after
+      | Pexp_apply (callExpr, arguments) ->
+        let (before, inside, after) = partitionByLoc comments callExpr.pexp_loc in
+        let after = if isBlockExpr callExpr then (
+          let (afterExpr, rest) =
+            partitionAdjacentTrailing callExpr.pexp_loc after in
+          walkExpr callExpr t (List.concat [before; inside; afterExpr]);
+          rest
+        ) else (
+          attach t.leading callExpr.pexp_loc before;
+          walkExpr callExpr t inside;
+          after
+        ) in
+        let (afterExpr, rest) = partitionAdjacentTrailing callExpr.pexp_loc after in
+        attach t.trailing callExpr.pexp_loc afterExpr;
+        walkList
+          ~getLoc:(fun (_argLabel, expr) ->
+            let loc = match expr.Parsetree.pexp_attributes with
+            | ({Location.txt = "ns.jsxPropLoc"; loc}, _)::attrs ->
+                {loc with loc_end = expr.pexp_loc.loc_end}
+            | _ ->
+               expr.pexp_loc
+            in
+            loc)
+          ~walkNode:walkExprArgument
+          arguments
+          t
+          rest
+    | Pexp_fun (_, _, _, _) | Pexp_newtype _ ->
+      let (_, parameters, returnExpr) = funExpr expr in
+      let comments = visitListButContinueWithRemainingComments
+        ~newlineDelimited:false
+        ~walkNode:walkExprPararameter
+        ~getLoc:(fun (_attrs, _argLbl, exprOpt, pattern) ->
+          let open Parsetree in
+          match exprOpt with
+          | None -> pattern.ppat_loc
+          | Some expr -> {
+            pattern.ppat_loc with loc_end = expr.pexp_loc.loc_end
+          }
+        )
+        parameters
+        t
+        comments
+      in
+      begin match returnExpr.pexp_desc with
+      | Pexp_constraint (expr, typ)
+        when expr.pexp_loc.loc_start.pos_cnum >= typ.ptyp_loc.loc_end.pos_cnum
+        ->
+        let (leading, inside, trailing) = partitionByLoc comments typ.ptyp_loc in
+        attach t.leading typ.ptyp_loc leading;
+        walkTypExpr typ t inside;
+        let (afterTyp, comments) =
+          partitionAdjacentTrailing typ.ptyp_loc trailing in
+        attach t.trailing typ.ptyp_loc afterTyp;
+        if isBlockExpr expr then
+          walkExpr expr t comments
+        else (
+          let (leading, inside, trailing) =
+            partitionByLoc comments expr.pexp_loc  in
+          attach t.leading expr.pexp_loc leading;
+          walkExpr expr t inside;
+          attach t.trailing expr.pexp_loc trailing
+        )
+      | _ ->
+        if isBlockExpr returnExpr then
+          walkExpr returnExpr t comments
+        else (
+          let (leading, inside, trailing) =
+            partitionByLoc comments returnExpr.pexp_loc  in
+          attach t.leading returnExpr.pexp_loc leading;
+          walkExpr returnExpr t inside;
+          attach t.trailing returnExpr.pexp_loc trailing
+        )
+      end
+    | _ -> ()
+
+  and walkExprPararameter (_attrs, _argLbl, exprOpt, pattern) t comments =
+    let (leading, inside, trailing) = partitionByLoc comments pattern.ppat_loc in
+    attach t.leading pattern.ppat_loc leading;
+    walkPattern pattern t inside;
+    begin match exprOpt with
+    | Some expr ->
+      let (afterPat, rest) =
+        partitionAdjacentTrailing pattern.ppat_loc trailing in
+      attach t.trailing pattern.ppat_loc trailing;
+      if isBlockExpr expr then
+        walkExpr expr t rest
+      else (
+        let (leading, inside, trailing) = partitionByLoc rest expr.pexp_loc in
+        attach t.leading expr.pexp_loc leading;
+        walkExpr expr t inside;
+        attach t.trailing expr.pexp_loc trailing
+      )
+    | None ->
+      attach t.trailing pattern.ppat_loc trailing
+    end
+
+  and walkExprArgument (_argLabel, expr) t comments =
+    match expr.Parsetree.pexp_attributes with
+    | ({Location.txt = "ns.jsxPropLoc"; loc}, _)::attrs ->
+      let (leading, trailing) = partitionLeadingTrailing comments loc in
+      attach t.leading loc leading;
+      let (afterLabel, rest) = partitionAdjacentTrailing loc trailing in
+      attach t.trailing loc afterLabel;
+      let (before, inside, after) = partitionByLoc rest expr.pexp_loc in
+      attach t.leading expr.pexp_loc before;
+      walkExpr expr t inside;
+      attach t.trailing expr.pexp_loc after
+    | _ ->
+      let (before, inside, after) = partitionByLoc comments expr.pexp_loc in
+      attach t.leading expr.pexp_loc before;
+      walkExpr expr t inside;
+      attach t.trailing expr.pexp_loc after
+
+    and walkCase case t comments =
+      let (before, inside, after) = partitionByLoc comments case.pc_lhs.ppat_loc in
+      (* cases don't have a location on their own, leading comments should go
+       * after the bar on the pattern *)
+      walkPattern case.pc_lhs t (List.concat [before; inside]);
+      let (afterPat, rest) = partitionAdjacentTrailing case.pc_lhs.ppat_loc after in
+      attach t.trailing case.pc_lhs.ppat_loc afterPat;
+      let comments = match case.pc_guard with
+      | Some expr ->
+        let (before, inside, after) = partitionByLoc comments expr.pexp_loc in
+        let (afterExpr, rest) = partitionAdjacentTrailing expr.pexp_loc after in
+        if isBlockExpr expr then (
+          walkExpr expr t (List.concat [before; inside; afterExpr])
+        ) else (
+          attach t.leading expr.pexp_loc before;
+          walkExpr expr t inside;
+          attach t.trailing expr.pexp_loc afterExpr;
+        );
+        rest
+      | None -> rest
+      in
+      begin match case.pc_rhs.pexp_desc with
+      | Pexp_letmodule _ | Pexp_letexception _ | Pexp_let _ | Pexp_sequence _ | Pexp_open _  ->
+        walkExpr case.pc_rhs t comments
+      | _ ->
+        let (before, inside, after) = partitionByLoc comments case.pc_rhs.pexp_loc in
+        attach t.leading case.pc_rhs.pexp_loc before;
+        walkExpr case.pc_rhs t inside;
+        attach t.trailing case.pc_rhs.pexp_loc after
+      end
+
+    and walkExprRecordRow (longident, expr) t comments =
+      let (beforeLongident, afterLongident) =
+        partitionLeadingTrailing comments longident.loc
+      in
+      attach t.leading longident.loc beforeLongident;
+      let (afterLongident, rest) =
+        partitionAdjacentTrailing longident.loc afterLongident in
+      attach t.trailing longident.loc afterLongident;
+      let (leading, inside, trailing) = partitionByLoc rest expr.pexp_loc in
+      attach t.leading expr.pexp_loc leading;
+      walkExpr expr t inside;
+      attach t.trailing expr.pexp_loc trailing
+
+    and walkExtConstr extConstr t comments =
+      let (leading, trailing) =
+        partitionLeadingTrailing comments extConstr.pext_name.loc in
+      attach t.leading extConstr.pext_name.loc leading;
+      let (afterName, rest) =
+        partitionAdjacentTrailing extConstr.pext_name.loc trailing in
+      attach t.trailing extConstr.pext_name.loc afterName;
+      walkExtensionConstructorKind extConstr.pext_kind t rest
+
+    and walkExtensionConstructorKind kind t comments =
+      match kind with
+      | Pext_rebind longident ->
+        let (leading, trailing) =
+          partitionLeadingTrailing comments longident.loc in
+        attach t.leading longident.loc leading;
+        attach t.trailing longident.loc trailing
+      | Pext_decl (constructorArguments, maybeTypExpr) ->
+        let rest = walkConstructorArguments constructorArguments t comments in
+        begin match maybeTypExpr with
+        | None -> ()
+        | Some typexpr ->
+          let (before, inside, after) = partitionByLoc rest typexpr.ptyp_loc in
+          attach t.leading typexpr.ptyp_loc before;
+          walkTypExpr typexpr t inside;
+          attach t.trailing typexpr.ptyp_loc after
+        end
+
+    and walkModExpr modExpr t comments =
+      match modExpr.pmod_desc with
+      | Pmod_ident longident ->
+        let (before, after) = partitionLeadingTrailing comments longident.loc in
+        attach t.leading longident.loc before;
+        attach t.trailing longident.loc after
+      | Pmod_structure structure ->
+        walkStructure structure t comments
+      | Pmod_extension extension ->
+        walkExtension extension t comments
+      | Pmod_unpack expr ->
+        let (before, inside, after) = partitionByLoc comments expr.pexp_loc in
+        attach t.leading expr.pexp_loc before;
+        walkExpr expr t inside;
+        attach t.trailing expr.pexp_loc after
+      | Pmod_constraint (modexpr, modtype) ->
+        let (before, inside, after) = partitionByLoc comments modexpr.pmod_loc in
+        attach t.leading modexpr.pmod_loc before;
+        walkModExpr modexpr t inside;
+        let (after, rest) = partitionAdjacentTrailing modexpr.pmod_loc after in
+        attach t.trailing modexpr.pmod_loc after;
+        let (before, inside, after) = partitionByLoc rest modtype.pmty_loc in
+        attach t.leading modtype.pmty_loc before;
+        walkModType modtype t inside;
+        attach t.trailing modtype.pmty_loc after
+      | Pmod_apply (callModExpr, argModExpr) ->
+        let modExprs = modExprApply modExpr in
+        walkList
+          ~getLoc:(fun n -> n.Parsetree.pmod_loc)
+          ~walkNode:walkModExpr
+          modExprs
+          t
+          comments
+      | Pmod_functor _ ->
+        let (parameters, returnModExpr) = modExprFunctor modExpr in
+        let comments = visitListButContinueWithRemainingComments
+          ~getLoc:(fun
+            (_, lbl, modTypeOption) -> match modTypeOption with
+            | None -> lbl.Asttypes.loc
+            | Some modType -> {lbl.loc with loc_end = modType.Parsetree.pmty_loc.loc_end}
+          )
+          ~walkNode:walkModExprParameter
+          ~newlineDelimited:false
+          parameters
+          t
+          comments
+        in
+        begin match returnModExpr.pmod_desc with
+        | Pmod_constraint (modExpr, modType)
+          when modType.pmty_loc.loc_end.pos_cnum <= modExpr.pmod_loc.loc_start.pos_cnum ->
+          let (before, inside, after) = partitionByLoc comments modType.pmty_loc in
+          attach t.leading modType.pmty_loc before;
+          walkModType modType t inside;
+          let (after, rest) = partitionAdjacentTrailing modType.pmty_loc after in
+          attach t.trailing modType.pmty_loc after;
+          let (before, inside, after) = partitionByLoc rest modExpr.pmod_loc in
+          attach t.leading modExpr.pmod_loc before;
+          walkModExpr modExpr t inside;
+          attach t.trailing modExpr.pmod_loc after
+        | _ ->
+          let (before, inside, after) = partitionByLoc comments returnModExpr.pmod_loc in
+          attach t.leading returnModExpr.pmod_loc before;
+          walkModExpr returnModExpr t inside;
+          attach t.trailing returnModExpr.pmod_loc after
+        end
+
+    and walkModExprParameter parameter t comments =
+      let (_attrs, lbl, modTypeOption) = parameter in
+      let (leading, trailing) = partitionLeadingTrailing comments lbl.loc in
+      attach t.leading lbl.loc leading;
+      begin match modTypeOption with
+      | None -> attach t.trailing lbl.loc trailing
+      | Some modType ->
+        let (afterLbl, rest) = partitionAdjacentTrailing lbl.loc trailing in
+        attach t.trailing lbl.loc afterLbl;
+        let (before, inside, after) = partitionByLoc rest modType.pmty_loc in
+        attach t.leading modType.pmty_loc before;
+        walkModType modType t inside;
+        attach t.trailing modType.pmty_loc after;
+      end
+
+    and walkModType modType t comments =
+      match modType.pmty_desc with
+      | Pmty_ident longident | Pmty_alias longident ->
+        let (leading, trailing) = partitionLeadingTrailing comments longident.loc in
+        attach t.leading longident.loc leading;
+        attach t.trailing longident.loc trailing;
+      | Pmty_signature signature ->
+        walkSignature signature t comments
+      | Pmty_extension extension ->
+        walkExtension extension t comments
+      | Pmty_typeof modExpr ->
+        let (before, inside, after) = partitionByLoc comments modExpr.pmod_loc in
+        attach t.leading modExpr.pmod_loc before;
+        walkModExpr modExpr t inside;
+        attach t.trailing modExpr.pmod_loc after;
+      | Pmty_with (modType, withConstraints) ->
+        let (before, inside, after) = partitionByLoc comments modType.pmty_loc in
+        attach t.leading modType.pmty_loc before;
+        walkModType modType t inside;
+        attach t.trailing modType.pmty_loc after
+        (* TODO: withConstraints*)
+      | Pmty_functor _ ->
+        let (parameters, returnModType) = functorType modType in
+        let comments = visitListButContinueWithRemainingComments
+          ~getLoc:(fun
+            (_, lbl, modTypeOption) -> match modTypeOption with
+            | None -> lbl.Asttypes.loc
+            | Some modType ->
+              if lbl.txt = "_" then modType.Parsetree.pmty_loc
+              else {lbl.loc with loc_end = modType.Parsetree.pmty_loc.loc_end}
+          )
+          ~walkNode:walkModTypeParameter
+          ~newlineDelimited:false
+          parameters
+          t
+          comments
+        in
+        let (before, inside, after) = partitionByLoc comments returnModType.pmty_loc in
+        attach t.leading returnModType.pmty_loc before;
+        walkModType returnModType t inside;
+        attach t.trailing returnModType.pmty_loc after
+
+    and walkModTypeParameter (_, lbl, modTypeOption) t comments =
+      let (leading, trailing) = partitionLeadingTrailing comments lbl.loc in
+      attach t.leading lbl.loc leading;
+      begin match modTypeOption with
+      | None -> attach t.trailing lbl.loc trailing
+      | Some modType ->
+        let (afterLbl, rest) = partitionAdjacentTrailing lbl.loc trailing in
+        attach t.trailing lbl.loc afterLbl;
+        let (before, inside, after) = partitionByLoc rest modType.pmty_loc in
+        attach t.leading modType.pmty_loc before;
+        walkModType modType t inside;
+        attach t.trailing modType.pmty_loc after;
+      end
+
+    and walkPattern pat t comments =
+      let open Location in
+      match pat.Parsetree.ppat_desc with
+      | _ when comments = [] -> ()
+      | Ppat_alias (pat, alias) ->
+        let (leading, inside, trailing) = partitionByLoc comments pat.ppat_loc in
+        attach t.leading pat.ppat_loc leading;
+        walkPattern pat t inside;
+        let (afterPat, rest) = partitionAdjacentTrailing pat.ppat_loc trailing in
+        attach t.leading pat.ppat_loc leading;
+        attach t.trailing pat.ppat_loc afterPat;
+        let (beforeAlias, afterAlias) = partitionLeadingTrailing rest alias.loc in
+        attach t.leading alias.loc beforeAlias;
+        attach t.trailing alias.loc afterAlias
+      | Ppat_tuple [] | Ppat_array [] | Ppat_construct({txt = Longident.Lident "[]"}, _) ->
+        attach t.inside pat.ppat_loc comments;
+      | Ppat_array patterns ->
+        walkList
+          ~getLoc:(fun n -> n.Parsetree.ppat_loc)
+          ~walkNode:walkPattern
+          patterns
+          t
+          comments
+      | Ppat_tuple patterns ->
+        walkList
+          ~getLoc:(fun n -> n.Parsetree.ppat_loc)
+          ~walkNode:walkPattern
+          patterns
+          t
+          comments
+      | Ppat_construct({txt = Longident.Lident "::"}, _) ->
+        walkList
+          ~getLoc:(fun n -> n.Parsetree.ppat_loc)
+          ~walkNode:walkPattern
+          (collectListPatterns [] pat)
+          t
+          comments
+      | Ppat_construct (constr, None) ->
+        let (beforeConstr, afterConstr) =
+          partitionLeadingTrailing comments constr.loc
+        in
+        attach t.leading constr.loc beforeConstr;
+        attach t.trailing constr.loc afterConstr
+      | Ppat_construct (constr, Some pat) ->
+        let (leading, trailing) = partitionLeadingTrailing comments constr.loc in
+        attach t.leading constr.loc leading;
+        let (leading, inside, trailing) = partitionByLoc trailing pat.ppat_loc in
+        attach t.leading pat.ppat_loc leading;
+        walkPattern pat t inside;
+        attach t.trailing pat.ppat_loc trailing
+      | Ppat_record (recordRows, _) ->
+        walkList
+          ~getLoc:(fun (
+            (longidentLoc, pattern): (Longident.t Asttypes.loc * Parsetree.pattern)
+          ) -> {
+            longidentLoc.loc with
+            loc_end = pattern.Parsetree.ppat_loc.loc_end
+          })
+          ~walkNode:walkPatternRecordRow
+          recordRows
+          t
+          comments
+      | Ppat_or (pattern1, pattern2) ->
+        let (beforePattern1, insidePattern1, afterPattern1) =
+          partitionByLoc comments pattern1.ppat_loc
+        in
+        attach t.leading pattern1.ppat_loc beforePattern1;
+        walkPattern pattern1 t insidePattern1;
+        let (afterPattern1, rest) =
+          partitionAdjacentTrailing pattern1.ppat_loc afterPattern1
+        in
+        attach t.trailing pattern1.ppat_loc afterPattern1;
+        let (beforePattern2, insidePattern2, afterPattern2) =
+          partitionByLoc rest pattern2.ppat_loc
+        in
+        attach t.leading pattern2.ppat_loc beforePattern2;
+        walkPattern pattern2 t insidePattern2;
+        attach t.trailing pattern2.ppat_loc afterPattern2
+      | Ppat_constraint (pattern, typ) ->
+        let (beforePattern, insidePattern, afterPattern) =
+          partitionByLoc comments pattern.ppat_loc
+        in
+        attach t.leading pattern.ppat_loc beforePattern;
+        walkPattern pattern t insidePattern;
+        let (afterPattern, rest) =
+          partitionAdjacentTrailing pattern.ppat_loc afterPattern
+        in
+        attach t.trailing pattern.ppat_loc afterPattern;
+        let (beforeTyp, insideTyp, afterTyp) =
+          partitionByLoc rest typ.ptyp_loc
+        in
+        attach t.leading typ.ptyp_loc beforeTyp;
+        walkTypExpr typ t insideTyp;
+        attach t.trailing typ.ptyp_loc afterTyp
+      | Ppat_lazy pattern | Ppat_exception pattern ->
+        let (leading, inside, trailing) = partitionByLoc comments pattern.ppat_loc in
+        attach t.leading pattern.ppat_loc leading;
+        walkPattern pattern t inside;
+        attach t.trailing pattern.ppat_loc trailing
+      | Ppat_unpack stringLoc ->
+        let (leading, trailing) = partitionLeadingTrailing comments stringLoc.loc in
+        attach t.leading stringLoc.loc leading;
+        attach t.trailing stringLoc.loc trailing
+      | Ppat_extension extension ->
+        walkExtension extension t comments
+      | _ -> ()
+
+    (* name: firstName *)
+    and walkPatternRecordRow row t comments =
+     match row with
+      (* punned {x}*)
+      | ({Location.txt=Longident.Lident ident; loc = longidentLoc},
+         {Parsetree.ppat_desc=Ppat_var {txt;_}}) when ident = txt ->
+        let (beforeLbl, afterLbl) =
+          partitionLeadingTrailing comments longidentLoc
+        in
+        attach t.leading longidentLoc beforeLbl;
+        attach t.trailing longidentLoc afterLbl
+      | (longident, pattern) ->
+        let (beforeLbl, afterLbl) =
+          partitionLeadingTrailing comments longident.loc
+        in
+        attach t.leading longident.loc beforeLbl;
+        let (afterLbl, rest) = partitionAdjacentTrailing longident.loc afterLbl in
+        attach t.trailing longident.loc afterLbl;
+        let (leading, inside, trailing) = partitionByLoc rest pattern.ppat_loc in
+        attach t.leading pattern.ppat_loc leading;
+        walkPattern pattern t inside;
+        attach t.trailing pattern.ppat_loc trailing
+
+    and walkTypExpr typ t comments =
+      match typ.Parsetree.ptyp_desc with
+      | _ when comments = [] -> ()
+      | Ptyp_tuple typexprs ->
+        walkList
+          ~getLoc:(fun n -> n.Parsetree.ptyp_loc)
+          ~walkNode:walkTypExpr
+          typexprs
+          t
+          comments
+      | Ptyp_extension extension ->
+        walkExtension extension t comments
+      | Ptyp_package packageType ->
+        walkPackageType packageType t comments
+      | Ptyp_alias (typexpr, alias) ->
+        let (beforeTyp, insideTyp, afterTyp) =
+          partitionByLoc comments typexpr.ptyp_loc in
+        attach t.leading typexpr.ptyp_loc beforeTyp;
+        walkTypExpr typexpr t insideTyp;
+        attach t.trailing typexpr.ptyp_loc afterTyp;
+      | Ptyp_poly (strings, typexpr) ->
+        let comments = visitListButContinueWithRemainingComments
+          ~getLoc:(fun n -> n.Asttypes.loc)
+          ~walkNode:(fun longident t comments ->
+            let (beforeLongident, afterLongident) =
+            partitionLeadingTrailing comments longident.loc in
+            attach t.leading longident.loc beforeLongident;
+            attach t.trailing longident.loc afterLongident
+          )
+          ~newlineDelimited:false
+          strings
+          t
+          comments
+        in
+        let (beforeTyp, insideTyp, afterTyp) =
+          partitionByLoc comments typexpr.ptyp_loc in
+        attach t.leading typexpr.ptyp_loc beforeTyp;
+        walkTypExpr typexpr t insideTyp;
+        attach t.trailing typexpr.ptyp_loc afterTyp
+      | Ptyp_constr (longident, typexprs) ->
+        let (beforeLongident, afterLongident) =
+          partitionLeadingTrailing comments longident.loc in
+        let (afterLongident, rest) =
+          partitionAdjacentTrailing longident.loc comments in
+        attach t.leading longident.loc beforeLongident;
+        attach t.trailing longident.loc afterLongident;
+        walkList
+          ~getLoc:(fun n -> n.Parsetree.ptyp_loc)
+          ~walkNode:walkTypExpr
+          typexprs
+          t
+          rest
+      | Ptyp_arrow _ ->
+        let (_, parameters, typexpr) = arrowType typ in
+        let comments = walkTypeParameters parameters t comments in
+        let (beforeTyp, insideTyp, afterTyp) =
+          partitionByLoc comments typexpr.ptyp_loc in
+        attach t.leading typexpr.ptyp_loc beforeTyp;
+        walkTypExpr typexpr t insideTyp;
+        attach t.trailing typexpr.ptyp_loc afterTyp
+      | Ptyp_object (fields, _) ->
+        walkTypObjectFields fields t comments
+      | _ -> ()
+
+    and walkTypObjectFields fields t comments =
+      walkList
+        ~getLoc:(fun field ->
+          match field with
+          | Parsetree.Otag (lbl, _, typ) ->
+            {lbl.loc with loc_end = typ.ptyp_loc.loc_end}
+          | _ -> Location.none
+        )
+        ~walkNode:walkTypObjectField
+        fields
+        t
+        comments
+
+    and walkTypObjectField field t comments =
+      match field with
+      | Otag (lbl, _, typexpr) ->
+        let (beforeLbl, afterLbl) = partitionLeadingTrailing comments lbl.loc in
+        attach t.leading lbl.loc beforeLbl;
+        let (afterLbl, rest) = partitionAdjacentTrailing lbl.loc afterLbl in
+        attach t.trailing lbl.loc afterLbl;
+        let (beforeTyp, insideTyp, afterTyp) =
+          partitionByLoc rest typexpr.ptyp_loc in
+        attach t.leading typexpr.ptyp_loc beforeTyp;
+        walkTypExpr typexpr t insideTyp;
+        attach t.trailing typexpr.ptyp_loc afterTyp
+      | _ -> ()
+
+    and walkTypeParameters typeParameters t comments =
+      visitListButContinueWithRemainingComments
+        ~getLoc:(fun (_, _, typexpr) -> typexpr.Parsetree.ptyp_loc)
+        ~walkNode:walkTypeParameter
+        ~newlineDelimited:false
+        typeParameters
+        t
+        comments
+
+    and walkTypeParameter (_attrs, _lbl, typexpr) t comments =
+      let (beforeTyp, insideTyp, afterTyp) =
+        partitionByLoc comments typexpr.ptyp_loc in
+      attach t.leading typexpr.ptyp_loc beforeTyp;
+      walkTypExpr typexpr t insideTyp;
+      attach t.trailing typexpr.ptyp_loc afterTyp
+
+    and walkPackageType packageType t comments =
+      let (longident, packageConstraints) = packageType in
+      let (beforeLongident, afterLongident) =
+        partitionLeadingTrailing comments longident.loc in
+      attach t.leading longident.loc beforeLongident;
+      let (afterLongident, rest) =
+        partitionAdjacentTrailing longident.loc afterLongident in
+      attach t.trailing longident.loc afterLongident;
+      walkPackageConstraints packageConstraints t rest
+
+    and walkPackageConstraints packageConstraints t comments =
+      walkList
+        ~getLoc:(fun (longident, typexpr) -> {longident.Asttypes.loc with
+          loc_end = typexpr.Parsetree.ptyp_loc.loc_end
+        })
+        ~walkNode:walkPackageConstraint
+        packageConstraints
+        t
+        comments
+
+    and walkPackageConstraint packageConstraint t comments =
+      let (longident, typexpr) = packageConstraint in
+      let (beforeLongident, afterLongident) =
+        partitionLeadingTrailing comments longident.loc in
+      attach t.leading longident.loc beforeLongident;
+      let (afterLongident, rest) =
+        partitionAdjacentTrailing longident.loc afterLongident in
+      attach t.trailing longident.loc afterLongident;
+      let (beforeTyp, insideTyp, afterTyp) =
+        partitionByLoc rest typexpr.ptyp_loc in
+      attach t.leading typexpr.ptyp_loc beforeTyp;
+      walkTypExpr typexpr t insideTyp;
+      attach t.trailing typexpr.ptyp_loc afterTyp;
+
+    and walkExtension extension t comments =
+      let (id, payload) = extension in
+      let (beforeId, afterId) = partitionLeadingTrailing comments id.loc in
+      attach t.leading id.loc beforeId;
+      let (afterId, rest) = partitionAdjacentTrailing id.loc afterId in
+      attach t.trailing id.loc afterId;
+      walkPayload payload t rest
+
+    and walkAttribute (id, payload) t comments =
+      let (beforeId, afterId) = partitionLeadingTrailing comments id.loc in
+      attach t.leading id.loc beforeId;
+      let (afterId, rest) = partitionAdjacentTrailing id.loc afterId in
+      attach t.trailing id.loc afterId;
+      walkPayload payload t rest
+
+    and walkPayload payload t comments =
+      match payload with
+      | PStr s -> walkStructure s t comments
+      | _ -> ()
+
+end
+
+module Printer = struct
   let addParens doc =
     Doc.group (
       Doc.concat [
@@ -8216,6 +10283,265 @@ module Printer = struct
         Doc.rbrace;
       ]
     )
+
+  let getFirstLeadingComment tbl loc =
+    match Hashtbl.find tbl.CommentTable.leading loc with
+    | comment::_ -> Some comment
+    | [] -> None
+    | exception Not_found -> None
+
+  let printMultilineCommentContent txt =
+    (* Turns
+     *         /* first line
+     *  * second line
+     *      * third line */
+     * Into
+     * /* first line
+     *  * second line
+     *  * third line */
+     *
+     * What makes a comment suitable for this kind of indentation?
+     *  ->  multiple lines + every line starts with a star
+     *)
+    let rec indentStars lines acc =
+      match lines with
+      | [] -> Doc.nil
+      | [lastLine] ->
+        let line = String.trim lastLine in
+        let doc = Doc.text (" " ^ line) in
+        let trailingSpace = if String.length line > 0 then Doc.space else Doc.nil in
+        List.rev (trailingSpace::doc::acc) |> Doc.concat
+      | line::lines ->
+        let line = String.trim line in
+        let len = String.length line in
+        if len > 0 && String.get line 0 == '*' then
+          let doc = Doc.text (" " ^ (String.trim line)) in
+          indentStars lines (Doc.hardLine::doc::acc)
+        else if len == 0 then
+          List.rev acc |> Doc.concat
+        else
+          let content = String.trim txt in
+          Doc.text (content ^ " ")
+    in
+    let lines = String.split_on_char '\n' txt in
+    match lines with
+    | [] -> Doc.text "/* */"
+    | [line] -> Doc.text ("/* " ^ (String.trim line) ^ " */")
+    | first::rest ->
+      let firstLine = String.trim first in
+      Doc.concat [
+        Doc.text "/*";
+        if String.length firstLine > 0 && not (String.equal firstLine "*") then
+          Doc.space else Doc.nil;
+        indentStars rest [Doc.hardLine; Doc.text firstLine];
+        Doc.text "*/";
+      ]
+
+  let printTrailingComment (nodeLoc : Location.t) comment =
+    let singleLine = Comment.isSingleLineComment comment in
+    let content =
+      let txt = Comment.txt comment in
+      if singleLine then
+         Doc.text ("// " ^ String.trim txt)
+      else
+        printMultilineCommentContent txt
+    in
+    let diff =
+      let cmtStart = (Comment.loc comment).loc_start in
+      let prevTokEndPos = Comment.prevTokEndPos comment in
+      cmtStart.pos_lnum - prevTokEndPos.pos_lnum
+    in
+    let isBelow =
+      (Comment.loc comment).loc_start.pos_lnum > nodeLoc.loc_end.pos_lnum in
+    if diff > 0 || isBelow then
+      Doc.lineSuffix(
+        (Doc.concat [Doc.hardLine; if diff > 1 then Doc.hardLine else Doc.nil; content])
+      )
+    else if not singleLine then
+      Doc.concat [Doc.space; content]
+    else
+      Doc.lineSuffix (Doc.concat [Doc.space; content])
+
+  let printLeadingComment ?nextComment comment =
+    let singleLine = Comment.isSingleLineComment comment in
+    let content =
+      let txt = Comment.txt comment in
+      if singleLine then
+         Doc.text ("// " ^ String.trim txt)
+      else
+        printMultilineCommentContent txt
+    in
+    let separator = Doc.concat  [
+      if singleLine then Doc.concat [
+        Doc.hardLine;
+        Doc.breakParent;
+      ] else Doc.nil;
+      (match nextComment with
+      | Some next ->
+        let nextLoc = Comment.loc next in
+        let currLoc = Comment.loc comment in
+        let diff =
+          nextLoc.Location.loc_start.pos_lnum -
+          currLoc.Location.loc_end.pos_lnum
+        in
+        let nextSingleLine = Comment.isSingleLineComment next in
+        if singleLine && nextSingleLine then
+          if diff > 1 then Doc.hardLine else Doc.nil
+        else if singleLine && not nextSingleLine then
+          if diff > 1 then Doc.hardLine else Doc.nil
+        else
+          if diff > 1 then Doc.concat [Doc.hardLine; Doc.hardLine]
+          else if diff == 1 then Doc.hardLine
+          else
+            Doc.space
+      | None -> Doc.nil)
+    ]
+    in
+    Doc.concat [
+      content;
+      separator;
+    ]
+
+  let printCommentsInside cmtTbl loc =
+    match Hashtbl.find cmtTbl.CommentTable.inside loc with
+    | exception Not_found -> Doc.nil
+    | comments ->
+      Doc.group (
+        Doc.join ~sep:Doc.line (List.map printLeadingComment comments)
+      )
+
+  let printLeadingComments node tbl loc =
+    let rec loop acc comments =
+      match comments with
+      | [] -> node
+      | [comment] ->
+        let cmtDoc = printLeadingComment comment in
+        let diff =
+          loc.Location.loc_start.pos_lnum -
+          (Comment.loc comment).Location.loc_end.pos_lnum
+        in
+        let separator =
+          if Comment.isSingleLineComment comment then
+            if diff > 1 then Doc.hardLine else Doc.nil
+          else if diff == 0 then
+           Doc.space
+          else if diff > 1 then Doc.concat [Doc.hardLine; Doc.hardLine]
+          else
+           Doc.hardLine
+        in
+        let doc = Doc.group (
+          Doc.concat [
+            Doc.concat (List.rev (cmtDoc::acc));
+            separator;
+            node
+          ]
+        )
+        in
+        doc
+      | comment::((nextComment::comments) as rest) ->
+        let cmtDoc = printLeadingComment ~nextComment comment in
+        loop (cmtDoc::acc) rest
+    in
+    match Hashtbl.find tbl loc with
+    | exception Not_found -> node
+    | comments ->
+     (* Remove comments from tbl: Some ast nodes have the same location.
+      * We only want to print comments once *)
+      Hashtbl.remove tbl loc;
+      loop [] comments
+
+  let printTrailingComments node tbl loc =
+    let rec loop acc comments =
+      match comments with
+      | [] -> Doc.concat (List.rev acc)
+      | comment::comments ->
+        let cmtDoc = printTrailingComment loc comment in
+        loop (cmtDoc::acc) comments
+    in
+    match Hashtbl.find tbl loc with
+    | exception Not_found -> node
+    | [] -> node
+    | (first::_) as comments ->
+     (* Remove comments from tbl: Some ast nodes have the same location.
+      * We only want to print comments once *)
+      Hashtbl.remove tbl loc;
+      let cmtsDoc = loop [] comments in
+      Doc.concat [
+        node;
+        cmtsDoc;
+      ]
+
+  let printComments doc (tbl: CommentTable.t) loc =
+    let docWithLeadingComments = printLeadingComments doc tbl.leading loc in
+    printTrailingComments docWithLeadingComments tbl.trailing loc
+
+  let printLoc (loc: Location.t) =
+    Format.sprintf "{start: %d-%d; end: %d-%d}"
+      loc.loc_start.pos_lnum
+      (loc.loc_start.pos_cnum - loc.loc_start.pos_bol)
+      loc.loc_end.pos_lnum
+      (loc.loc_end.pos_cnum - loc.loc_end.pos_bol)
+    |> print_endline
+
+  let printList ~getLoc ~nodes ~print ?(forceBreak=false) t =
+    let rec loop (prevLoc: Location.t) acc nodes =
+      match nodes with
+      | [] -> (prevLoc, Doc.concat (List.rev acc))
+      | node::nodes ->
+        let loc = getLoc node in
+        let startPos = match getFirstLeadingComment t loc with
+        | None -> loc.loc_start
+        | Some comment -> (Comment.loc comment).loc_start
+        in
+        let sep = if startPos.pos_lnum - prevLoc.loc_end.pos_lnum > 1 then
+          Doc.concat [Doc.hardLine; Doc.hardLine]
+        else
+          Doc.hardLine
+        in
+        let doc = printComments (print node t) t loc in
+        loop loc (doc::sep::acc) nodes
+    in
+    match nodes with
+    | [] -> Doc.nil
+    | node::nodes ->
+      let firstLoc = getLoc node in
+      let doc = printComments (print node t) t firstLoc in
+      let (lastLoc, docs) = loop firstLoc [doc] nodes in
+      let forceBreak =
+        forceBreak ||
+        firstLoc.loc_start.pos_lnum != lastLoc.loc_end.pos_lnum
+      in
+      Doc.breakableGroup ~forceBreak docs
+
+  let printListi ~getLoc ~nodes ~print ?(forceBreak=false) t =
+    let rec loop i (prevLoc: Location.t) acc nodes =
+      match nodes with
+      | [] -> (prevLoc, Doc.concat (List.rev acc))
+      | node::nodes ->
+        let loc = getLoc node in
+        let startPos = match getFirstLeadingComment t loc with
+        | None -> loc.loc_start
+        | Some comment -> (Comment.loc comment).loc_start
+        in
+        let sep = if startPos.pos_lnum - prevLoc.loc_end.pos_lnum > 1 then
+          Doc.concat [Doc.hardLine; Doc.hardLine]
+        else
+          Doc.line
+        in
+        let doc = printComments (print node t i) t loc in
+        loop (i + 1) loc (doc::sep::acc) nodes
+    in
+    match nodes with
+    | [] -> Doc.nil
+    | node::nodes ->
+      let firstLoc = getLoc node in
+      let doc = printComments (print node t 0) t firstLoc in
+      let (lastLoc, docs) = loop 1 firstLoc [doc] nodes in
+      let forceBreak =
+        forceBreak ||
+        firstLoc.loc_start.pos_lnum != lastLoc.loc_end.pos_lnum
+      in
+      Doc.breakableGroup ~forceBreak docs
 
   (* This could be done in one pass by collecting locations as we go? *)
   let interleaveWhitespace ?(forceBreak=false) (rows: (Location.t * Doc.t) list) =
@@ -8247,6 +10573,14 @@ module Printer = struct
       let txts = Longident.flatten l in
       Doc.join ~sep:Doc.dot (List.map Doc.text txts)
     | _ -> failwith "unsupported ident"
+
+  let printLongidentLocation l cmtTbl =
+    let doc = printLongident l.Location.txt in
+    printComments doc cmtTbl l.loc
+
+  let printStringLoc sloc cmtTbl =
+    let doc = Doc.text sloc.Location.txt in
+    printComments doc cmtTbl sloc.loc
 
   (* TODO: better allocation strategy for the buffer *)
   let escapeStringContents s =
@@ -8288,27 +10622,29 @@ module Printer = struct
     | Pconst_float (s, _) -> Doc.text s
     | Pconst_char c -> Doc.text ("'" ^ (Char.escaped c) ^ "'")
 
-  let rec printStructure (s : Parsetree.structure) =
-    interleaveWhitespace  (
-      List.map (fun si -> (si.Parsetree.pstr_loc, printStructureItem si)) s
-    )
+  let rec printStructure (s : Parsetree.structure) t =
+    printList
+      ~getLoc:(fun s -> s.Parsetree.pstr_loc)
+      ~nodes:s
+      ~print:printStructureItem
+      t
 
-  and printStructureItem (si: Parsetree.structure_item) =
+  and printStructureItem (si: Parsetree.structure_item) cmtTbl =
     match si.pstr_desc with
     | Pstr_value(rec_flag, valueBindings) ->
 			let recFlag = match rec_flag with
 			| Asttypes.Nonrecursive -> Doc.nil
 			| Asttypes.Recursive -> Doc.text "rec "
 			in
-      printValueBindings ~recFlag valueBindings
+      printValueBindings ~recFlag valueBindings cmtTbl
     | Pstr_type(recFlag, typeDeclarations) ->
       let recFlag = match recFlag with
       | Asttypes.Nonrecursive -> Doc.nil
       | Asttypes.Recursive -> Doc.text "rec "
       in
-      printTypeDeclarations ~recFlag typeDeclarations
+      printTypeDeclarations ~recFlag typeDeclarations cmtTbl
     | Pstr_primitive valueDescription ->
-      printValueDescription valueDescription
+      printValueDescription valueDescription cmtTbl
     | Pstr_eval (expr, attrs) ->
       let needsParens = match expr with
       | {pexp_attributes=[({txt="ns.ternary"},_)]; pexp_desc = Pexp_ifthenelse _} -> false
@@ -8316,39 +10652,44 @@ module Printer = struct
       | _ -> false
       in
       let exprDoc =
-        let doc = printExpression expr in
+        let doc = printExpressionWithComments expr cmtTbl in
         if needsParens then addParens doc else doc
       in
       Doc.concat [
         printAttributes attrs;
         exprDoc;
       ]
-    | Pstr_attribute attr -> Doc.concat [Doc.text "@"; printAttribute attr]
+    | Pstr_attribute attr -> Doc.concat [
+        Doc.text "@";
+        printAttributeWithComments attr cmtTbl
+      ]
     | Pstr_extension (extension, attrs) -> Doc.concat [
         printAttributes attrs;
-        Doc.concat [Doc.text "%";printExtension extension];
+        Doc.concat [Doc.text "%"; printExtensionWithComments extension cmtTbl];
       ]
     | Pstr_include includeDeclaration ->
-      printIncludeDeclaration includeDeclaration
+      printIncludeDeclaration includeDeclaration cmtTbl
     | Pstr_open openDescription ->
-      printOpenDescription openDescription
+      printOpenDescription openDescription cmtTbl
     | Pstr_modtype modTypeDecl ->
-      printModuleTypeDeclaration modTypeDecl
+      printModuleTypeDeclaration modTypeDecl cmtTbl
     | Pstr_module moduleBinding ->
-      printModuleBinding ~isRec:false 0 moduleBinding
+      printModuleBinding ~isRec:false moduleBinding cmtTbl 0
     | Pstr_recmodule moduleBindings ->
-      Doc.join ~sep:Doc.line (List.mapi (fun i mb ->
-        printModuleBinding ~isRec:true i mb
-      ) moduleBindings)
+      printListi
+        ~getLoc:(fun mb -> mb.Parsetree.pmb_loc)
+        ~nodes:moduleBindings
+        ~print:(printModuleBinding ~isRec:true)
+        cmtTbl
     | Pstr_exception extensionConstructor ->
-      printExceptionDef extensionConstructor;
+      printExceptionDef extensionConstructor cmtTbl
     | Pstr_typext typeExtension ->
-      printTypeExtension typeExtension
+      printTypeExtension typeExtension cmtTbl
     | Pstr_class _ | Pstr_class_type _ -> Doc.nil
 
-  and printTypeExtension (te : Parsetree.type_extension) =
+  and printTypeExtension (te : Parsetree.type_extension) cmtTbl =
     let prefix = Doc.text "type " in
-    let name = printLongident te.ptyext_path.txt in
+    let name = printLongidentLocation te.ptyext_path cmtTbl in
     let typeParams = match te.ptyext_params with
     | [] -> Doc.nil
     | typeParams -> Doc.group (
@@ -8358,7 +10699,10 @@ module Printer = struct
             Doc.concat [
               Doc.softLine;
               Doc.join ~sep:(Doc.concat [Doc.comma; Doc.line]) (
-                List.map printTypeParam typeParams
+                List.map (fun typeParam ->
+                  let doc = printTypeParam typeParam cmtTbl in
+                  printComments doc cmtTbl (fst typeParam).Parsetree.ptyp_loc
+                ) typeParams
               )
             ]
           );
@@ -8384,14 +10728,23 @@ module Printer = struct
         ]
       | Public -> Doc.nil
       in
+      let rows =
+        printListi
+         ~getLoc:(fun n -> n.Parsetree.pext_loc)
+         ~print:printExtensionConstructor
+         ~nodes: ecs
+         ~forceBreak
+         cmtTbl
+      in
       Doc.breakableGroup ~forceBreak (
         Doc.indent (
           Doc.concat [
             Doc.line;
             privateFlag;
-            Doc.join ~sep:Doc.line (
-              List.mapi printExtensionConstructor ecs
-            )
+            rows;
+            (* Doc.join ~sep:Doc.line ( *)
+              (* List.mapi printExtensionConstructor ecs *)
+            (* ) *)
           ]
         )
       )
@@ -8407,7 +10760,7 @@ module Printer = struct
       ]
     )
 
-  and printModuleBinding ~isRec i moduleBinding =
+  and printModuleBinding ~isRec moduleBinding cmtTbl i =
     let prefix = if i = 0 then
       Doc.concat [
         Doc.text "module ";
@@ -8420,43 +10773,52 @@ module Printer = struct
       match moduleBinding.pmb_expr with
       | {pmod_desc = Pmod_constraint (modExpr, modType)} ->
         (
-          printModExpr modExpr,
+          printModExpr modExpr cmtTbl,
           Doc.concat [
             Doc.text ": ";
-            printModType modType
+            printModType modType cmtTbl
           ]
         )
       | modExpr ->
-        (printModExpr modExpr, Doc.nil)
+        (printModExpr modExpr cmtTbl, Doc.nil)
     in
-    Doc.concat [
+    let modName =
+      let doc = Doc.text moduleBinding.pmb_name.Location.txt in
+      printComments doc cmtTbl moduleBinding.pmb_name.loc
+    in
+    let doc = Doc.concat [
       printAttributes ~loc:moduleBinding.pmb_name.loc moduleBinding.pmb_attributes;
       prefix;
-      Doc.text moduleBinding.pmb_name.Location.txt;
+      modName;
       modConstraintDoc;
       Doc.text " = ";
       modExprDoc;
-    ]
+    ] in
+    printComments doc cmtTbl moduleBinding.pmb_loc
 
-  and printModuleTypeDeclaration (modTypeDecl : Parsetree.module_type_declaration) =
+  and printModuleTypeDeclaration (modTypeDecl : Parsetree.module_type_declaration) cmtTbl =
+    let modName =
+      let doc = Doc.text modTypeDecl.pmtd_name.txt in
+      printComments doc cmtTbl modTypeDecl.pmtd_name.loc
+    in
     Doc.concat [
       printAttributes modTypeDecl.pmtd_attributes;
       Doc.text "module type ";
-      Doc.text modTypeDecl.pmtd_name.txt;
+      modName;
       (match modTypeDecl.pmtd_type with
       | None -> Doc.nil
       | Some modType -> Doc.concat [
           Doc.text " = ";
-          printModType modType;
+          printModType modType cmtTbl;
         ]);
     ]
 
-  and printModType modType =
+  and printModType modType cmtTbl =
     let modTypeDoc = match modType.pmty_desc with
-    | Parsetree.Pmty_ident {txt = longident; loc} ->
+    | Parsetree.Pmty_ident longident ->
       Doc.concat [
-        printAttributes ~loc modType.pmty_attributes;
-        printLongident longident
+        printAttributes ~loc:longident.loc modType.pmty_attributes;
+        printLongidentLocation longident cmtTbl
       ]
     | Pmty_signature signature ->
       let signatureDoc = Doc.breakableGroup ~forceBreak:true (
@@ -8465,7 +10827,7 @@ module Printer = struct
           Doc.indent (
             Doc.concat [
               Doc.line;
-              printSignature signature;
+              printSignature signature cmtTbl;
             ]
           );
           Doc.line;
@@ -8480,17 +10842,21 @@ module Printer = struct
       let (parameters, returnType) = ParsetreeViewer.functorType modType in
       let parametersDoc = match parameters with
       | [] -> Doc.nil
-      | [attrs, {Location.txt = "_"}, Some modType] ->
+      | [attrs, {Location.txt = "_"; loc}, Some modType] ->
+        let cmtLoc =
+          {loc with loc_end = modType.Parsetree.pmty_loc.loc_end}
+        in
         let attrs = match attrs with
         | [] -> Doc.nil
         | attrs -> Doc.concat [
           Doc.join ~sep:Doc.line (List.map printAttribute attrs);
           Doc.line;
         ] in
-        Doc.concat [
+        let doc = Doc.concat [
           attrs;
-          printModType modType
-        ]
+          printModType modType cmtTbl
+        ] in
+        printComments doc cmtTbl cmtLoc
       | params ->
         Doc.group (
           Doc.concat [
@@ -8500,22 +10866,33 @@ module Printer = struct
                 Doc.softLine;
                 Doc.join ~sep:(Doc.concat [Doc.comma; Doc.line]) (
                   List.map (fun (attrs, lbl, modType) ->
+                    let cmtLoc = match modType with
+                    | None -> lbl.Asttypes.loc
+                    | Some modType ->
+                      {lbl.Asttypes.loc with loc_end = modType.Parsetree.pmty_loc.loc_end}
+                    in
                     let attrs = match attrs with
                     | [] -> Doc.nil
                     | attrs -> Doc.concat [
                       Doc.join ~sep:Doc.line (List.map printAttribute attrs);
                       Doc.line;
                     ] in
-                    Doc.concat [
+                    let lblDoc = if lbl.Location.txt = "_" then Doc.nil
+                      else
+                        let doc = Doc.text lbl.txt in
+                        printComments doc cmtTbl lbl.loc
+                    in
+                    let doc = Doc.concat [
                       attrs;
-                      if lbl.Location.txt = "_" then Doc.nil else Doc.text lbl.txt;
+                      lblDoc;
                       (match modType with
                       | None -> Doc.nil
                       | Some modType -> Doc.concat [
                         if lbl.txt = "_" then Doc.nil else Doc.text ": ";
-                        printModType modType;
+                        printModType modType cmtTbl;
                       ]);
-                    ]
+                    ] in
+                    printComments doc cmtTbl cmtLoc
                   ) params
                 );
               ]
@@ -8527,7 +10904,7 @@ module Printer = struct
         )
       in
       let returnDoc =
-        let doc = printModType returnType in
+        let doc = printModType returnType cmtTbl in
         if Parens.modTypeFunctorReturn returnType then addParens doc else doc
       in
       Doc.group (
@@ -8544,16 +10921,16 @@ module Printer = struct
       )
     | Pmty_typeof modExpr -> Doc.concat [
         Doc.text "module type of ";
-        printModExpr modExpr;
+        printModExpr modExpr cmtTbl
       ]
-    | Pmty_extension extension -> printExtension extension
-    | Pmty_alias {txt = longident} -> Doc.concat [
+    | Pmty_extension extension -> printExtensionWithComments extension cmtTbl
+    | Pmty_alias longident -> Doc.concat [
         Doc.text "module ";
-        printLongident longident;
+        printLongidentLocation longident cmtTbl;
       ]
     | Pmty_with (modType, withConstraints) ->
       let operand =
-        let doc = printModType modType in
+        let doc = printModType modType cmtTbl in
         if Parens.modTypeWithOperand modType then addParens doc else doc
       in
       Doc.group (
@@ -8570,11 +10947,13 @@ module Printer = struct
     in
     let attrsAlreadyPrinted = match modType.pmty_desc with
     | Pmty_functor _ | Pmty_signature _ | Pmty_ident _ -> true
-    | _ -> false in
-    Doc.concat [
+    | _ -> false
+    in
+    let doc =Doc.concat [
       if attrsAlreadyPrinted then Doc.nil else printAttributes modType.pmty_attributes;
       modTypeDoc;
-    ]
+    ] in
+    printComments doc cmtTbl modType.pmty_loc
 
   and printWithConstraints withConstraints =
     let rows =List.mapi (fun i withConstraint  ->
@@ -8597,7 +10976,8 @@ module Printer = struct
         ~equalSign:"="
         ~recFlag:Doc.nil
         0
-        typeDeclaration)
+        typeDeclaration
+        CommentTable.empty)
     (* with module X.Y = Z *)
     | Pwith_module ({txt = longident1}, {txt = longident2}) ->
         Doc.concat [
@@ -8618,7 +10998,8 @@ module Printer = struct
         ~equalSign:":="
         ~recFlag:Doc.nil
         0
-        typeDeclaration)
+        typeDeclaration
+        CommentTable.empty)
     | Pwith_modsubst ({txt = longident1}, {txt = longident2}) ->
       Doc.concat [
         Doc.text "module ";
@@ -8632,127 +11013,122 @@ module Printer = struct
         )
       ]
 
-  and printSignature signature =
-    interleaveWhitespace  (
-      List.map (fun si -> (si.Parsetree.psig_loc, printSignatureItem si)) signature
-    )
+  and printSignature signature cmtTbl =
+    printList
+      ~getLoc:(fun s -> s.Parsetree.psig_loc)
+      ~nodes:signature
+      ~print:printSignatureItem
+      cmtTbl
 
-  and printSignatureItem (si : Parsetree.signature_item) =
+  and printSignatureItem (si : Parsetree.signature_item) cmtTbl =
     match si.psig_desc with
     | Parsetree.Psig_value valueDescription ->
-      printValueDescription valueDescription
+      printValueDescription valueDescription cmtTbl
     | Psig_type (recFlag, typeDeclarations) ->
       let recFlag = match recFlag with
       | Asttypes.Nonrecursive -> Doc.nil
       | Asttypes.Recursive -> Doc.text "rec "
       in
-      printTypeDeclarations ~recFlag typeDeclarations
+      printTypeDeclarations ~recFlag typeDeclarations cmtTbl
     | Psig_typext typeExtension ->
-      printTypeExtension typeExtension
+      printTypeExtension typeExtension cmtTbl
     | Psig_exception extensionConstructor ->
-      printExceptionDef extensionConstructor
+      printExceptionDef extensionConstructor cmtTbl
     | Psig_module moduleDeclaration ->
-      printModuleDeclaration moduleDeclaration
+      printModuleDeclaration moduleDeclaration cmtTbl
     | Psig_recmodule moduleDeclarations ->
-      printRecModuleDeclarations moduleDeclarations
+      printRecModuleDeclarations moduleDeclarations cmtTbl
     | Psig_modtype modTypeDecl ->
-      printModuleTypeDeclaration modTypeDecl
+      printModuleTypeDeclaration modTypeDecl cmtTbl
     | Psig_open openDescription ->
-      printOpenDescription openDescription
+      printOpenDescription openDescription cmtTbl
     | Psig_include includeDescription ->
-      printIncludeDescription includeDescription
-    | Psig_attribute attr -> Doc.concat [Doc.text "@"; printAttribute attr]
+      printIncludeDescription includeDescription cmtTbl
+    | Psig_attribute attr -> Doc.concat [
+        Doc.text "@";
+        printAttributeWithComments attr cmtTbl
+      ]
     | Psig_extension (extension, attrs) -> Doc.concat [
         printAttributes attrs;
-        Doc.concat [Doc.text "%";printExtension extension];
+        Doc.concat [Doc.text "%"; printExtensionWithComments extension cmtTbl];
       ]
     | Psig_class _ | Psig_class_type _ -> Doc.nil
 
-  and printRecModuleDeclarations moduleDeclarations =
-    Doc.group (
-      Doc.join ~sep:Doc.line (
-        List.mapi (fun i (md: Parsetree.module_declaration) ->
-          let body = match md.pmd_type.pmty_desc with
-          | Parsetree.Pmty_alias {txt = longident } ->
-            Doc.concat [Doc.text " = "; printLongident longident]
-          | _ ->
-            let needsParens = match md.pmd_type.pmty_desc with
-            | Pmty_with _ -> true
-            | _ -> false
-            in
-            let modTypeDoc =
-              let doc = printModType md.pmd_type in
-              if needsParens then addParens doc else doc
-            in
-            Doc.concat [Doc.text ": "; modTypeDoc]
-          in
-          let prefix = if i < 1 then "module rec " else "and " in
-          Doc.concat [
-            printAttributes ~loc:md.pmd_name.loc md.pmd_attributes;
-            Doc.text prefix;
-            Doc.text md.pmd_name.txt;
-            body
-          ]
-        ) moduleDeclarations
-      )
-    )
+  and printRecModuleDeclarations moduleDeclarations cmtTbl =
+      printListi
+        ~getLoc:(fun n -> n.Parsetree.pmd_loc)
+        ~nodes:moduleDeclarations
+        ~print:printRecModuleDeclaration
+        cmtTbl
 
-  and printModuleDeclaration (md: Parsetree.module_declaration) =
+ and printRecModuleDeclaration md cmtTbl i =
     let body = match md.pmd_type.pmty_desc with
-    | Parsetree.Pmty_alias {txt = longident } ->
-      Doc.concat [Doc.text " = "; printLongident longident]
-    | _ -> Doc.concat [Doc.text ": "; printModType md.pmd_type]
+    | Parsetree.Pmty_alias longident ->
+      Doc.concat [Doc.text " = "; printLongidentLocation longident cmtTbl]
+    | _ ->
+      let needsParens = match md.pmd_type.pmty_desc with
+      | Pmty_with _ -> true
+      | _ -> false
+      in
+      let modTypeDoc =
+        let doc = printModType md.pmd_type cmtTbl in
+        if needsParens then addParens doc else doc
+      in
+      Doc.concat [Doc.text ": "; modTypeDoc]
+    in
+    let prefix = if i < 1 then "module rec " else "and " in
+    Doc.concat [
+      printAttributes ~loc:md.pmd_name.loc md.pmd_attributes;
+      Doc.text prefix;
+      printComments (Doc.text md.pmd_name.txt) cmtTbl md.pmd_name.loc;
+      body
+    ]
+
+  and printModuleDeclaration (md: Parsetree.module_declaration) cmtTbl =
+    let body = match md.pmd_type.pmty_desc with
+    | Parsetree.Pmty_alias longident ->
+      Doc.concat [Doc.text " = "; printLongidentLocation longident cmtTbl]
+    | _ -> Doc.concat [Doc.text ": "; printModType md.pmd_type cmtTbl]
     in
     Doc.concat [
       printAttributes ~loc:md.pmd_name.loc md.pmd_attributes;
       Doc.text "module ";
-      Doc.text md.pmd_name.txt;
+      printComments (Doc.text md.pmd_name.txt) cmtTbl md.pmd_name.loc;
       body
     ]
 
-  and printOpenDescription (openDescription : Parsetree.open_description) =
+  and printOpenDescription (openDescription : Parsetree.open_description) p =
     Doc.concat [
       printAttributes openDescription.popen_attributes;
       Doc.text "open";
       (match openDescription.popen_override with
       | Asttypes.Fresh -> Doc.space
       | Asttypes.Override -> Doc.text "! ");
-      printLongident openDescription.popen_lid.txt
+      printLongidentLocation openDescription.popen_lid p
     ]
 
-  and printIncludeDescription (includeDescription: Parsetree.include_description) =
+  and printIncludeDescription (includeDescription: Parsetree.include_description) cmtTbl =
     Doc.concat [
       printAttributes includeDescription.pincl_attributes;
       Doc.text "include ";
-      printModType includeDescription.pincl_mod;
+      printModType includeDescription.pincl_mod cmtTbl;
     ]
 
-  and printIncludeDeclaration (includeDeclaration : Parsetree.include_declaration) =
+  and printIncludeDeclaration (includeDeclaration : Parsetree.include_declaration)  cmtTbl=
     Doc.concat [
       printAttributes includeDeclaration.pincl_attributes;
       Doc.text "include ";
-      printModExpr includeDeclaration.pincl_mod;
+      printModExpr includeDeclaration.pincl_mod cmtTbl;
     ]
 
+  and printValueBindings ~recFlag (vbs: Parsetree.value_binding list) cmtTbl =
+    printListi
+      ~getLoc:(fun vb -> vb.Parsetree.pvb_loc)
+      ~nodes:vbs
+      ~print:(printValueBinding ~recFlag)
+      cmtTbl
 
-  and printValueBindings ~recFlag (vbs: Parsetree.value_binding list) =
-    let rows = List.mapi (fun i vb ->
-      let doc = printValueBinding ~recFlag i vb in
-      (vb.Parsetree.pvb_loc, doc)
-    ) vbs
-    in
-    interleaveWhitespace rows
-
-  (*
-   * type value_description = {
-   *   pval_name : string Asttypes.loc;
-   *   pval_type : Parsetree.core_type;
-   *   pval_prim : string list;
-   *   pval_attributes : Parsetree.attributes;
-   *   pval_loc : Location.t;
-   * }
-   *)
-  and printValueDescription valueDescription =
+  and printValueDescription valueDescription cmtTbl =
     let isExternal =
       match valueDescription.pval_prim with | [] -> false | _ -> true
     in
@@ -8760,9 +11136,12 @@ module Printer = struct
       Doc.concat [
         printAttributes valueDescription.pval_attributes;
         Doc.text (if isExternal then "external " else "let ");
-        Doc.text valueDescription.pval_name.txt;
+        printComments
+          (Doc.text valueDescription.pval_name.txt)
+          cmtTbl
+          valueDescription.pval_name.loc;
         Doc.text ": ";
-        printTypExpr valueDescription.pval_type;
+        printTypExpr valueDescription.pval_type cmtTbl;
         if isExternal then
           Doc.group (
             Doc.concat [
@@ -8786,17 +11165,12 @@ module Printer = struct
       ]
     )
 
-  and printTypeDeclarations ~recFlag typeDeclarations =
-    let rows = List.mapi (fun i td ->
-      let doc = printTypeDeclaration
-        ~name:(Doc.text td.Parsetree.ptype_name.txt)
-        ~equalSign:"="
-        ~recFlag
-        i td
-      in
-      (td.Parsetree.ptype_loc, doc)
-    ) typeDeclarations in
-    interleaveWhitespace rows
+  and printTypeDeclarations ~recFlag typeDeclarations cmtTbl =
+    printListi
+      ~getLoc:(fun n -> n.Parsetree.ptype_loc)
+      ~nodes:typeDeclarations
+      ~print:(printTypeDeclaration2 ~recFlag)
+      cmtTbl
 
   (*
    * type_declaration = {
@@ -8830,12 +11204,19 @@ module Printer = struct
    *        (* Invariant: non-empty list *)
    *  | Ptype_open
    *)
-  and printTypeDeclaration ~name ~equalSign ~recFlag i (td: Parsetree.type_declaration) =
-    let attrs = printAttributes ~loc:td.ptype_loc td.ptype_attributes in
+  and printTypeDeclaration ~name ~equalSign ~recFlag i (td: Parsetree.type_declaration) cmtTbl =
+    let (hasGenType, attrs) = ParsetreeViewer.splitGenTypeAttr td.ptype_attributes in
+    let attrs = printAttributes ~loc:td.ptype_loc attrs in
     let prefix = if i > 0 then
-      Doc.text "and "
+      Doc.concat [
+        Doc.text "and ";
+        if hasGenType then Doc.text "export " else Doc.nil
+      ]
     else
-      Doc.concat [Doc.text "type "; recFlag]
+      Doc.concat [
+        Doc.text (if hasGenType then "export type " else "type ");
+        recFlag
+      ]
     in
     let typeName = name in
     let typeParams = match td.ptype_params with
@@ -8847,7 +11228,7 @@ module Printer = struct
             Doc.concat [
               Doc.softLine;
               Doc.join ~sep:(Doc.concat [Doc.comma; Doc.line]) (
-                List.map printTypeParam typeParams
+                List.map (fun tp -> printTypeParam tp cmtTbl) typeParams
               )
             ]
           );
@@ -8865,7 +11246,7 @@ module Printer = struct
         Doc.concat [
           Doc.concat [Doc.space; Doc.text equalSign; Doc.space];
           printPrivateFlag td.ptype_private;
-          printTypExpr typ;
+          printTypExpr typ cmtTbl;
         ]
       end
     | Ptype_open -> Doc.concat [
@@ -8878,27 +11259,124 @@ module Printer = struct
       | None -> Doc.nil
       | Some(typ) -> Doc.concat [
           Doc.concat [Doc.space; Doc.text equalSign; Doc.space];
-          printTypExpr typ;
+          printTypExpr typ cmtTbl;
         ]
       in
       Doc.concat [
         manifest;
         Doc.concat [Doc.space; Doc.text equalSign; Doc.space];
         printPrivateFlag td.ptype_private;
-        printRecordDeclaration lds;
+        printRecordDeclaration lds cmtTbl;
       ]
     | Ptype_variant(cds) ->
       let manifest = match td.ptype_manifest with
       | None -> Doc.nil
       | Some(typ) -> Doc.concat [
           Doc.concat [Doc.space; Doc.text equalSign; Doc.space];
-          printTypExpr typ;
+          printTypExpr typ cmtTbl;
         ]
       in
       Doc.concat [
         manifest;
         Doc.concat [Doc.space; Doc.text equalSign];
-        printConstructorDeclarations ~privateFlag:td.ptype_private cds;
+        printConstructorDeclarations ~privateFlag:td.ptype_private cds cmtTbl;
+      ]
+    in
+    let constraints = printTypeDefinitionConstraints td.ptype_cstrs in
+    Doc.group (
+      Doc.concat [
+        attrs;
+        prefix;
+        typeName;
+        typeParams;
+        manifestAndKind;
+        constraints;
+      ]
+    )
+
+  and printTypeDeclaration2 ~recFlag (td: Parsetree.type_declaration) cmtTbl i =
+    let name =
+      let doc = Doc.text td.Parsetree.ptype_name.txt in
+      printComments doc cmtTbl td.ptype_name.loc
+    in
+    let equalSign = "=" in
+    let (hasGenType, attrs) = ParsetreeViewer.splitGenTypeAttr td.ptype_attributes in
+    let attrs = printAttributes ~loc:td.ptype_loc attrs in
+    let prefix = if i > 0 then
+      Doc.concat [
+        Doc.text "and ";
+        if hasGenType then Doc.text "export " else Doc.nil
+      ]
+    else
+      Doc.concat [
+        Doc.text (if hasGenType then "export type " else "type ");
+        recFlag
+      ]
+    in
+    let typeName = name in
+    let typeParams = match td.ptype_params with
+    | [] -> Doc.nil
+    | typeParams -> Doc.group (
+        Doc.concat [
+          Doc.lessThan;
+          Doc.indent (
+            Doc.concat [
+              Doc.softLine;
+              Doc.join ~sep:(Doc.concat [Doc.comma; Doc.line]) (
+                List.map (fun typeParam ->
+                  printTypeParam typeParam cmtTbl
+                ) typeParams
+              )
+            ]
+          );
+          Doc.trailingComma;
+          Doc.softLine;
+          Doc.greaterThan;
+        ]
+      )
+    in
+    let manifestAndKind = match td.ptype_kind with
+    | Ptype_abstract ->
+      begin match td.ptype_manifest with
+      | None -> Doc.nil
+      | Some(typ) ->
+        Doc.concat [
+          Doc.concat [Doc.space; Doc.text equalSign; Doc.space];
+          printPrivateFlag td.ptype_private;
+          printTypExpr typ cmtTbl;
+        ]
+      end
+    | Ptype_open -> Doc.concat [
+        Doc.concat [Doc.space; Doc.text equalSign; Doc.space];
+        printPrivateFlag td.ptype_private;
+        Doc.text "..";
+      ]
+    | Ptype_record(lds) ->
+      let manifest = match td.ptype_manifest with
+      | None -> Doc.nil
+      | Some(typ) -> Doc.concat [
+          Doc.concat [Doc.space; Doc.text equalSign; Doc.space];
+          printTypExpr typ cmtTbl;
+        ]
+      in
+      Doc.concat [
+        manifest;
+        Doc.concat [Doc.space; Doc.text equalSign; Doc.space];
+        printPrivateFlag td.ptype_private;
+        printRecordDeclaration lds cmtTbl;
+      ]
+    | Ptype_variant(cds) ->
+      let manifest = match td.ptype_manifest with
+      | None -> Doc.nil
+      | Some(typ) -> Doc.concat [
+          Doc.concat [Doc.space; Doc.text equalSign; Doc.space];
+          printTypExpr typ cmtTbl;
+        ]
+      in
+      Doc.concat [
+        manifest;
+        Doc.concat [Doc.space; Doc.text equalSign];
+        printConstructorDeclarations ~privateFlag:td.ptype_private cds cmtTbl;
       ]
     in
     let constraints = printTypeDefinitionConstraints td.ptype_cstrs in
@@ -8932,16 +11410,16 @@ module Printer = struct
   and printTypeDefinitionConstraint ((typ1, typ2, _loc ): Parsetree.core_type * Parsetree.core_type * Location.t) =
     Doc.concat [
       Doc.text "constraint ";
-      printTypExpr typ1;
+      printTypExpr typ1 CommentTable.empty;
       Doc.text " = ";
-      printTypExpr typ2;
+      printTypExpr typ2 CommentTable.empty;
     ]
 
   and printPrivateFlag (flag : Asttypes.private_flag) = match flag with
     | Private -> Doc.text "private "
     | Public -> Doc.nil
 
-  and printTypeParam (param : (Parsetree.core_type * Asttypes.variance)) =
+  and printTypeParam (param : (Parsetree.core_type * Asttypes.variance)) cmtTbl =
     let (typ, variance) = param in
     let printedVariance = match variance with
     | Covariant -> Doc.text "+"
@@ -8950,10 +11428,10 @@ module Printer = struct
     in
     Doc.concat [
       printedVariance;
-      printTypExpr typ
+      printTypExpr typ cmtTbl
     ]
 
-  and printRecordDeclaration (lds: Parsetree.label_declaration list) =
+  and printRecordDeclaration (lds: Parsetree.label_declaration list) cmtTbl =
     let forceBreak = match (lds, List.rev lds) with
     | (first::_, last::_) ->
        first.pld_loc.loc_start.pos_lnum < last.pld_loc.loc_end.pos_lnum
@@ -8966,7 +11444,10 @@ module Printer = struct
           Doc.concat [
             Doc.softLine;
             Doc.join ~sep:(Doc.concat [Doc.comma; Doc.line])
-              (List.map printLabelDeclaration lds)
+              (List.map (fun ld ->
+                let doc = printLabelDeclaration ld cmtTbl in
+                printComments doc cmtTbl ld.Parsetree.pld_loc
+              ) lds)
           ]
         );
         Doc.trailingComma;
@@ -8975,7 +11456,9 @@ module Printer = struct
       ]
     )
 
-  and printConstructorDeclarations ~privateFlag (cds: Parsetree.constructor_declaration list) =
+  and printConstructorDeclarations
+    ~privateFlag (cds: Parsetree.constructor_declaration list) cmtTbl
+  =
     let forceBreak = match (cds, List.rev cds) with
     | (first::_, last::_) ->
        first.pcd_loc.loc_start.pos_lnum < last.pcd_loc.loc_end.pos_lnum
@@ -8988,40 +11471,43 @@ module Printer = struct
       ]
     | Public -> Doc.nil
     in
+    let rows =
+      printListi
+        ~getLoc:(fun cd -> cd.Parsetree.pcd_loc)
+        ~nodes:cds
+        ~print:(fun cd cmtTbl i ->
+          let doc = printConstructorDeclaration2 i cd cmtTbl in
+          printComments doc cmtTbl cd.Parsetree.pcd_loc
+        )
+        ~forceBreak
+        cmtTbl
+    in
     Doc.breakableGroup ~forceBreak (
       Doc.indent (
         Doc.concat [
           Doc.line;
           privateFlag;
-          Doc.join ~sep:Doc.line (
-            List.mapi printConstructorDeclaration cds
-          )
+          rows;
         ]
       )
     )
 
-  (*
-   * {
-   *  pcd_name: string loc;
-   *  pcd_args: constructor_arguments;
-   *  pcd_res: core_type option;
-   *  pcd_loc: Location.t;
-   *  pcd_attributes: attributes; (* C of ... [@id1] [@id2] *)
-   * }
-   *)
-  and printConstructorDeclaration i (cd : Parsetree.constructor_declaration) =
+  and printConstructorDeclaration2 i (cd : Parsetree.constructor_declaration) cmtTbl =
     let attrs = printAttributes cd.pcd_attributes in
     let bar = if i > 0 then Doc.text "| "
-      else Doc.ifBreaks (Doc.text "| ") Doc.nil
+    else Doc.ifBreaks (Doc.text "| ") Doc.nil
     in
-    let constrName = Doc.text cd.pcd_name.txt in
-    let constrArgs = printConstructorArguments cd.pcd_args in
+    let constrName =
+      let doc = Doc.text cd.pcd_name.txt in
+      printComments doc cmtTbl cd.pcd_name.loc
+    in
+    let constrArgs = printConstructorArguments ~indent:true cd.pcd_args cmtTbl in
     let gadt = match cd.pcd_res with
     | None -> Doc.nil
     | Some(typ) -> Doc.indent (
         Doc.concat [
           Doc.text ": ";
-          printTypExpr typ;
+          printTypExpr typ cmtTbl;
         ]
       )
     in
@@ -9037,71 +11523,77 @@ module Printer = struct
       )
     ]
 
-  and printConstructorArguments (cdArgs : Parsetree.constructor_arguments) =
+  and printConstructorArguments ~indent (cdArgs : Parsetree.constructor_arguments) cmtTbl =
     match cdArgs with
     | Pcstr_tuple [] -> Doc.nil
-    | Pcstr_tuple types -> Doc.group (
-        Doc.indent (
-          Doc.concat [
-            Doc.lparen;
-            Doc.indent (
-              Doc.concat [
-                Doc.softLine;
-                Doc.join ~sep:(Doc.concat [Doc.comma; Doc.line]) (
-                  List.map printTypExpr types
-                )
-              ]
-            );
-            Doc.trailingComma;
-            Doc.softLine;
-            Doc.rparen;
-          ]
-        )
-      )
-    | Pcstr_record lds ->
-      Doc.indent (
-        Doc.concat [
-          Doc.lparen;
-          (* manually inline the printRecordDeclaration, gives better layout *)
-          Doc.lbrace;
+    | Pcstr_tuple types ->
+      let args = Doc.concat [
+        Doc.lparen;
           Doc.indent (
             Doc.concat [
-              Doc.softLine;
-              Doc.join ~sep:(Doc.concat [Doc.comma; Doc.line])
-                (List.map printLabelDeclaration lds)
-            ]
-          );
-          Doc.trailingComma;
-          Doc.softLine;
-          Doc.rbrace;
-          Doc.rparen;
-        ]
+            Doc.softLine;
+            Doc.join ~sep:(Doc.concat [Doc.comma; Doc.line]) (
+              List.map (fun typexpr ->
+                printTypExpr typexpr cmtTbl
+              ) types
+            )
+          ]
+        );
+        Doc.trailingComma;
+        Doc.softLine;
+        Doc.rparen;
+      ] in
+      Doc.group (
+        if indent then Doc.indent args else args
       )
+    | Pcstr_record lds ->
+      let args = Doc.concat [
+        Doc.lparen;
+        (* manually inline the printRecordDeclaration, gives better layout *)
+        Doc.lbrace;
+        Doc.indent (
+          Doc.concat [
+            Doc.softLine;
+            Doc.join ~sep:(Doc.concat [Doc.comma; Doc.line])
+              (List.map (fun ld ->
+                let doc = printLabelDeclaration ld cmtTbl in
+                printComments doc cmtTbl ld.Parsetree.pld_loc
+              ) lds)
+          ]
+        );
+        Doc.trailingComma;
+        Doc.softLine;
+        Doc.rbrace;
+        Doc.rparen;
+      ] in
+      if indent then Doc.indent args else args
 
-
-  and printLabelDeclaration (ld : Parsetree.label_declaration) =
+  and printLabelDeclaration (ld : Parsetree.label_declaration) cmtTbl =
     let attrs = printAttributes ~loc:ld.pld_name.loc ld.pld_attributes in
     let mutableFlag = match ld.pld_mutable with
     | Mutable -> Doc.text "mutable "
     | Immutable -> Doc.nil
     in
-    let name = Doc.text ld.pld_name.txt in
+    let name =
+      let doc = Doc.text ld.pld_name.txt in
+      printComments doc cmtTbl ld.pld_name.loc
+    in
     Doc.group (
       Doc.concat [
         attrs;
         mutableFlag;
         name;
         Doc.text ": ";
-        printTypExpr ld.pld_type;
+        printTypExpr ld.pld_type cmtTbl;
       ]
     )
 
-  and printTypExpr (typExpr : Parsetree.core_type) =
+  and printTypExpr (typExpr : Parsetree.core_type) cmtTbl =
     let renderedType = match typExpr.ptyp_desc with
     | Ptyp_any -> Doc.text "_"
     | Ptyp_var var -> Doc.text ("'" ^ var)
     | Ptyp_extension(extension) ->
-      printExtension extension
+      printExtensionWithComments extension cmtTbl
     | Ptyp_alias(typ, alias) ->
       let typ =
         (* Technically type t = (string, float) => unit as 'x, doesn't require
@@ -9112,7 +11604,7 @@ module Printer = struct
         | Ptyp_arrow _ -> true
         | _ -> false
         in
-        let doc = printTypExpr typ in
+        let doc = printTypExpr typ cmtTbl in
         if needsParens then
           Doc.concat [Doc.lparen; doc; Doc.rparen]
         else
@@ -9120,7 +11612,7 @@ module Printer = struct
       in
       Doc.concat [typ; Doc.text " as "; Doc.text ("'" ^ alias)]
     | Ptyp_constr({txt = Longident.Ldot(Longident.Lident "Js", "t")}, [typ]) ->
-      let bsObject = printTypExpr typ in
+      let bsObject = printTypExpr typ cmtTbl in
       begin match typExpr.ptyp_attributes with
       | [] -> bsObject
       | attrs ->
@@ -9129,21 +11621,21 @@ module Printer = struct
             Doc.join ~sep:Doc.line (List.map printAttribute attrs)
           );
           Doc.space;
-          printTypExpr typ;
+          printTypExpr typ cmtTbl;
         ]
       end
     | Ptyp_constr(longidentLoc, [{ ptyp_desc = Parsetree.Ptyp_tuple tuple }]) ->
-      let constrName = printLongident longidentLoc.txt in
+      let constrName = printLongidentLocation longidentLoc cmtTbl in
       Doc.group(
         Doc.concat([
           constrName;
           Doc.lessThan;
-          printTupleType ~inline:true tuple;
+          printTupleType ~inline:true tuple cmtTbl;
           Doc.greaterThan;
         ])
       )
     | Ptyp_constr(longidentLoc, constrArgs) ->
-      let constrName = printLongident longidentLoc.txt in
+      let constrName = printLongidentLocation longidentLoc cmtTbl in
       begin match constrArgs with
       | [] -> constrName
       | [{
@@ -9154,7 +11646,7 @@ module Printer = struct
         Doc.concat([
           constrName;
           Doc.lessThan;
-          printBsObjectSugar ~inline:true fields openFlag;
+          printBsObjectSugar ~inline:true fields openFlag cmtTbl;
           Doc.greaterThan;
         ])
       | args -> Doc.group(
@@ -9165,7 +11657,9 @@ module Printer = struct
             Doc.concat [
               Doc.softLine;
               Doc.join ~sep:(Doc.concat [Doc.comma; Doc.line]) (
-                List.map printTypExpr constrArgs
+                List.map
+                  (fun typexpr -> printTypExpr typexpr cmtTbl)
+                  constrArgs
               )
             ]
           );
@@ -9182,12 +11676,14 @@ module Printer = struct
       | _ -> false
       in
       let returnDoc =
-        let doc = printTypExpr returnType in
+        let doc = printTypExpr returnType cmtTbl in
         if returnTypeNeedsParens then
           Doc.concat [Doc.lparen; doc; Doc.rparen]
         else doc
       in
-      let (isUncurried, attrs) = ParsetreeViewer.processUncurriedAttribute attrsBefore in
+      let (isUncurried, attrs) =
+        ParsetreeViewer.processUncurriedAttribute attrsBefore
+      in
       begin match args with
       | [] -> Doc.nil
       | [([], Nolabel, n)] when not isUncurried ->
@@ -9209,7 +11705,7 @@ module Printer = struct
                     Doc.indent (
                       Doc.concat [
                         Doc.softLine;
-                        printTypExpr n;
+                        printTypExpr n cmtTbl;
                         Doc.text " => ";
                         returnDoc;
                       ]
@@ -9219,7 +11715,7 @@ module Printer = struct
                   ]
                 else
                 Doc.concat [
-                  printTypExpr n;
+                  printTypExpr n cmtTbl;
                   Doc.text " => ";
                   returnDoc;
                 ]
@@ -9242,7 +11738,7 @@ module Printer = struct
               Doc.softLine;
               if isUncurried then Doc.concat [Doc.dot; Doc.space] else Doc.nil;
               Doc.join ~sep:(Doc.concat [Doc.comma; Doc.line]) (
-                List.map printTypeParameter args
+                List.map (fun tp -> printTypeParameter tp cmtTbl) args
               )
             ]
           );
@@ -9258,19 +11754,21 @@ module Printer = struct
           ]
         )
       end
-    | Ptyp_tuple types -> printTupleType ~inline:false types
+    | Ptyp_tuple types -> printTupleType ~inline:false types cmtTbl
     | Ptyp_object (fields, openFlag) ->
-      printBsObjectSugar ~inline:false fields openFlag
+      printBsObjectSugar ~inline:false fields openFlag cmtTbl
     | Ptyp_poly(stringLocs, typ) ->
       Doc.concat [
-        Doc.join ~sep:Doc.space (List.map (fun {Location.txt} ->
-          Doc.text ("'" ^ txt)) stringLocs);
+        Doc.join ~sep:Doc.space (List.map (fun {Location.txt; loc} ->
+          let doc = Doc.text ("'" ^ txt) in
+          printComments doc cmtTbl loc
+          ) stringLocs);
         Doc.dot;
         Doc.space;
-        printTypExpr typ
+        printTypExpr typ cmtTbl
       ]
     | Ptyp_package packageType ->
-      printPackageType ~printModuleKeywordAndParens:true packageType
+      printPackageType ~printModuleKeywordAndParens:true packageType cmtTbl
     | Ptyp_class _ -> failwith "classes are not supported in types"
     | Ptyp_variant _ -> failwith "Polymorphic variants currently not supported"
     in
@@ -9279,7 +11777,7 @@ module Printer = struct
     | Ptyp_constr({txt = Longident.Ldot(Longident.Lident "Js", "t")}, _) -> true
     | _ -> false
     in
-    begin match typExpr.ptyp_attributes with
+    let doc = begin match typExpr.ptyp_attributes with
     | _::_ as attrs when not shouldPrintItsOwnAttributes ->
       Doc.group (
         Doc.concat [
@@ -9289,8 +11787,10 @@ module Printer = struct
       )
     | _ -> renderedType
     end
+    in
+    printComments doc cmtTbl typExpr.ptyp_loc
 
-  and printBsObjectSugar ~inline fields openFlag =
+  and printBsObjectSugar ~inline fields openFlag cmtTbl =
     let flag = match openFlag with
     | Asttypes.Closed -> Doc.nil
     | Open -> Doc.dotdot
@@ -9302,7 +11802,7 @@ module Printer = struct
         Doc.concat [
           Doc.softLine;
           Doc.join ~sep:(Doc.concat [Doc.comma; Doc.line]) (
-            List.map printObjectField fields
+            List.map (fun field -> printObjectField field cmtTbl) fields
           )
         ]
       );
@@ -9312,39 +11812,44 @@ module Printer = struct
     ] in
     if inline then doc else Doc.group doc
 
-
-  and printTupleType ~inline (types: Parsetree.core_type list) =
+  and printTupleType ~inline (types: Parsetree.core_type list) cmtTbl =
     let tuple = Doc.concat([
-      Doc.text "/";
+      Doc.lparen;
       Doc.indent (
         Doc.concat([
           Doc.softLine;
           Doc.join ~sep:(Doc.concat [Doc.comma; Doc.line]) (
-            List.map printTypExpr types
+            List.map (fun typexpr -> printTypExpr typexpr cmtTbl) types
           )
         ])
       );
-      (* Doc.trailingComma; *) (* Trailing comma not supported in tuples right now… *)
+      Doc.trailingComma;
       Doc.softLine;
-      Doc.text "/";
+      Doc.rparen;
     ])
     in
     if inline == false then Doc.group(tuple) else tuple
 
-  and printObjectField (field : Parsetree.object_field) =
+  and printObjectField (field : Parsetree.object_field) cmtTbl =
     match field with
     | Otag (labelLoc, attrs, typ) ->
-      Doc.concat [
-        Doc.text ("\"" ^ labelLoc.txt ^ "\"");
+      let lbl =
+        let doc = Doc.text ("\"" ^ labelLoc.txt ^ "\"") in
+        printComments doc cmtTbl labelLoc.loc
+      in
+      let doc = Doc.concat [
+        lbl;
         Doc.text ": ";
-        printTypExpr typ;
-      ]
+        printTypExpr typ cmtTbl;
+      ] in
+      let cmtLoc = {labelLoc.loc with loc_end = typ.ptyp_loc.loc_end} in
+      printComments doc cmtTbl cmtLoc
     | _ -> Doc.nil
 
   (* es6 arrow type arg
    * type t = (~foo: string, ~bar: float=?, unit) => unit
    * i.e. ~foo: string, ~bar: float *)
-  and printTypeParameter (attrs, lbl, typ)  =
+  and printTypeParameter (attrs, lbl, typ) cmtTbl =
     let (isUncurried, attrs) = ParsetreeViewer.processUncurriedAttribute attrs in
     let uncurried = if isUncurried then Doc.concat [Doc.dot; Doc.space] else Doc.nil in
     let attrs = match attrs with
@@ -9363,33 +11868,34 @@ module Printer = struct
     | Labelled _ -> Doc.nil
     | Optional lbl -> Doc.text "=?"
     in
-    Doc.group (
+    let doc = Doc.group (
       Doc.concat [
         uncurried;
         attrs;
         label;
-        printTypExpr typ;
+        printTypExpr typ cmtTbl;
         optionalIndicator;
       ]
-    )
+    ) in
+    printComments doc cmtTbl typ.ptyp_loc
 
-
-  (*
-   * {
-   *   pvb_pat: pattern;
-   *   pvb_expr: expression;
-   *   pvb_attributes: attributes;
-   *   pvb_loc: Location.t;
-   * }
-   *)
-  and printValueBinding ~recFlag i vb =
+  and printValueBinding ~recFlag vb cmtTbl i =
+    let (hasGenType, attrs) = ParsetreeViewer.splitGenTypeAttr vb.pvb_attributes in
+    let attrs = printAttributes ~loc:vb.pvb_pat.ppat_loc attrs in
     let isGhost = ParsetreeViewer.isGhostUnitBinding i vb in
 		let header = if isGhost then Doc.nil else
-			if i == 0 then Doc.concat [Doc.text "let "; recFlag]
-			else Doc.text "and "
+			if i == 0 then
+        Doc.concat [
+          if hasGenType then Doc.text "export " else Doc.text "let ";
+          recFlag
+      ] else
+        Doc.concat [
+          Doc.text "and ";
+          if hasGenType then Doc.text "export " else Doc.nil
+        ]
 		in
     let printedExpr =
-      let exprDoc = printExpression vb.pvb_expr in
+      let exprDoc = printExpressionWithComments vb.pvb_expr cmtTbl in
       let needsParens = match vb.pvb_expr.pexp_desc with
       | Pexp_constraint(
           {pexp_desc = Pexp_pack _},
@@ -9417,36 +11923,38 @@ module Printer = struct
           ParsetreeViewer.isArrayAccess e
         )
       in
-			Doc.concat [
-        printAttributes ~loc:vb.pvb_loc vb.pvb_attributes;
-				header;
-				printPattern vb.pvb_pat;
-				Doc.text " =";
-        if shouldIndent then
-          Doc.indent (
+      Doc.group (
+        Doc.concat [
+          attrs;
+          header;
+          printPattern vb.pvb_pat cmtTbl;
+          Doc.text " =";
+          if shouldIndent then
+            Doc.indent (
+              Doc.concat [
+                Doc.line;
+                printedExpr;
+              ]
+            )
+          else
             Doc.concat [
-              Doc.line;
+              Doc.space;
               printedExpr;
             ]
-          )
-        else
-          Doc.concat [
-            Doc.space;
-            printedExpr;
-          ]
-      ]
+        ]
+      )
 
-  and printPackageType ~printModuleKeywordAndParens (packageType: Parsetree.package_type) =
+  and printPackageType ~printModuleKeywordAndParens (packageType: Parsetree.package_type) cmtTbl =
     let doc = match packageType with
     | (longidentLoc, []) -> Doc.group(
         Doc.concat [
-          printLongident longidentLoc.txt;
+          printLongidentLocation longidentLoc cmtTbl;
         ]
       )
     | (longidentLoc, packageConstraints) -> Doc.group(
         Doc.concat [
-          printLongident longidentLoc.txt;
-          printPackageConstraints packageConstraints;
+          printLongidentLocation longidentLoc cmtTbl;
+          printPackageConstraints packageConstraints cmtTbl;
           Doc.softLine;
         ]
       )
@@ -9460,36 +11968,43 @@ module Printer = struct
     else
       doc
 
-
-
-
-  and printPackageConstraints packageConstraints  =
+  and printPackageConstraints packageConstraints cmtTbl  =
     Doc.concat [
       Doc.text " with";
       Doc.indent (
         Doc.concat [
           Doc.line;
           Doc.join ~sep:Doc.line (
-            List.mapi printPackageconstraint packageConstraints
+            List.mapi (fun i pc ->
+              let (longident, typexpr) = pc in
+              let cmtLoc = {longident.Asttypes.loc with
+                loc_end = typexpr.Parsetree.ptyp_loc.loc_end
+              } in
+              let doc = printPackageConstraint i cmtTbl pc in
+              printComments doc cmtTbl cmtLoc
+            ) packageConstraints
           )
         ]
       )
     ]
 
-  and printPackageconstraint i (longidentLoc, typ) =
+  and printPackageConstraint i cmtTbl (longidentLoc, typ) =
     let prefix = if i == 0 then Doc.text "type " else Doc.text "and type " in
     Doc.concat [
       prefix;
-      printLongident longidentLoc.Location.txt;
+      printLongidentLocation longidentLoc cmtTbl;
       Doc.text " = ";
-      printTypExpr typ
+      printTypExpr typ cmtTbl;
     ]
 
-  and printExtension (stringLoc, payload) =
-    let extName = Doc.text ("%" ^ stringLoc.Location.txt) in
+  and printExtensionWithComments (stringLoc, payload) cmtTbl =
+    let extName =
+      let doc = Doc.text ("%" ^ stringLoc.Location.txt) in
+      printComments doc cmtTbl stringLoc.Location.loc
+    in
     match payload with
-    | PStr [{pstr_desc = Pstr_eval (expr, attrs)}] ->
-      let exprDoc = printExpression expr in
+    | Parsetree.PStr [{pstr_desc = Pstr_eval (expr, attrs)}] ->
+      let exprDoc = printExpressionWithComments expr cmtTbl in
       let needsParens = match attrs with | [] -> false | _ -> true in
       Doc.group (
         Doc.concat [
@@ -9504,7 +12019,7 @@ module Printer = struct
       )
     | _ -> extName
 
-  and printPattern (p : Parsetree.pattern) =
+  and printPattern (p : Parsetree.pattern) cmtTbl =
     let patternWithoutAttributes = match p.ppat_desc with
     | Ppat_any -> Doc.text "_"
     | Ppat_var stringLoc -> Doc.text (stringLoc.txt)
@@ -9512,19 +12027,26 @@ module Printer = struct
     | Ppat_tuple patterns ->
       Doc.group(
         Doc.concat([
-          Doc.text "/";
+          Doc.lparen;
           Doc.indent (
             Doc.concat([
               Doc.softLine;
               Doc.join ~sep:(Doc.concat [Doc.text ","; Doc.line])
-                (List.map printPattern patterns)
+                (List.map (fun pat ->
+                  printPattern pat cmtTbl) patterns)
             ])
           );
-          (* Doc.ifBreaks (Doc.text ",") Doc.nil; *)
+          Doc.ifBreaks (Doc.text ",") Doc.nil;
           Doc.softLine;
-          Doc.text "/";
+          Doc.rparen
         ])
       )
+    | Ppat_array [] ->
+      Doc.concat [
+        Doc.lbracket;
+        printCommentsInside cmtTbl p.ppat_loc;
+        Doc.rbracket;
+      ]
     | Ppat_array patterns ->
       Doc.group(
         Doc.concat([
@@ -9533,7 +12055,8 @@ module Printer = struct
             Doc.concat([
               Doc.softLine;
               Doc.join ~sep:(Doc.concat [Doc.text ","; Doc.line])
-                (List.map printPattern patterns)
+                (List.map (fun pat ->
+                  printPattern pat cmtTbl) patterns)
             ])
           );
           Doc.ifBreaks (Doc.text ",") Doc.nil;
@@ -9542,9 +12065,13 @@ module Printer = struct
         ])
       )
     | Ppat_construct({txt = Longident.Lident "[]"}, _) ->
-        Doc.text "list()"
+      Doc.concat [
+        Doc.text "list[";
+        printCommentsInside cmtTbl p.ppat_loc;
+        Doc.rbracket;
+      ]
     | Ppat_construct({txt = Longident.Lident "::"}, _) ->
-      let (patterns, tail) = collectPatternsFromListConstruct [] p in
+      let (patterns, tail) = ParsetreeViewer.collectPatternsFromListConstruct [] p in
       let shouldHug = match (patterns, tail) with
       | ([pat],
         {ppat_desc = Ppat_construct({txt = Longident.Lident "[]"}, _)}) when ParsetreeViewer.isHuggablePattern pat -> true
@@ -9553,32 +12080,48 @@ module Printer = struct
       let children = Doc.concat([
         if shouldHug then Doc.nil else Doc.softLine;
         Doc.join ~sep:(Doc.concat [Doc.text ","; Doc.line])
-          (List.map printPattern patterns);
+          (List.map (fun pat ->
+            printPattern pat cmtTbl) patterns);
         begin match tail.Parsetree.ppat_desc with
         | Ppat_construct({txt = Longident.Lident "[]"}, _) -> Doc.nil
-        | _ -> Doc.concat([Doc.text ","; Doc.line; Doc.text "..."; printPattern tail])
+        | _ ->
+          let doc = Doc.concat [Doc.text "..."; printPattern tail cmtTbl] in
+          let tail = printComments doc cmtTbl tail.ppat_loc in
+          Doc.concat([Doc.text ","; Doc.line; tail])
         end;
       ]) in
       Doc.group(
         Doc.concat([
-          Doc.text "list(";
+          Doc.text "list[";
           if shouldHug then children else Doc.concat [
             Doc.indent children;
             Doc.ifBreaks (Doc.text ",") Doc.nil;
             Doc.softLine;
           ];
-          Doc.text ")";
+          Doc.rbracket;
         ])
       )
     | Ppat_construct(constrName, constructorArgs) ->
       let constrName = printLongident constrName.txt in
       begin match constructorArgs with
       | None -> constrName
+      | Some({ppat_desc = Ppat_tuple []; ppat_loc = loc}) ->
+        Doc.group (
+          Doc.concat([
+            constrName;
+            Doc.lparen;
+            Doc.softLine;
+            printCommentsInside cmtTbl loc;
+            Doc.rparen;
+          ])
+        )
       | Some(args) ->
         let args = match args.ppat_desc with
-        | Ppat_construct({txt = Longident.Lident "()"}, None) -> [Doc.nil]
-        | Ppat_tuple(patterns) -> List.map printPattern patterns
-        | _ -> [printPattern args]
+        | Ppat_construct({txt = Longident.Lident "()"}, None) ->
+            [Doc.nil]
+        | Ppat_tuple(patterns) ->
+          List.map (fun pat -> printPattern pat cmtTbl) patterns
+        | _ -> [printPattern args cmtTbl]
         in
         Doc.group(
           Doc.concat([
@@ -9605,7 +12148,7 @@ module Printer = struct
               Doc.concat [
                 Doc.softLine;
                 Doc.join ~sep:(Doc.concat [Doc.text ","; Doc.line])
-                  (List.map printPatternRecordRow rows);
+                  (List.map (fun row -> printPatternRecordRow row cmtTbl) rows);
                 begin match openFlag with
                 | Open -> Doc.concat [Doc.text ","; Doc.line; Doc.text "_"]
                 | Closed -> Doc.nil
@@ -9624,24 +12167,24 @@ module Printer = struct
         | _ -> false
         in
         let pat =
-          let p = printPattern p in
+          let p = printPattern p cmtTbl in
           if needsParens then
             Doc.concat [Doc.text "("; p; Doc.text ")"]
           else
             p
         in
         Doc.group (
-          Doc.concat [ Doc.text "exception"; Doc.line; pat ]
+          Doc.concat [Doc.text "exception"; Doc.line; pat]
         )
     | Ppat_or (p1, p2) ->
       let p1 =
-        let p = printPattern p1 in
+        let p = printPattern p1 cmtTbl in
         match p1.ppat_desc with
         | Ppat_or (_, _) -> Doc.concat [Doc.text "("; p; Doc.text ")"]
         | _ -> p
       in
       let p2 =
-        let p = printPattern p2 in
+        let p = printPattern p2 cmtTbl in
         match p2.ppat_desc with
         | Ppat_or (_, _) -> Doc.concat [Doc.text "("; p; Doc.text ")"]
         | _ -> p
@@ -9650,14 +12193,14 @@ module Printer = struct
         Doc.concat([p1; Doc.line; Doc.text "| "; p2])
       )
     | Ppat_extension ext ->
-      printExtension ext
+      printExtensionWithComments ext cmtTbl
     | Ppat_lazy p ->
       let needsParens = match p.ppat_desc with
       | Ppat_or (_, _) | Ppat_alias (_, _) -> true
       | _ -> false
       in
       let pat =
-        let p = printPattern p in
+        let p = printPattern p cmtTbl in
         if needsParens then
           Doc.concat [Doc.text "("; p; Doc.text ")"]
         else
@@ -9670,7 +12213,7 @@ module Printer = struct
       | _ -> false
       in
       let renderedPattern =
-        let p = printPattern p in
+        let p = printPattern p cmtTbl in
         if needsParens then
           Doc.concat [Doc.text "("; p; Doc.text ")"]
         else
@@ -9679,37 +12222,41 @@ module Printer = struct
       Doc.concat([
         renderedPattern;
         Doc.text " as ";
-        Doc.text aliasLoc.txt
+        printStringLoc aliasLoc cmtTbl;
       ])
 
      (* Note: module(P : S) is represented as *)
      (* Ppat_constraint(Ppat_unpack, Ptyp_package) *)
-    | Ppat_constraint ({ppat_desc = Ppat_unpack stringLoc}, {ptyp_desc = Ptyp_package packageType}) ->
+    | Ppat_constraint ({ppat_desc = Ppat_unpack stringLoc}, {ptyp_desc = Ptyp_package packageType; ptyp_loc}) ->
         Doc.concat [
           Doc.text "module(";
-          Doc.text stringLoc.txt;
+          printComments (Doc.text stringLoc.txt) cmtTbl stringLoc.loc;
           Doc.text ": ";
-          printPackageType ~printModuleKeywordAndParens:false packageType;
+          printComments
+            (printPackageType ~printModuleKeywordAndParens:false packageType cmtTbl)
+            cmtTbl
+            ptyp_loc;
           Doc.rparen;
         ]
     | Ppat_constraint (pattern, typ) ->
       Doc.concat [
-        printPattern pattern;
+        printPattern pattern cmtTbl;
         Doc.text ": ";
-        printTypExpr typ;
+        printTypExpr typ cmtTbl;
       ]
 
      (* Note: module(P : S) is represented as *)
      (* Ppat_constraint(Ppat_unpack, Ptyp_package) *)
     | Ppat_unpack stringLoc ->
-        Doc.concat [
-          Doc.text "module(";
-          Doc.text stringLoc.txt;
-          Doc.rparen;
-        ]
-    | _ -> failwith "unsupported pattern"
+      Doc.concat [
+        Doc.text "module(";
+        printComments (Doc.text stringLoc.txt) cmtTbl stringLoc.loc;
+        Doc.rparen;
+      ]
+    | Ppat_open _ | Ppat_interval (_, _) | Ppat_variant (_, _)| Ppat_type _->
+      Doc.nil
     in
-    begin match p.ppat_attributes with
+    let doc = begin match p.ppat_attributes with
     | [] -> patternWithoutAttributes
     | attrs ->
       Doc.group (
@@ -9719,34 +12266,50 @@ module Printer = struct
         ]
       )
     end
+    in
+    printComments doc cmtTbl p.ppat_loc
 
-  and printPatternRecordRow row =
+  and printPatternRecordRow row cmtTbl =
     match row with
     (* punned {x}*)
-    | ({Location.txt=Longident.Lident ident},
+    | ({Location.txt=Longident.Lident ident} as longident,
        {Parsetree.ppat_desc=Ppat_var {txt;_}}) when ident = txt ->
-        Doc.text ident
+        printLongidentLocation longident cmtTbl
     | (longident, pattern) ->
-        Doc.group (
-          Doc.concat([
-            printLongident longident.txt;
-            Doc.text ": ";
-            Doc.indent(
-              Doc.concat [
-                Doc.softLine;
-                printPattern pattern;
-              ]
-            )
-          ])
-        )
+      let locForComments = {
+        longident.loc with
+        loc_end = pattern.Parsetree.ppat_loc.loc_end
+      } in
+      let doc = Doc.group (
+        Doc.concat([
+          printLongidentLocation longident cmtTbl;
+          Doc.text ": ";
+          Doc.indent(
+            Doc.concat [
+              Doc.softLine;
+              printPattern pattern cmtTbl;
+            ]
+          )
+        ])
+      ) in
+      printComments doc cmtTbl locForComments
 
-  and printExpression (e : Parsetree.expression) =
+  and printExpressionWithComments expr cmtTbl =
+    let doc = printExpression expr cmtTbl in
+    printComments doc cmtTbl expr.Parsetree.pexp_loc
+
+  and printExpression (e : Parsetree.expression) cmtTbl =
     let printedExpression = match e.pexp_desc with
     | Parsetree.Pexp_constant c -> printConstant c
     | Pexp_construct _ when ParsetreeViewer.hasJsxAttribute e.pexp_attributes ->
-      printJsxFragment e
+      printJsxFragment e cmtTbl
     | Pexp_construct ({txt = Longident.Lident "()"}, _) -> Doc.text "()"
-    | Pexp_construct ({txt = Longident.Lident "[]"}, _) -> Doc.text "list()"
+    | Pexp_construct ({txt = Longident.Lident "[]"}, _) ->
+      Doc.concat [
+        Doc.text "list[";
+        printCommentsInside cmtTbl e.pexp_loc;
+        Doc.rbracket;
+      ]
     | Pexp_construct ({txt = Longident.Lident "::"}, _) ->
       let (expressions, spread) = ParsetreeViewer.collectListExpressions e in
       let spreadDoc = match spread with
@@ -9754,28 +12317,30 @@ module Printer = struct
           Doc.text ",";
           Doc.line;
           Doc.dotdotdot;
-          printExpression expr
+          printExpressionWithComments expr cmtTbl
         ]
       | None -> Doc.nil
       in
       Doc.group(
         Doc.concat([
-          Doc.text "list(";
+          Doc.text "list[";
           Doc.indent (
             Doc.concat([
               Doc.softLine;
               Doc.join ~sep:(Doc.concat [Doc.text ","; Doc.line])
-                (List.map printExpression expressions);
+                (List.map
+                  (fun expr -> printExpressionWithComments expr cmtTbl)
+                  expressions);
               spreadDoc;
             ])
           );
           Doc.trailingComma;
           Doc.softLine;
-          Doc.rparen;
+          Doc.rbracket;
         ])
       )
     | Pexp_construct (longidentLoc, args) ->
-      let constr = printLongident longidentLoc.txt in
+      let constr = printLongidentLocation longidentLoc cmtTbl in
       let args = match args with
       | None -> Doc.nil
       | Some({pexp_desc = Pexp_construct ({txt = Longident.Lident "()"}, _)}) ->
@@ -9787,7 +12352,9 @@ module Printer = struct
             Doc.concat [
               Doc.softLine;
               Doc.join ~sep:(Doc.concat [Doc.comma; Doc.line]) (
-                List.map printExpression args
+                List.map
+                  (fun expr -> printExpressionWithComments expr cmtTbl)
+                  args
               )
             ]
           );
@@ -9796,7 +12363,7 @@ module Printer = struct
           Doc.rparen;
         ]
       | Some(arg) ->
-        let argDoc = printExpression arg in
+        let argDoc = printExpressionWithComments arg cmtTbl in
         let shouldHug = ParsetreeViewer.isHuggableExpression arg in
         Doc.concat [
           Doc.lparen;
@@ -9815,25 +12382,30 @@ module Printer = struct
         ]
       in
       Doc.group(Doc.concat [constr; args])
-    | Pexp_ident(longidentLoc) ->
-      printLongident longidentLoc.txt
+    | Pexp_ident(longident) ->
+      printLongidentLocation longident cmtTbl
     | Pexp_tuple exprs ->
       Doc.group(
         Doc.concat([
-          Doc.text "/";
+          Doc.lparen;
           Doc.indent (
             Doc.concat([
               Doc.softLine;
               Doc.join ~sep:(Doc.concat [Doc.text ","; Doc.line])
-                (List.map printExpression exprs)
+                (List.map (fun expr -> printExpressionWithComments expr cmtTbl) exprs)
             ])
           );
           Doc.ifBreaks (Doc.text ",") Doc.nil;
           Doc.softLine;
-          Doc.text "/";
+          Doc.rparen;
         ])
       )
-    | Pexp_array [] -> Doc.text "[]"
+    | Pexp_array [] ->
+      Doc.concat [
+        Doc.lbracket;
+        printCommentsInside cmtTbl e.pexp_loc;
+        Doc.rbracket;
+      ]
     | Pexp_array exprs ->
       Doc.group(
         Doc.concat([
@@ -9842,7 +12414,7 @@ module Printer = struct
             Doc.concat([
               Doc.softLine;
               Doc.join ~sep:(Doc.concat [Doc.text ","; Doc.line])
-                (List.map printExpression exprs)
+                (List.map (fun expr -> printExpressionWithComments expr cmtTbl) exprs)
             ])
           );
           Doc.trailingComma;
@@ -9855,7 +12427,7 @@ module Printer = struct
       | None -> Doc.nil
       | Some expr -> Doc.concat [
           Doc.dotdotdot;
-          printExpression expr;
+          printExpression expr cmtTbl;
           Doc.comma;
           Doc.line;
         ]
@@ -9877,7 +12449,7 @@ module Printer = struct
               Doc.softLine;
               spread;
               Doc.join ~sep:(Doc.concat [Doc.text ","; Doc.line])
-                (List.map printRecordRow rows)
+                (List.map (fun row -> printRecordRow row cmtTbl) rows)
             ]
           );
           Doc.trailingComma;
@@ -9910,7 +12482,7 @@ module Printer = struct
               Doc.concat [
                 Doc.softLine;
                 Doc.join ~sep:(Doc.concat [Doc.text ","; Doc.line])
-                  (List.map printBsObjectRow rows)
+                  (List.map (fun row -> printBsObjectRow row cmtTbl) rows)
               ]
             );
             Doc.trailingComma;
@@ -9919,54 +12491,59 @@ module Printer = struct
           ])
         )
       | extension ->
-        printExtension extension
+        printExtensionWithComments extension cmtTbl
       end
     | Pexp_apply _ ->
       if ParsetreeViewer.isUnaryExpression e then
-        printUnaryExpression e
+        printUnaryExpression e cmtTbl
       else if ParsetreeViewer.isBinaryExpression e then
-        printBinaryExpression e
+        printBinaryExpression e cmtTbl
       else
-        printPexpApply e
+        printPexpApply e cmtTbl
     | Pexp_unreachable -> Doc.dot
     | Pexp_field (expr, longidentLoc) ->
       let lhs =
-        let doc = printExpression expr in
+        let doc = printExpressionWithComments expr cmtTbl in
         if Parens.fieldExpr expr then addParens doc else doc
       in
       Doc.concat [
         lhs;
         Doc.dot;
-        printLongident longidentLoc.txt;
+        printLongidentLocation longidentLoc cmtTbl;
       ]
     | Pexp_setfield (expr1, longidentLoc, expr2) ->
-      printSetFieldExpr e.pexp_attributes expr1 longidentLoc expr2
+      printSetFieldExpr e.pexp_attributes expr1 longidentLoc expr2 e.pexp_loc cmtTbl
     | Pexp_ifthenelse (ifExpr, thenExpr, elseExpr) ->
       if ParsetreeViewer.isTernaryExpr e then
         let (parts, alternate) = ParsetreeViewer.collectTernaryParts e in
         let ternaryDoc = match parts with
         | (condition1, consequent1)::rest ->
           Doc.group (Doc.concat [
-            printTernaryOperand condition1;
+            printTernaryOperand condition1 cmtTbl;
             Doc.indent (
               Doc.concat [
                 Doc.line;
-                Doc.indent (Doc.concat [Doc.text "? "; printTernaryOperand consequent1]);
+                Doc.indent (
+                  Doc.concat [
+                    Doc.text "? ";
+                    printTernaryOperand consequent1 cmtTbl
+                  ]
+                );
                 Doc.concat (
                   List.map (fun (condition, consequent) ->
                     Doc.concat [
                       Doc.line;
                       Doc.text ": ";
-                      printTernaryOperand condition;
+                      printTernaryOperand condition cmtTbl;
                       Doc.line;
                       Doc.text "? ";
-                      printTernaryOperand consequent;
+                      printTernaryOperand consequent cmtTbl;
                     ]
                   ) rest
                 );
                 Doc.line;
                 Doc.text ": ";
-                Doc.indent (printTernaryOperand alternate);
+                Doc.indent (printTernaryOperand alternate cmtTbl);
               ]
             )
           ])
@@ -9983,14 +12560,20 @@ module Printer = struct
       let ifDocs = Doc.join ~sep:Doc.space (
         List.mapi (fun i (ifExpr, thenExpr) ->
           let ifTxt = if i > 0 then Doc.text "else if " else  Doc.text "if " in
-          let condition = printExpression ifExpr in
+          let condition =
+            if ParsetreeViewer.isBlockExpr ifExpr then
+              printExpressionBlock ~braces:true ifExpr cmtTbl
+            else
+              let doc = printExpressionWithComments ifExpr cmtTbl in
+              Doc.group (
+                Doc.ifBreaks (addParens doc) doc
+              )
+          in
           Doc.concat [
             ifTxt;
-            Doc.group (
-              Doc.ifBreaks (addParens condition) condition;
-            );
+            condition;
             Doc.space;
-            printExpressionBlock ~braces:true thenExpr;
+            printExpressionBlock ~braces:true thenExpr cmtTbl;
           ]
         ) ifs
       ) in
@@ -9998,7 +12581,7 @@ module Printer = struct
       | None -> Doc.nil
       | Some expr -> Doc.concat [
           Doc.text " else ";
-          printExpressionBlock ~braces:true expr;
+          printExpressionBlock ~braces:true expr cmtTbl;
         ]
       in
       Doc.concat [
@@ -10007,33 +12590,36 @@ module Printer = struct
         elseDoc;
       ]
     | Pexp_while (expr1, expr2) ->
-      let condition = printExpression expr1 in
+      let condition = printExpressionWithComments expr1 cmtTbl in
       Doc.breakableGroup ~forceBreak:true (
         Doc.concat [
           Doc.text "while ";
-          Doc.group (
-            Doc.ifBreaks (addParens condition) condition
-          );
+          if ParsetreeViewer.isBlockExpr expr1 then
+            condition
+          else
+            Doc.group (
+              Doc.ifBreaks (addParens condition) condition
+            );
           Doc.space;
-          printExpressionBlock ~braces:true expr2;
+          printExpressionBlock ~braces:true expr2 cmtTbl;
         ]
       )
     | Pexp_for (pattern, fromExpr, toExpr, directionFlag, body) ->
       Doc.breakableGroup ~forceBreak:true (
         Doc.concat [
           Doc.text "for ";
-          printPattern pattern;
+          printPattern pattern cmtTbl;
           Doc.text " in ";
-          printExpression fromExpr;
+          printExpressionWithComments fromExpr cmtTbl;
           printDirectionFlag directionFlag;
-          printExpression toExpr;
+          printExpressionWithComments toExpr cmtTbl;
           Doc.space;
-          printExpressionBlock ~braces:true body;
+          printExpressionBlock ~braces:true body cmtTbl;
         ]
       )
     | Pexp_constraint(
         {pexp_desc = Pexp_pack modExpr},
-        {ptyp_desc = Ptyp_package packageType}
+        {ptyp_desc = Ptyp_package packageType; ptyp_loc}
       ) ->
       Doc.group (
         Doc.concat [
@@ -10041,9 +12627,12 @@ module Printer = struct
           Doc.indent (
             Doc.concat [
               Doc.softLine;
-              printModExpr modExpr;
+              printModExpr modExpr cmtTbl;
               Doc.text ": ";
-              printPackageType ~printModuleKeywordAndParens:false packageType;
+              printComments
+                (printPackageType ~printModuleKeywordAndParens:false packageType cmtTbl)
+                cmtTbl
+                ptyp_loc
             ]
           );
           Doc.softLine;
@@ -10053,18 +12642,17 @@ module Printer = struct
 
     | Pexp_constraint (expr, typ) ->
       Doc.concat [
-        printExpression expr;
+        printExpressionWithComments expr cmtTbl;
         Doc.text ": ";
-        printTypExpr typ;
+        printTypExpr typ cmtTbl;
       ]
     | Pexp_letmodule ({txt = modName}, modExpr, expr) ->
-      printExpressionBlock ~braces:true e
-
+      printExpressionBlock ~braces:true e cmtTbl
     | Pexp_letexception (extensionConstructor, expr) ->
-      printExpressionBlock ~braces:true e
+      printExpressionBlock ~braces:true e cmtTbl
     | Pexp_assert expr ->
       let rhs =
-        let doc = printExpression expr in
+        let doc = printExpressionWithComments expr cmtTbl in
         if Parens.lazyOrAssertExprRhs expr then addParens doc else doc
       in
       Doc.concat [
@@ -10073,31 +12661,33 @@ module Printer = struct
       ]
     | Pexp_lazy expr ->
       let rhs =
-        let doc = printExpression expr in
+        let doc = printExpressionWithComments expr cmtTbl in
         if Parens.lazyOrAssertExprRhs expr then addParens doc else doc
       in
-      Doc.concat [
-        Doc.text "lazy ";
-        rhs;
-      ]
+      Doc.group (
+        Doc.concat [
+          Doc.text "lazy ";
+          rhs;
+        ]
+      )
     | Pexp_open (overrideFlag, longidentLoc, expr) ->
-      printExpressionBlock ~braces:true e
+      printExpressionBlock ~braces:true e cmtTbl
     | Pexp_pack (modExpr) ->
       Doc.group (Doc.concat [
         Doc.text "module(";
         Doc.indent (
           Doc.concat [
             Doc.softLine;
-            printModExpr modExpr;
+            printModExpr modExpr cmtTbl;
           ]
         );
         Doc.softLine;
         Doc.rparen;
       ])
     | Pexp_sequence _ ->
-      printExpressionBlock ~braces:true e
+      printExpressionBlock ~braces:true e cmtTbl
     | Pexp_let _ ->
-      printExpressionBlock ~braces:true e
+      printExpressionBlock ~braces:true e cmtTbl
     | Pexp_fun _ | Pexp_newtype _ ->
       let (attrsOnArrow, parameters, returnExpr) = ParsetreeViewer.funExpr e in
       let (uncurried, attrs) =
@@ -10113,6 +12703,7 @@ module Printer = struct
         ~uncurried
         ~hasConstraint
         parameters
+        cmtTbl
       in
       let returnExprDoc =
         let shouldInline = match returnExpr.pexp_desc with
@@ -10123,10 +12714,10 @@ module Printer = struct
         | _ -> false
         in
         let shouldIndent = match returnExpr.pexp_desc with
-        | Pexp_sequence _ | Pexp_let _ | Pexp_letmodule _ | Pexp_letexception _ -> false
+        | Pexp_sequence _ | Pexp_let _ | Pexp_letmodule _ | Pexp_letexception _ | Pexp_open _ -> false
         | _ -> true
         in
-        let returnDoc = printExpression returnExpr in
+        let returnDoc = printExpressionWithComments returnExpr cmtTbl in
         if shouldInline then Doc.concat [
           Doc.space;
           returnDoc;
@@ -10147,7 +12738,7 @@ module Printer = struct
           )
       in
       let typConstraintDoc = match typConstraint with
-      | Some(typ) -> Doc.concat [Doc.text ": "; printTypExpr typ]
+      | Some(typ) -> Doc.concat [Doc.text ": "; printTypExpr typ cmtTbl]
       | _ -> Doc.nil
       in
       let attrs = match attrs with
@@ -10169,21 +12760,21 @@ module Printer = struct
     | Pexp_try (expr, cases) ->
       Doc.concat [
         Doc.text "try ";
-        printExpression expr;
+        printExpressionWithComments expr cmtTbl;
         Doc.text " catch ";
-        printCases cases;
+        printCases cases cmtTbl;
       ]
     | Pexp_match (expr, cases) ->
       Doc.concat [
         Doc.text "switch ";
-        printExpression expr;
+        printExpressionWithComments expr cmtTbl;
         Doc.space;
-        printCases cases;
+        printCases cases cmtTbl;
       ]
     | Pexp_function cases ->
       Doc.concat [
         Doc.text "x => switch x ";
-        printCases cases;
+        printCases cases cmtTbl;
       ]
     | _ -> failwith "expression not yet implemented in printer"
     in
@@ -10208,7 +12799,7 @@ module Printer = struct
     | _ -> printedExpression
     end
 
-  and printPexpFun ~inCallback e =
+  and printPexpFun ~inCallback e cmtTbl =
       let (attrsOnArrow, parameters, returnExpr) = ParsetreeViewer.funExpr e in
       let (uncurried, attrs) =
         ParsetreeViewer.processUncurriedAttribute attrsOnArrow
@@ -10221,9 +12812,9 @@ module Printer = struct
         ~inCallback
         ~uncurried
         ~hasConstraint:(match typConstraint with | Some _ -> true | None -> false)
-        parameters in
+        parameters cmtTbl in
       let returnShouldIndent = match returnExpr.pexp_desc with
-      | Pexp_sequence _ | Pexp_let _ | Pexp_letmodule _ | Pexp_letexception _ -> false
+      | Pexp_sequence _ | Pexp_let _ | Pexp_letmodule _ | Pexp_letexception _ | Pexp_open _ -> false
       | _ -> true
       in
       let returnExprDoc =
@@ -10234,7 +12825,7 @@ module Printer = struct
         | Pexp_record _ -> true
         | _ -> false
         in
-        let returnDoc = printExpression returnExpr in
+        let returnDoc = printExpressionWithComments returnExpr cmtTbl in
         if shouldInline then Doc.concat [
           Doc.space;
           returnDoc;
@@ -10258,7 +12849,10 @@ module Printer = struct
           )
       in
       let typConstraintDoc = match typConstraint with
-      | Some(typ) -> Doc.concat [Doc.text ": "; printTypExpr typ]
+      | Some(typ) -> Doc.concat [
+          Doc.text ": ";
+          printTypExpr typ cmtTbl
+        ]
       | _ -> Doc.nil
       in
       let attrs = match attrs with
@@ -10278,24 +12872,24 @@ module Printer = struct
         ]
       )
 
-  and printTernaryOperand expr =
-    let doc = printExpression expr in
+  and printTernaryOperand expr cmtTbl =
+    let doc = printExpressionWithComments expr cmtTbl in
     if Parens.ternaryOperand expr then addParens doc else doc
 
-  and printSetFieldExpr attrs lhs longidentLoc rhs =
+  and printSetFieldExpr attrs lhs longidentLoc rhs loc cmtTbl =
     let rhsDoc =
-      let doc = printExpression rhs in
+      let doc = printExpressionWithComments rhs cmtTbl in
       if Parens.setFieldExprRhs rhs then addParens doc else doc
     in
     let lhsDoc =
-      let doc = printExpression lhs in
+      let doc = printExpressionWithComments lhs cmtTbl in
       if Parens.fieldExpr lhs then addParens doc else doc
     in
     let shouldIndent = ParsetreeViewer.isBinaryExpression rhs in
     let doc = Doc.concat [
       lhsDoc;
       Doc.dot;
-      printLongident longidentLoc.txt;
+      printLongidentLocation longidentLoc cmtTbl;
       Doc.text " =";
       if shouldIndent then Doc.group (
         Doc.indent (
@@ -10304,7 +12898,7 @@ module Printer = struct
       ) else
         Doc.concat [Doc.space; rhsDoc]
     ] in
-    match attrs with
+    let doc = match attrs with
     | [] -> doc
     | attrs ->
       Doc.group (
@@ -10313,8 +12907,10 @@ module Printer = struct
           doc
         ]
       )
+    in
+    printComments doc cmtTbl loc
 
-  and printUnaryExpression expr =
+  and printUnaryExpression expr cmtTbl =
     let printUnaryOperator op = Doc.text (
       match op with
       | "~+" -> "+"
@@ -10331,16 +12927,17 @@ module Printer = struct
         [Nolabel, operand]
       ) ->
       let printedOperand =
-        let doc = printExpression operand in
+        let doc = printExpressionWithComments operand cmtTbl in
         if Parens.unaryExprOperand operand then addParens doc else doc
       in
-      Doc.concat [
+      let doc = Doc.concat [
         printUnaryOperator operator;
         printedOperand;
-      ]
+      ] in
+      printComments doc cmtTbl expr.pexp_loc
     | _ -> assert false
 
-  and printBinaryExpression (expr : Parsetree.expression) =
+  and printBinaryExpression (expr : Parsetree.expression) cmtTbl =
     let printBinaryOperator ~inlineRhs operator =
       let operatorTxt = match operator with
       | "|." -> "->"
@@ -10376,14 +12973,18 @@ module Printer = struct
               [_, left; _, right]
             )} ->
             if ParsetreeViewer.flattenableOperators parentOperator operator &&
-                not (ParsetreeViewer.hasAttributes expr.pexp_attributes) then
+               not (ParsetreeViewer.hasAttributes expr.pexp_attributes)
+            then
               let leftPrinted = flatten ~isLhs:true left operator in
               let rightPrinted =
                 let (_, rightAttrs) =
                   ParsetreeViewer.partitionPrinteableAttributes right.pexp_attributes
                 in
                 let doc =
-                  printExpression {right with pexp_attributes = rightAttrs } in
+                  printExpressionWithComments
+                    {right with pexp_attributes = rightAttrs}
+                    cmtTbl
+                in
                 let doc = if Parens.flattenOperandRhs parentOperator right then
                   Doc.concat [Doc.lparen; doc; Doc.rparen]
                 else
@@ -10394,13 +12995,14 @@ module Printer = struct
                 in
                 Doc.concat [printAttributes printeableAttrs; doc]
               in
-              Doc.concat [
+              let doc = Doc.concat [
                 leftPrinted;
                 printBinaryOperator ~inlineRhs:false operator;
                 rightPrinted;
-              ]
-            else
-              let doc = printExpression {expr with pexp_attributes = []} in
+              ] in
+              printComments doc cmtTbl expr.pexp_loc
+            else (
+              let doc = printExpressionWithComments {expr with pexp_attributes = []} cmtTbl in
               let doc = if Parens.subBinaryExprOperand parentOperator operator ||
                 (expr.pexp_attributes <> [] &&
                   (ParsetreeViewer.isBinaryExpression expr ||
@@ -10411,22 +13013,23 @@ module Printer = struct
                 printAttributes expr.pexp_attributes;
                 doc
               ]
+            )
           | _ -> assert false
           end
         else
           begin match expr.pexp_desc with
           | Pexp_setfield (lhs, field, rhs) ->
-            let doc = printSetFieldExpr expr.pexp_attributes lhs field rhs in
+            let doc = printSetFieldExpr expr.pexp_attributes lhs field rhs expr.pexp_loc cmtTbl  in
             if isLhs then addParens doc else doc
           | Pexp_apply(
               {pexp_desc = Pexp_ident {txt = Longident.Lident "#="}},
               [(Nolabel, lhs); (Nolabel, rhs)]
             ) ->
-            let rhsDoc = printExpression rhs in
-            let lhsDoc = printExpression lhs in
+            let rhsDoc = printExpressionWithComments rhs cmtTbl in
+            let lhsDoc = printExpressionWithComments lhs cmtTbl in
             (* TODO: unify indentation of "=" *)
             let shouldIndent = ParsetreeViewer.isBinaryExpression rhs in
-            let doc = Doc.group(
+            let doc = Doc.group (
               Doc.concat [
                 lhsDoc;
                 Doc.text " =";
@@ -10448,7 +13051,15 @@ module Printer = struct
             in
             if isLhs then addParens doc else doc
           | _ ->
-            let doc = printExpression expr in
+            let doc =
+              (* let needsNewline = match getFirstLeadingComment cmtTbl expr.pexp_loc with *)
+              (* | Some cmt  *)
+              let doc = printExpressionWithComments expr cmtTbl in
+              doc
+              (* if isLhs then *)
+               (* Doc.concat [doc; Doc.hardLine] *)
+              (* else doc *)
+            in
             if Parens.binaryExprOperand ~isLhs expr parentOperator then
               addParens doc
             else doc
@@ -10501,19 +13112,19 @@ module Printer = struct
     | _ -> Doc.nil
 
   (* callExpr(arg1, arg2)*)
-  and printPexpApply expr =
+  and printPexpApply expr cmtTbl =
     match expr.pexp_desc with
     | Pexp_apply (
         {pexp_desc = Pexp_ident {txt = Longident.Lident "##"}},
         [Nolabel, parentExpr; Nolabel, memberExpr]
       ) ->
         let member =
-          let memberDoc = printExpression memberExpr in
+          let memberDoc = printExpressionWithComments memberExpr cmtTbl in
           Doc.concat [Doc.text "\""; memberDoc; Doc.text "\""]
         in
         Doc.group (Doc.concat [
           printAttributes expr.pexp_attributes;
-          printExpression parentExpr;
+          printExpressionWithComments parentExpr cmtTbl;
           Doc.lbracket;
           member;
           Doc.rbracket;
@@ -10522,12 +13133,12 @@ module Printer = struct
         {pexp_desc = Pexp_ident {txt = Longident.Lident "#="}},
         [Nolabel, lhs; Nolabel, rhs]
       ) ->
-        let rhsDoc = printExpression rhs in
+        let rhsDoc = printExpressionWithComments rhs cmtTbl in
         (* TODO: unify indentation of "=" *)
         let shouldIndent = ParsetreeViewer.isBinaryExpression rhs in
         let doc = Doc.group(
           Doc.concat [
-            printExpression lhs;
+            printExpressionWithComments lhs cmtTbl;
             Doc.text " =";
             if shouldIndent then Doc.group (
               Doc.indent (
@@ -10552,7 +13163,7 @@ module Printer = struct
         [Nolabel, parentExpr; Nolabel, memberExpr]
       ) ->
         let member =
-          let memberDoc = printExpression memberExpr in
+          let memberDoc = printExpressionWithComments memberExpr cmtTbl in
           let shouldInline = match memberExpr.pexp_desc with
           | Pexp_constant _ | Pexp_ident _ -> true
           | _ -> false
@@ -10571,31 +13182,31 @@ module Printer = struct
         in
         Doc.group (Doc.concat [
           printAttributes expr.pexp_attributes;
-          printExpression parentExpr;
+          printExpressionWithComments parentExpr cmtTbl;
           Doc.lbracket;
           member;
           Doc.rbracket;
         ])
     (* TODO: cleanup, are those branches even remotely performant? *)
     | Pexp_apply (
-        {pexp_desc = Pexp_ident {txt = lident}},
+        {pexp_desc = Pexp_ident lident},
         args
       ) when ParsetreeViewer.isJsxExpression expr ->
-      printJsxExpression lident args
+      printJsxExpression lident args cmtTbl
     | Pexp_apply (callExpr, args) ->
       let (uncurried, attrs) =
         ParsetreeViewer.processUncurriedAttribute expr.pexp_attributes
       in
-      let callExprDoc = printExpression callExpr in
+      let callExprDoc = printExpressionWithComments callExpr cmtTbl in
       if ParsetreeViewer.requiresSpecialCallbackPrinting args then
-        let argsDoc = printArgumentsWithCallback ~uncurried args in
+        let argsDoc = printArgumentsWithCallback ~uncurried args cmtTbl in
         Doc.concat [
           printAttributes attrs;
           callExprDoc;
           argsDoc;
         ]
       else
-        let argsDoc = printArguments ~uncurried args in
+        let argsDoc = printArguments ~uncurried args cmtTbl in
         Doc.concat [
           printAttributes attrs;
           callExprDoc;
@@ -10603,9 +13214,9 @@ module Printer = struct
         ]
     | _ -> assert false
 
-  and printJsxExpression lident args =
-    let name = printJsxName lident in
-    let (formattedProps, children) = formatJsxProps args in
+  and printJsxExpression lident args cmtTbl =
+    let name = printJsxName lident cmtTbl in
+    let (formattedProps, children) = formatJsxProps args cmtTbl in
     (* <div className="test" /> *)
     let isSelfClosing = match children with | [] -> true | _ -> false in
     Doc.group (
@@ -10625,7 +13236,7 @@ module Printer = struct
             Doc.indent (
               Doc.concat [
                 Doc.line;
-                printJsxChildren children;
+                printJsxChildren children cmtTbl;
               ]
             );
             Doc.line;
@@ -10636,7 +13247,7 @@ module Printer = struct
       ]
     )
 
-  and printJsxFragment expr =
+  and printJsxFragment expr cmtTbl =
     let opening = Doc.text "<>" in
     let closing = Doc.text "</>" in
     let (children, _) = ParsetreeViewer.collectListExpressions expr in
@@ -10649,7 +13260,7 @@ module Printer = struct
           Doc.indent (
             Doc.concat [
               Doc.line;
-              printJsxChildren children;
+              printJsxChildren children cmtTbl;
             ]
           )
         end;
@@ -10658,17 +13269,17 @@ module Printer = struct
       ]
     )
 
-  and printJsxChildren (children: Parsetree.expression list) =
+  and printJsxChildren (children: Parsetree.expression list) cmtTbl =
     Doc.group (
       Doc.join ~sep:Doc.line (
         List.map (fun expr ->
-          let exprDoc = printExpression expr in
+          let exprDoc = printExpressionWithComments expr cmtTbl in
           if Parens.jsxChildExpr expr then addBraces exprDoc else exprDoc
         ) children
       )
     )
 
-  and formatJsxProps args =
+  and formatJsxProps args cmtTbl =
     let rec loop props args =
       match args with
       | [] -> (Doc.nil, [])
@@ -10693,42 +13304,57 @@ module Printer = struct
         let (children, _) = ParsetreeViewer.collectListExpressions children in
         (formattedProps, children)
       | arg::args ->
-        let propDoc = formatJsxProp arg in
+        let propDoc = formatJsxProp arg cmtTbl in
         loop (propDoc::props) args
     in
     loop [] args
 
-  and formatJsxProp arg =
+  and formatJsxProp arg cmtTbl =
     match arg with
     | (
         (Asttypes.Labelled lblTxt | Optional lblTxt) as lbl,
         {
-          Parsetree.pexp_attributes = [];
+          Parsetree.pexp_attributes = [({Location.txt = "ns.jsxPropLoc"; loc = argLoc}, _)];
           pexp_desc = Pexp_ident {txt = Longident.Lident ident}
         }
       ) when lblTxt = ident (* jsx punning *) ->
-
       begin match lbl with
       | Nolabel -> Doc.nil
-      | Labelled lbl -> Doc.text lbl
-      | Optional lbl -> Doc.text ("?" ^ lbl)
+      | Labelled lbl ->
+        printComments (Doc.text ident) cmtTbl argLoc
+      | Optional lbl ->
+        printComments (Doc.text ("?" ^ ident)) cmtTbl argLoc
       end
     | (lbl, expr) ->
+      let (argLoc, expr) = match expr.pexp_attributes with
+      | ({Location.txt = "ns.jsxPropLoc"; loc}, _)::attrs ->
+          (loc, {expr with pexp_attributes = attrs})
+      | _ ->
+        Location.none, expr
+      in
       let lblDoc = match lbl with
-      | Asttypes.Labelled lbl -> Doc.text (lbl ^ "=")
-      | Asttypes.Optional lbl -> Doc.text (lbl ^ "=?")
+      | Asttypes.Labelled lbl ->
+        let lbl = printComments (Doc.text lbl) cmtTbl argLoc in
+        Doc.concat [lbl; Doc.text "="]
+      | Asttypes.Optional lbl ->
+        let lbl = printComments (Doc.text lbl) cmtTbl argLoc in
+        Doc.concat [lbl; Doc.text "=?"]
       | Nolabel -> Doc.nil
       in
-      let exprDoc = printExpression expr in
-      Doc.concat [
-        lblDoc;
-        if Parens.jsxPropExpr expr then addBraces exprDoc else exprDoc;
-      ]
+      let exprDoc = printExpression expr cmtTbl in
+      let fullLoc = {argLoc with loc_end = expr.pexp_loc.loc_end} in
+      printComments
+        (Doc.concat [
+          lblDoc;
+          if Parens.jsxPropExpr expr then addBraces exprDoc else exprDoc;
+        ])
+        cmtTbl
+        fullLoc
 
   (* div -> div.
    * Navabar.createElement -> Navbar
    * Staff.Users.createElement -> Staff.Users *)
-  and printJsxName lident =
+  and printJsxName {txt = lident; loc} cmtTbl =
     let rec flatten acc lident = match lident with
     | Longident.Lident txt -> txt::acc
     | Ldot (lident, txt) ->
@@ -10736,20 +13362,22 @@ module Printer = struct
       flatten acc lident
     | _ -> acc
     in
-    match lident with
+    let doc = match lident with
     | Longident.Lident txt -> Doc.text txt
     | _ as lident ->
       let segments = flatten [] lident in
       Doc.join ~sep:Doc.dot (List.map Doc.text segments)
+    in
+    printComments doc cmtTbl loc
 
-  and printArgumentsWithCallback ~uncurried args =
+  and printArgumentsWithCallback ~uncurried args cmtTbl =
     let rec loop acc args = match args with
     | [] -> (Doc.nil, Doc.nil)
     | [_lbl, expr] ->
-      let callback = printPexpFun ~inCallback:true expr in
+      let callback = printPexpFun ~inCallback:true expr cmtTbl in
       (Doc.concat (List.rev acc), callback)
     | arg::args ->
-      let argDoc = printArgument arg in
+      let argDoc = printArgument arg cmtTbl in
       loop (Doc.line::Doc.comma::argDoc::acc) args
     in
     let (printedArgs, callback) = loop [] args in
@@ -10788,21 +13416,21 @@ module Printer = struct
      *   (param1, parm2) => doStuff(param1, parm2)
      * )
      *)
-    let breakAllArgs = printArguments ~uncurried args in
+    let breakAllArgs = printArguments ~uncurried args cmtTbl in
     Doc.customLayout [
       fitsOnOneLine;
       arugmentsFitOnOneLine;
       breakAllArgs;
     ]
 
-	and printArguments ~uncurried (args : (Asttypes.arg_label * Parsetree.expression) list) =
+	and printArguments ~uncurried (args : (Asttypes.arg_label * Parsetree.expression) list) cmtTbl =
 		match args with
 		| [Nolabel, {pexp_desc = Pexp_construct ({txt = Longident.Lident "()"}, _)}] ->
       if uncurried then Doc.text "(.)" else Doc.text "()"
     | [(Nolabel, arg)] when ParsetreeViewer.isHuggableExpression arg ->
       Doc.concat [
         if uncurried then Doc.text "(." else Doc.lparen;
-        printExpression arg;
+        printExpressionWithComments arg cmtTbl;
         Doc.rparen;
       ]
 		| args -> Doc.group (
@@ -10812,7 +13440,7 @@ module Printer = struct
 						Doc.concat [
               if uncurried then Doc.line else Doc.softLine;
 							Doc.join ~sep:(Doc.concat [Doc.comma; Doc.line]) (
-								List.map printArgument args
+								List.map (fun arg -> printArgument arg cmtTbl) args
 							)
 						]
 					);
@@ -10836,18 +13464,18 @@ module Printer = struct
    *   | ~ label-name = ? expr
    *   | ~ label-name = ? _           (* syntax sugar *)
    *   | ~ label-name = ? expr : type *)
-	and printArgument ((argLbl, arg) : Asttypes.arg_label * Parsetree.expression) =
+	and printArgument (argLbl, arg) cmtTbl =
 		match (argLbl, arg) with
 		(* ~a (punned)*)
 		| (
 				(Asttypes.Labelled lbl),
-				{pexp_desc=Pexp_ident {txt =Longident.Lident name}}
+				{pexp_desc=Pexp_ident {txt = Longident.Lident name}}
 			) when lbl = name ->
 			Doc.text ("~" ^ lbl)
 		(* ~a? (optional lbl punned)*)
 		| (
 				(Asttypes.Optional lbl),
-				{pexp_desc=Pexp_ident {txt =Longident.Lident name}}
+				{pexp_desc=Pexp_ident {txt = Longident.Lident name}}
 			) when lbl = name ->
 			Doc.text ("~" ^ lbl ^ "?")
 		| (lbl, expr) ->
@@ -10856,36 +13484,40 @@ module Printer = struct
 			| Asttypes.Labelled lbl -> Doc.text ("~" ^ lbl ^ "=")
 			| Asttypes.Optional lbl -> Doc.text ("~" ^ lbl ^ "=?")
 			in
-			let printedExpr = printExpression expr in
+			let printedExpr = printExpressionWithComments expr cmtTbl in
 			Doc.concat [
 				printedLbl;
 				printedExpr;
 			]
 
-  and printCases (cases: Parsetree.case list) =
+  and printCases (cases: Parsetree.case list) cmtTbl =
     Doc.breakableGroup ~forceBreak:true (
       Doc.concat [
         Doc.lbrace;
           Doc.concat [
             Doc.line;
-            Doc.join ~sep:Doc.line (
-              List.map printCase cases
-            )
+            printList
+              ~getLoc:(fun n -> {n.Parsetree.pc_lhs.ppat_loc with
+                loc_end = n.pc_rhs.pexp_loc.loc_end
+              })
+              ~print:printCase
+              ~nodes:cases
+              cmtTbl
           ];
         Doc.line;
         Doc.rbrace;
       ]
     )
 
-  and printCase (case: Parsetree.case) =
+  and printCase (case: Parsetree.case) cmtTbl =
     let rhs = match case.pc_rhs.pexp_desc with
     | Pexp_let _
     | Pexp_letmodule _
     | Pexp_letexception _
     | Pexp_open _
     | Pexp_sequence _ ->
-      printExpressionBlock ~braces:false case.pc_rhs
-    | _ -> printExpression case.pc_rhs
+      printExpressionBlock ~braces:false case.pc_rhs cmtTbl
+    | _ -> printExpressionWithComments case.pc_rhs cmtTbl
     in
     let guard = match case.pc_guard with
     | None -> Doc.nil
@@ -10893,33 +13525,42 @@ module Printer = struct
         Doc.concat [
           Doc.line;
           Doc.text "when ";
-          printExpression expr;
+          printExpressionWithComments expr cmtTbl;
         ]
       )
+    in
+    let shouldInlineRhs = match case.pc_rhs.pexp_desc with
+    | Pexp_construct ({txt = Longident.Lident "()"}, _) -> true
+    | _ -> false
     in
     Doc.group (
       Doc.concat [
         Doc.text "| ";
         Doc.indent (
           Doc.concat [
-            printPattern case.pc_lhs;
+            printPattern case.pc_lhs cmtTbl;
             guard;
             Doc.text " =>";
-            Doc.line;
+            if shouldInlineRhs then Doc.space else Doc.line;
             rhs;
           ]
         );
       ]
     )
 
-  and printExprFunParameters ~inCallback ~uncurried ~hasConstraint parameters =
+  and printExprFunParameters ~inCallback ~uncurried ~hasConstraint parameters cmtTbl =
     match parameters with
     (* let f = _ => () *)
     | [([], Asttypes.Nolabel, None, {Parsetree.ppat_desc = Ppat_any})] when not uncurried ->
       if hasConstraint then Doc.text "(_)" else Doc.text "_"
     (* let f = a => () *)
     | [([], Asttypes.Nolabel, None, {Parsetree.ppat_desc = Ppat_var stringLoc})]  when not uncurried ->
-      if hasConstraint then Doc.text ("(" ^ stringLoc.txt ^ ")") else Doc.text stringLoc.txt
+      let txtDoc =
+        Doc.text (
+          if hasConstraint then "(" ^ stringLoc.txt ^ ")" else stringLoc.txt
+        )
+      in
+      printComments txtDoc cmtTbl stringLoc.loc
     (* let f = () => () *)
     | [([], Nolabel, None, {ppat_desc = Ppat_construct({txt = Longident.Lident "()"}, None)})] when not uncurried ->
       Doc.text "()"
@@ -10930,18 +13571,23 @@ module Printer = struct
       let printedParamaters = Doc.concat [
         if shouldHug || inCallback then Doc.nil else Doc.softLine;
         Doc.join ~sep:(Doc.concat [Doc.comma; if inCallback then Doc.space else Doc.line])
-          (List.map printExpFunParameter parameters)
+          (List.map (fun p -> printExpFunParameter p cmtTbl) parameters)
       ] in
       Doc.group (
         Doc.concat [
           lparen;
-          if shouldHug || inCallback then printedParamaters else Doc.indent (printedParamaters);
-          if shouldHug || inCallback then Doc.nil else Doc.concat [Doc.trailingComma; Doc.softLine];
+          if shouldHug || inCallback then
+            printedParamaters
+          else Doc.indent printedParamaters;
+          if shouldHug || inCallback then
+            Doc.nil
+          else
+            Doc.concat [Doc.trailingComma; Doc.softLine];
           Doc.rparen;
         ]
       )
 
-  and printExpFunParameter (attrs, lbl, defaultExpr, pattern) =
+  and printExpFunParameter (attrs, lbl, defaultExpr, pattern) cmtTbl =
     let (isUncurried, attrs) = ParsetreeViewer.processUncurriedAttribute attrs in
     let uncurried = if isUncurried then Doc.concat [Doc.dot; Doc.space] else Doc.nil in
     let attrs = match attrs with
@@ -10954,35 +13600,35 @@ module Printer = struct
     let defaultExprDoc = match defaultExpr with
     | Some expr -> Doc.concat [
         Doc.text "=";
-        printExpression expr
+        printExpressionWithComments expr cmtTbl
       ]
     | None -> Doc.nil
     in
     (* ~from as hometown
      * ~from                   ->  punning *)
     let labelWithPattern = match (lbl, pattern) with
-    | (Asttypes.Nolabel, pattern) -> printPattern pattern
+    | (Asttypes.Nolabel, pattern) -> printPattern pattern cmtTbl
     | (
         (Asttypes.Labelled lbl | Optional lbl),
         {ppat_desc = Ppat_var stringLoc}
       ) when lbl = stringLoc.txt ->
-      Doc.concat [
-        Doc.text "~";
-        Doc.text lbl;
-      ]
+        Doc.concat [
+          Doc.text "~";
+          Doc.text lbl;
+        ]
     | ((Asttypes.Labelled lbl | Optional lbl), pattern) ->
       Doc.concat [
         Doc.text "~";
         Doc.text lbl;
         Doc.text " as ";
-        printPattern pattern;
+        printPattern pattern cmtTbl
       ]
     in
     let optionalLabelSuffix = match (lbl, defaultExpr) with
     | (Asttypes.Optional _, None) -> Doc.text "=?"
     | _ -> Doc.nil
     in
-    Doc.group (
+    let doc = Doc.group (
       Doc.concat [
         uncurried;
         attrs;
@@ -10990,71 +13636,90 @@ module Printer = struct
         defaultExprDoc;
         optionalLabelSuffix;
       ]
-    )
+    ) in
+    let cmtLoc = match defaultExpr with
+    | None -> pattern.ppat_loc
+    | Some expr -> {
+      pattern.ppat_loc with loc_end = expr.pexp_loc.loc_end
+    } in
+    printComments doc cmtTbl cmtLoc
 
-  (*
-   * let x = {
-   *   module Foo = Bar
-   *   exception Exit
-   *   open Belt
-   *   let a = 1
-   *   let b = 2
-   *   sideEffect()
-   *   a + b
-   * }
-   * What is an expr-block ? Everything between { ... }
-   *)
-  and printExpressionBlock ~braces expr =
+  and printExpressionBlock ~braces expr cmtTbl =
     let rec collectRows acc expr = match expr.Parsetree.pexp_desc with
-    | Parsetree.Pexp_letmodule ({txt = modName; loc = modLoc}, modExpr, expr) ->
+    | Parsetree.Pexp_letmodule (modName, modExpr, expr2) ->
+      let name =
+        let doc = Doc.text modName.txt in
+        printComments doc cmtTbl modName.loc
+      in
       let letModuleDoc = Doc.concat [
         Doc.text "module ";
-        Doc.text modName;
+        name;
         Doc.text " = ";
-        printModExpr modExpr;
+        printModExpr modExpr cmtTbl;
       ] in
-      let loc = {modLoc with loc_end = modExpr.pmod_loc.loc_end} in
-      collectRows ((loc, letModuleDoc)::acc) expr
-    | Pexp_letexception (extensionConstructor, expr) ->
-      let letExceptionDoc = printExceptionDef extensionConstructor in
-      let loc = extensionConstructor.pext_loc in
-      collectRows ((loc, letExceptionDoc)::acc) expr
-    | Pexp_open (overrideFlag, longidentLoc, expr) ->
+      let loc = {expr.pexp_loc with loc_end = modExpr.pmod_loc.loc_end} in
+      collectRows ((loc, letModuleDoc)::acc) expr2
+    | Pexp_letexception (extensionConstructor, expr2) ->
+      let loc =
+        let loc = {expr.pexp_loc with loc_end = extensionConstructor.pext_loc.loc_end} in
+        match getFirstLeadingComment cmtTbl loc with
+        | None -> loc
+        | Some comment ->
+          let cmtLoc = Comment.loc comment in
+          {cmtLoc with loc_end = loc.loc_end}
+      in
+      let letExceptionDoc = printExceptionDef extensionConstructor cmtTbl in
+      collectRows ((loc, letExceptionDoc)::acc) expr2
+    | Pexp_open (overrideFlag, longidentLoc, expr2) ->
       let openDoc = Doc.concat [
         Doc.text "open";
         printOverrideFlag overrideFlag;
         Doc.space;
-        printLongident longidentLoc.txt;
+        printLongidentLocation longidentLoc cmtTbl;
       ] in
-      let loc = longidentLoc.loc in
-      collectRows ((loc, openDoc)::acc) expr
+      let loc = {expr.pexp_loc with loc_end = longidentLoc.loc.loc_end} in
+      collectRows ((loc, openDoc)::acc) expr2
     | Pexp_sequence (expr1, expr2) ->
       let exprDoc =
-        let doc = printExpression expr1 in
+        let doc = printExpressionWithComments expr1 cmtTbl in
         if Parens.blockExpr expr1 then addParens doc else doc
       in
       let loc = expr1.pexp_loc in
       collectRows ((loc, exprDoc)::acc) expr2
-    | Pexp_let (recFlag, valueBindings, expr) ->
+    | Pexp_let (recFlag, valueBindings, expr2) ->
+      let loc =
+        let loc = match valueBindings with
+        | [] -> Location.none
+        | vb::_ -> vb.pvb_loc
+        in
+        match getFirstLeadingComment cmtTbl loc with
+        | None -> loc
+        | Some comment ->
+          let cmtLoc = Comment.loc comment in
+          {cmtLoc with loc_end = loc.loc_end}
+      in
 			let recFlag = match recFlag with
 			| Asttypes.Nonrecursive -> Doc.nil
 			| Asttypes.Recursive -> Doc.text "rec "
 			in
-      let letDoc = printValueBindings ~recFlag valueBindings in
-      let loc = match (valueBindings, List.rev valueBindings) with
-      | ({pvb_loc = firstLoc}::_,{pvb_loc = lastLoc}::_) ->
-          {firstLoc with loc_end = lastLoc.loc_end}
-      | _ -> Location.none
-      in
-      collectRows((loc, letDoc)::acc) expr
+      let letDoc = printValueBindings ~recFlag valueBindings cmtTbl in
+      collectRows ((loc, letDoc)::acc) expr2
     | _ ->
       let exprDoc =
-        let doc = printExpression expr in
+        let doc = printExpression expr cmtTbl in
         if Parens.blockExpr expr then addParens doc else doc
       in
       List.rev ((expr.pexp_loc, exprDoc)::acc)
     in
-    let block = collectRows [] expr |> interleaveWhitespace ~forceBreak:true in
+    let rows = collectRows [] expr in
+    let block =
+      printList
+        ~getLoc:fst
+        ~nodes:rows
+        ~print:(fun (_, doc) _ -> doc)
+        ~forceBreak:true
+        cmtTbl
+    in
     Doc.breakableGroup ~forceBreak:true (
       if braces then
         Doc.concat [
@@ -11079,21 +13744,31 @@ module Printer = struct
     | Asttypes.Downto -> Doc.text " downto "
     | Asttypes.Upto -> Doc.text " to "
 
-  and printRecordRow (lbl, expr) =
-    Doc.concat [
-      printLongident lbl.txt;
+  and printRecordRow (lbl, expr) cmtTbl =
+    let cmtLoc = {lbl.loc with loc_end = expr.pexp_loc.loc_end} in
+    let doc = Doc.concat [
+      printLongidentLocation lbl cmtTbl;
       Doc.text ": ";
-      printExpression expr;
-    ]
+      printExpressionWithComments expr cmtTbl;
+    ] in
+    printComments doc cmtTbl cmtLoc
 
-  and printBsObjectRow (lbl, expr) =
-    Doc.concat [
-      Doc.text "\"";
-      printLongident lbl.txt;
-      Doc.text "\"";
+  and printBsObjectRow (lbl, expr) cmtTbl =
+    let cmtLoc = {lbl.loc with loc_end = expr.pexp_loc.loc_end} in
+    let lblDoc =
+      let doc = Doc.concat [
+        Doc.text "\"";
+        printLongident lbl.txt;
+        Doc.text "\"";
+      ] in
+      printComments doc cmtTbl lbl.loc
+    in
+    let doc = Doc.concat [
+      lblDoc;
       Doc.text ": ";
-      printExpression expr;
-    ]
+      printExpressionWithComments expr cmtTbl
+    ] in
+    printComments doc cmtTbl cmtLoc
   (* The optional loc indicates whether we need to print the attributes in
    * relation to some location. In practise this means the following:
    *  `@attr type t = string` -> on the same line, print on the same line
@@ -11108,7 +13783,7 @@ module Printer = struct
       | None -> Doc.line
       | Some loc -> begin match List.rev attrs with
         | ({loc = firstLoc}, _)::_ when loc.loc_start.pos_lnum > firstLoc.loc_end.pos_lnum ->
-          Doc.literalLine;
+          Doc.hardLine;
         | _ -> Doc.line
         end
       in
@@ -11121,7 +13796,26 @@ module Printer = struct
       let attrName = Doc.text ("@" ^ id.txt) in
         match payload with
       | PStr [{pstr_desc = Pstr_eval (expr, attrs)}] ->
-        let exprDoc = printExpression expr in
+        let exprDoc = printExpression expr CommentTable.empty in
+        let needsParens = match attrs with | [] -> false | _ -> true in
+        Doc.group (
+          Doc.concat [
+            attrName;
+            addParens (
+              Doc.concat [
+                printAttributes attrs;
+                if needsParens then addParens exprDoc else exprDoc;
+              ]
+            )
+          ]
+        )
+      | _ -> attrName
+
+  and printAttributeWithComments ((id, payload) : Parsetree.attribute) cmtTbl =
+      let attrName = Doc.text ("@" ^ id.txt) in
+      match payload with
+      | PStr [{pstr_desc = Pstr_eval (expr, attrs)}] ->
+        let exprDoc = printExpressionWithComments expr cmtTbl in
         let needsParens = match attrs with | [] -> false | _ -> true in
         Doc.group (
           Doc.concat [
@@ -11137,10 +13831,10 @@ module Printer = struct
       | _ -> attrName
 
 
-  and printModExpr modExpr =
-    match modExpr.pmod_desc with
+  and printModExpr modExpr cmtTbl =
+    let doc = match modExpr.pmod_desc with
     | Pmod_ident longidentLoc ->
-      printLongident longidentLoc.txt
+      printLongidentLocation longidentLoc cmtTbl
     | Pmod_structure structure ->
       Doc.breakableGroup ~forceBreak:true (
         Doc.concat [
@@ -11148,7 +13842,7 @@ module Printer = struct
           Doc.indent (
             Doc.concat [
               Doc.softLine;
-              printStructure structure;
+              printStructure structure cmtTbl;
             ];
           );
           Doc.softLine;
@@ -11167,14 +13861,18 @@ module Printer = struct
       let (expr, moduleConstraint) = match expr.pexp_desc with
       | Pexp_constraint (
           expr,
-          {ptyp_desc = Ptyp_package packageType}
+          {ptyp_desc = Ptyp_package packageType; ptyp_loc}
       ) ->
+        let packageDoc =
+          let doc = printPackageType ~printModuleKeywordAndParens:false packageType cmtTbl in
+          printComments doc cmtTbl ptyp_loc
+        in
         let typeDoc = Doc.group (Doc.concat [
           Doc.text ":";
           Doc.indent (
             Doc.concat [
               Doc.line;
-              printPackageType ~printModuleKeywordAndParens:false packageType
+              packageDoc
             ]
           )
         ]) in
@@ -11182,7 +13880,7 @@ module Printer = struct
       | _ -> (expr, Doc.nil)
       in
       let unpackDoc = Doc.group(Doc.concat [
-        printExpression expr;
+        printExpressionWithComments expr cmtTbl;
         moduleConstraint;
       ]) in
       Doc.group (
@@ -11203,7 +13901,7 @@ module Printer = struct
         ]
       )
     | Pmod_extension extension ->
-      printExtension extension
+      printExtensionWithComments extension cmtTbl
     | Pmod_apply _ ->
       let (args, callExpr) = ParsetreeViewer.modExprApply modExpr in
       let isUnitSugar = match args with
@@ -11216,20 +13914,20 @@ module Printer = struct
       in
       Doc.group (
         Doc.concat [
-          printModExpr callExpr;
+          printModExpr callExpr cmtTbl;
           if isUnitSugar then
-            printModApplyArg (List.hd args)
+            printModApplyArg (List.hd args) cmtTbl
           else
             Doc.concat [
               Doc.lparen;
               if shouldHug then
-                printModApplyArg (List.hd args)
+                printModApplyArg (List.hd args) cmtTbl
               else
                 Doc.indent (
                   Doc.concat [
                     Doc.softLine;
                     Doc.join ~sep:(Doc.concat [Doc.comma; Doc.line]) (
-                      List.map printModApplyArg args
+                      List.map (fun modArg -> printModApplyArg modArg cmtTbl) args
                     )
                   ]
                 );
@@ -11245,14 +13943,16 @@ module Printer = struct
       )
     | Pmod_constraint (modExpr, modType) ->
       Doc.concat [
-        printModExpr modExpr;
+        printModExpr modExpr cmtTbl;
         Doc.text ": ";
-        printModType modType;
+        printModType modType cmtTbl;
       ]
     | Pmod_functor _ ->
-      printModFunctor modExpr
+      printModFunctor modExpr cmtTbl
+    in
+    printComments doc cmtTbl modExpr.pmod_loc
 
-  and printModFunctor modExpr =
+  and printModFunctor modExpr cmtTbl =
     let (parameters, returnModExpr) = ParsetreeViewer.modExprFunctor modExpr in
     (* let shouldInline = match returnModExpr.pmod_desc with *)
     (* | Pmod_structure _ | Pmod_ident _ -> true *)
@@ -11262,15 +13962,15 @@ module Printer = struct
     let (returnConstraint, returnModExpr) = match returnModExpr.pmod_desc with
     | Pmod_constraint (modExpr, modType) ->
       let constraintDoc =
-        let doc = printModType modType in
+        let doc = printModType modType cmtTbl in
         if Parens.modExprFunctorConstraint modType then addParens doc else doc
       in
       let modConstraint = Doc.concat [
         Doc.text ": ";
         constraintDoc;
       ] in
-      (modConstraint, printModExpr modExpr)
-    | _ -> (Doc.nil, printModExpr returnModExpr)
+      (modConstraint, printModExpr modExpr cmtTbl)
+    | _ -> (Doc.nil, printModExpr returnModExpr cmtTbl)
     in
     let parametersDoc = match parameters with
     | [(attrs, {txt = "*"}, None)] ->
@@ -11293,7 +13993,7 @@ module Printer = struct
             Doc.concat [
               Doc.softLine;
               Doc.join ~sep:(Doc.concat [Doc.comma; Doc.line]) (
-                List.map printModFunctorParam parameters
+                List.map (fun param -> printModFunctorParam param cmtTbl) parameters
               )
             ]
           );
@@ -11309,44 +14009,54 @@ module Printer = struct
         returnConstraint;
         Doc.text " => ";
         returnModExpr
-
       ]
     )
 
-  and printModFunctorParam (attrs, lbl, optModType) =
+  and printModFunctorParam (attrs, lbl, optModType) cmtTbl =
+    let cmtLoc = match optModType with
+    | None -> lbl.Asttypes.loc
+    | Some modType -> {lbl.loc with loc_end =
+        modType.Parsetree.pmty_loc.loc_end
+      }
+    in
     let attrs = match attrs with
     | [] -> Doc.nil
     | attrs -> Doc.concat [
       Doc.join ~sep:Doc.line (List.map printAttribute attrs);
       Doc.line;
     ] in
-    Doc.group (
+    let lblDoc =
+      let doc = Doc.text lbl.txt in
+      printComments doc cmtTbl lbl.loc
+    in
+    let doc = Doc.group (
       Doc.concat [
         attrs;
-        Doc.text lbl.txt;
+        lblDoc;
         (match optModType with
         | None -> Doc.nil
         | Some modType ->
           Doc.concat [
             Doc.text ": ";
-            printModType modType
+            printModType modType cmtTbl
           ]);
       ]
-    )
+    ) in
+    printComments doc cmtTbl cmtLoc
 
-  and printModApplyArg modExpr =
+  and printModApplyArg modExpr cmtTbl =
     match modExpr.pmod_desc with
     | Pmod_structure [] -> Doc.text "()"
-    | _ -> printModExpr modExpr
+    | _ -> printModExpr modExpr cmtTbl
 
 
-  and printExceptionDef (constr : Parsetree.extension_constructor) =
+  and printExceptionDef (constr : Parsetree.extension_constructor) cmtTbl =
     let kind = match constr.pext_kind with
-    | Pext_rebind {txt = longident} -> Doc.indent (
+    | Pext_rebind longident -> Doc.indent (
         Doc.concat [
           Doc.text " =";
           Doc.line;
-          printLongident longident;
+          printLongidentLocation longident cmtTbl;
         ]
      )
     | Pext_decl (Pcstr_tuple [], None) -> Doc.nil
@@ -11354,35 +14064,42 @@ module Printer = struct
       let gadtDoc = match gadt with
       | Some typ -> Doc.concat [
           Doc.text ": ";
-          printTypExpr typ;
+          printTypExpr typ cmtTbl
         ]
       | None -> Doc.nil
       in
       Doc.concat [
-        printConstructorArguments args;
+        printConstructorArguments ~indent:false args cmtTbl;
         gadtDoc
       ]
     in
-    Doc.group (
+    let name =
+      printComments
+        (Doc.text constr.pext_name.txt)
+        cmtTbl
+        constr.pext_name.loc
+    in
+    let doc = Doc.group (
       Doc.concat [
         printAttributes constr.pext_attributes;
         Doc.text "exception ";
-        Doc.text constr.pext_name.txt;
+        name;
         kind
       ]
-    )
+    ) in
+    printComments doc cmtTbl constr.pext_loc
 
-  and printExtensionConstructor i (constr : Parsetree.extension_constructor) =
+  and printExtensionConstructor (constr : Parsetree.extension_constructor) cmtTbl i =
     let attrs = printAttributes constr.pext_attributes in
     let bar = if i > 0 then Doc.text "| "
       else Doc.ifBreaks (Doc.text "| ") Doc.nil
     in
     let kind = match constr.pext_kind with
-    | Pext_rebind {txt = longident} -> Doc.indent (
+    | Pext_rebind longident -> Doc.indent (
         Doc.concat [
           Doc.text " =";
           Doc.line;
-          printLongident longident;
+          printLongidentLocation longident cmtTbl;
         ]
      )
     | Pext_decl (Pcstr_tuple [], None) -> Doc.nil
@@ -11390,35 +14107,43 @@ module Printer = struct
       let gadtDoc = match gadt with
       | Some typ -> Doc.concat [
           Doc.text ": ";
-          printTypExpr typ;
+          printTypExpr typ cmtTbl;
         ]
       | None -> Doc.nil
       in
       Doc.concat [
-        printConstructorArguments args;
+        printConstructorArguments ~indent:false args cmtTbl;
         gadtDoc
       ]
+    in
+    let name =
+      printComments (Doc.text constr.pext_name.txt) cmtTbl constr.pext_name.loc
     in
     Doc.concat [
       bar;
       Doc.group (
         Doc.concat [
           attrs;
-          Doc.text constr.pext_name.txt;
+          name;
           kind;
         ]
       )
     ]
 
-  let printImplementation (s: Parsetree.structure) =
-    let stringDoc = Doc.toString ~width:80 (printStructure s) in
-    print_endline stringDoc;
-    print_newline()
+  let printImplementation (s: Parsetree.structure) comments =
+    let cmtTbl = CommentTable.make () in
+    CommentTable.walkStructure s cmtTbl comments;
+    (* CommentTable.log cmtTbl; *)
+    let doc = printStructure s cmtTbl in
+    (* Doc.debug doc; *)
+    let stringDoc = Doc.toString ~width:80 doc in
+    print_string stringDoc
 
-  let printInterface (s: Parsetree.signature) =
-    let stringDoc = Doc.toString ~width:80 (printSignature s) in
-    print_endline stringDoc;
-    print_newline()
+  let printInterface (s: Parsetree.signature) comments =
+    let cmtTbl = CommentTable.make () in
+    CommentTable.walkSignature s cmtTbl comments;
+    let stringDoc = Doc.toString ~width:80 (printSignature s cmtTbl) in
+    print_string stringDoc
 
 end
 
@@ -11446,7 +14171,7 @@ end = struct
 
   let spec = [
     ("-recover", Arg.Unit (fun () -> recover := true), "Emit partial ast");
-    ("-bench", Arg.Unit (fun () -> bench := true), "Run benchmarks");
+    ("-bench", Arg.Unit (fun () -> bench := true), "Run internal benchmarks");
     ("-print", Arg.String (fun txt -> print := txt), "Print either binary, ocaml or ast");
     ("-profile", Arg.Unit (fun () -> profile := true), "Enable performance profiling");
   ]
@@ -11467,7 +14192,11 @@ end = struct
     | Signature -> NapkinScript.parseSignature p
 
   let parseFile kind filename =
-    let src = IO.readFile filename in
+    let src = if String.length filename > 0 then
+      IO.readFile filename
+    else
+      IO.readStdin ()
+    in
     let p = Parser.make src filename in
     let ast = parse kind p in
     let report = match p.diagnostics with
@@ -11508,7 +14237,7 @@ end = struct
     | "ml" | "ocaml" ->
         Pprintast.structure Format.std_formatter ast
     | "ns" | "napkinscript" ->
-        Printer.printImplementation ast
+        Printer.printImplementation ast (List.rev _parserState.Parser.comments)
     | "ast" -> Printast.implementation Format.std_formatter ast
     | _ -> (* default binary *)
       output_string stdout Config.ast_impl_magic_number;
@@ -11519,7 +14248,7 @@ end = struct
     match target with
     | "ml" | "ocaml" -> Pprintast.signature Format.std_formatter ast
     | "ns" | "napkinscript" ->
-      Printer.printInterface ast
+      Printer.printInterface ast (List.rev _parserState.Parser.comments)
     | "ast" -> Printast.interface Format.std_formatter ast
     | _ -> (* default binary *)
       output_string stdout Config.ast_intf_magic_number;
@@ -11539,22 +14268,6 @@ end = struct
       | ProcessInterface ->
         process parseInterface (printInterface ~target filename) recover filename
     with
-    | InfiniteLoop(pos, _token) ->
-      let locationInfo =
-        Printf.sprintf (* ReasonLanguageServer requires the following format *)
-          "File \"%s\", line %d, characters %d-%d:"
-          filename
-          pos.pos_lnum
-          (pos.pos_cnum - pos.pos_bol)
-          (pos.pos_cnum - pos.pos_bol)
-      in
-      let msg =
-        Format.sprintf
-          "%s\n\nPossible infinite loop detected\n\n"
-          locationInfo
-      in
-      prerr_string msg;
-      exit 1
     | Failure txt ->
       prerr_string txt;
       prerr_newline();
@@ -11602,7 +14315,10 @@ end = struct
       let ast = NapkinScript.parseStructure p in
       (fun _ ->
         let _ = Sys.opaque_identity (
-          Doc.toString ~width:80 (Printer.printStructure ast)
+          let cmtTbl = CommentTable.make () in
+          let comments = List.rev p.Parser.comments in
+          let () = CommentTable.walkStructure ast cmtTbl comments in
+          Doc.toString ~width:80 (Printer.printStructure ast cmtTbl)
         ) in ()
       )
     | _ -> (fun _ -> ())
@@ -11614,12 +14330,14 @@ end = struct
   let run () =
     benchmark "./benchmarks/RedBlackTreeNapkin.ml" Napkin Parse;
     benchmark "./benchmarks/RedBlackTreeOcaml.ml" Ocaml Parse;
-    benchmark "./benchmarks/PrinterNapkin.ml" Napkin Parse;
-    benchmark "./benchmarks/PrinterOcaml.ml" Ocaml Parse;
+    (* benchmark "./benchmarks/PrinterNapkin.ml" Napkin Parse; *)
+    (* benchmark "./benchmarks/PrinterOcaml.ml" Ocaml Parse; *)
     benchmark "./benchmarks/RedBlackTreeNapkin.ml" Napkin Print;
-    benchmark "./benchmarks/PrinterNapkin.ml" Napkin Print;
-    benchmark "./benchmarks/NapkinscriptNapkin.ml" Napkin Parse;
-    benchmark "./benchmarks/NapkinscriptOcaml.ml" Ocaml Parse
+    benchmark "./benchmarks/RedBlackTreeNoCommentsNapkin.ml" Napkin Print;
+    (* benchmark "./benchmarks/PrinterNapkin.ml" Napkin Print; *)
+    (* benchmark "./benchmarks/NapkinscriptNapkin.ml" Napkin Parse; *)
+    (* benchmark "./benchmarks/NapkinscriptOcaml.ml" Ocaml Parse; *)
+    (* benchmark "./benchmarks/NapkinscriptNapkin.ml" Napkin Print; *)
 end
 
 (* let () = *)
@@ -11634,9 +14352,18 @@ end
 
 let () =
   Clflags.parse ();
-  List.iter (fun filename ->
-    Driver.processFile ~recover:!Clflags.recover ~target:!Clflags.print filename
-  ) !Clflags.files;
+  if !Clflags.bench then (
+    Benchmarks.run();
+    exit 0;
+  );
+  let () = match !Clflags.files with
+  | (file::_) as files ->
+    List.iter (fun filename ->
+      Driver.processFile ~recover:!Clflags.recover ~target:!Clflags.print filename
+    ) files;
+  | [] ->
+    Driver.processFile ~recover:!Clflags.recover ~target:!Clflags.print ""
+  in
   if !Clflags.profile then Profile.print();
   if !Clflags.bench then Benchmarks.run();
   exit 0

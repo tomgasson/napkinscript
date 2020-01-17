@@ -60,11 +60,11 @@ type t<'a> =
 
 type jsx<'nature> =
   | Empty: jsx<empty>
-  | Cons(elem</'s1, 'a1/, 'sub1>, jsx<'tl>): jsx</('a1, 's1) => 'sub1, 'tl/>
+  | Cons(elem<('s1, 'a1), 'sub1>, jsx<'tl>): jsx<(('a1, 's1) => 'sub1, 'tl)>
 
 type jsx<'nature> =
   | Empty: jsx<empty>
-  | Cons(elem</'s1, 'a1/, 'sub1>, jsx<'tl>): jsxxxxxxxxxxxxxxxxx</('a1, 's1) => 'sub1, 'tl/>
+  | Cons(elem<('s1, 'a1), 'sub1>, jsx<'tl>): jsxxxxxxxxxxxxxxxxx<(('a1, 's1) => 'sub1, 'tl)>
 
 type color = Red | Blue
   constraint 't = string

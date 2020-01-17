@@ -7,7 +7,7 @@ type empty =
   type elem<'t> =
     | Empty: elem<empty>
     | Element(renderable<('s, 'a) => 'sub>): elem<('s, 'a) => 'sub>
-    | TwoElements(elem<'t1>, elem<'t2>): elem</'t1, 't2/>
+    | TwoElements(elem<'t1>, elem<'t2>): elem<('t1, 't2)>
     /*
      * Not an ordered map yet, but should be.
      */
@@ -20,7 +20,7 @@ type empty =
     | Instance(inst<('s, 'a) => 'sub>): subtree<('s, 'a) => 'sub>
     /* Having TwoInstances mirror the fact that TwoElements requires sub
      * elements, was probably overkill. */
-    | TwoInstances(subtree<'t1>, subtree<'t2>): subtree</'t1, 't2/>
+    | TwoInstances(subtree<'t1>, subtree<'t2>): subtree<('t1, 't2)>
     | InstanceMap(list<subtree<'t>>): subtree<list<'t>>
   and reducer<'t> = (inst<'t>, 'a) => 's constraint 't = ('s, 'a) => 'sub
   /*

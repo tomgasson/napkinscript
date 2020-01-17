@@ -11,7 +11,7 @@ type t = (_, typeConstr<'a, state, 'foo>, 'x as 'y, module(S), %extension) => st
 
 external c_binding: (string, string, superLongIdentifierHere, superLongIdentifierHere, superLongIdentifierHere) => okok = "c_binding_external_primitive"
 
-external c_binding: (~any: _, string, ~firstClassModule: module(Hashmap with type key = string and type value = int and type superLongThingHere = definitelyLineBreak)=?, ~typeConstr: typeConstr<superLongIdentifierHere, superLongIdentifierHere, superLongIdentifierHere>, ~subArrow: (~subArrow: 'a1, ~subArrowParameter: 'a2, ~subArrowParameter3: loooooooongTypExpr) => /foo, bar, baz/ ,~subArrow2: (~subArrow: 'a1, ~subArrowParameter: 'a2, ~subArrowParameter3: loooooooongTypExpr) => /foo, bar, baz, veryLooooooooooooooooongTupleTypeHere, veryLooooooooooooooooongTupleTypeHere, shoulBreakThatLine /, ~jsObject: {"name": string, "otherLongName": evenLongerType, "woooooooooooooo": excitingTypeHereBecauseItWillBreakthatLine}=?) => okok = "c_binding_external_primitive"
+external c_binding: (~any: _, string, ~firstClassModule: module(Hashmap with type key = string and type value = int and type superLongThingHere = definitelyLineBreak)=?, ~typeConstr: typeConstr<superLongIdentifierHere, superLongIdentifierHere, superLongIdentifierHere>, ~subArrow: (~subArrow: 'a1, ~subArrowParameter: 'a2, ~subArrowParameter3: loooooooongTypExpr) => (foo, bar, baz) ,~subArrow2: (~subArrow: 'a1, ~subArrowParameter: 'a2, ~subArrowParameter3: loooooooongTypExpr) => (foo, bar, baz, veryLooooooooooooooooongTupleTypeHere, veryLooooooooooooooooongTupleTypeHere, shoulBreakThatLine ), ~jsObject: {"name": string, "otherLongName": evenLongerType, "woooooooooooooo": excitingTypeHereBecauseItWillBreakthatLine}=?) => okok = "c_binding_external_primitive"
 
 type t = (~firstName: string, ~lastName: string) => {
   "name": string,
@@ -22,14 +22,14 @@ type t = (~firstName: string, ~lastName: string) => {
   "moreProps4": superLongIdentifierHere4,
 }
 
-type t = (~firstName: string, ~lastName: string) => /
+type t = (~firstName: string, ~lastName: string) => (
   name, string,
   age, int,
   moreProps, superLongIdentifierHere,
   moreProps2, superLongIdentifierHere2,
   moreProps3, superLongIdentifierHere3,
   moreProps4, superLongIdentifierHere4
-/
+)
 
 type t = (~firstName: string, ~lastName: string) => typeConstr<
   name, string,

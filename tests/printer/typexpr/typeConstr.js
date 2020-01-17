@@ -16,9 +16,9 @@ let t: list<
   {"name": string, @attr "age": int},
 > = x
 
-type t = Option.t</tupleTyp1, tupleTyp2, tupleTyp3/>
-type t = Option.t</tupleTyp1, tupleTyp2, tupleTyp3, tupleTyp3, tupleTyp3, tupleTyp3, tupleTyp3, tupleTyp3, tupleTyp3, tupleTyp3/>
-let t: Option.t</tupleTyp1, tupleTyp2, tupleTyp3, tupleTyp3, tupleTyp3, tupleTyp3, tupleTyp3, tupleTyp3, tupleTyp3, tupleTyp3, tupleTyp3, tupleTyp3/> = x
+type t = Option.t<(tupleTyp1, tupleTyp2, tupleTyp3)>
+type t = Option.t<(tupleTyp1, tupleTyp2, tupleTyp3, tupleTyp3, tupleTyp3, tupleTyp3, tupleTyp3, tupleTyp3, tupleTyp3, tupleTyp3)>
+let t: Option.t<(tupleTyp1, tupleTyp2, tupleTyp3, tupleTyp3, tupleTyp3, tupleTyp3, tupleTyp3, tupleTyp3, tupleTyp3, tupleTyp3, tupleTyp3, tupleTyp3)> = x
 
 type t = @attrs Option.t<string,>
 

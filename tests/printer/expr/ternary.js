@@ -38,8 +38,8 @@ let record = truth ? {thisIsASuperLongFieldHere: loooooooooooooongIdentifier, an
 let arr = truth ? [1, 2, 3, 4] : [4, 5, 6, 7]
 let arr = truth ? [thisIsASuperLongIdentifieeeeeeeer, thisIsASuperLongIdentifieeeeeeeer2, thisIsASuperLongIdentifieeeeeeeer3] : [thisIsASuperLongIdentifieeeeeeeer, thisIsASuperLongIdentifieeeeeeeer2, thisIsASuperLongIdentifieeeeeeeer3]
 
-let lst = truth ? list(1, 2, 3, 4) : list(4, 5, 6, 7)
-let lst = truth ? list(thisIsASuperLongIdentifieeeeeeeer, thisIsASuperLongIdentifieeeeeeeer2, thisIsASuperLongIdentifieeeeeeeer3) : list(thisIsASuperLongIdentifieeeeeeeer, thisIsASuperLongIdentifieeeeeeeer2, thisIsASuperLongIdentifieeeeeeeer3)
+let lst = truth ? list[1, 2, 3, 4] : list[4, 5, 6, 7]
+let lst = truth ? list[thisIsASuperLongIdentifieeeeeeeer, thisIsASuperLongIdentifieeeeeeeer2, thisIsASuperLongIdentifieeeeeeeer3] : list[thisIsASuperLongIdentifieeeeeeeer, thisIsASuperLongIdentifieeeeeeeer2, thisIsASuperLongIdentifieeeeeeeer3]
 
 
 let construct = truth ? Constructor(1, 2, 3, 4) : Constructor(4, 5, 6, 7)
@@ -82,8 +82,8 @@ let x = isColor ? switch color {
 
 let x = exceptionLike ? try dangerousThing() catch {| Exit => () } : try dangerousThing() catch {| Exit => () }
 
-let tuple = truth ? /1, 2, 3, 4/ : /4, 5, 6, 7/
-let tuple = truth ? /thisIsASuperLongIdentifieeeeeeeer, thisIsASuperLongIdentifieeeeeeeer2, thisIsASuperLongIdentifieeeeeeeer3/ : /thisIsASuperLongIdentifieeeeeeeer, thisIsASuperLongIdentifieeeeeeeer2, thisIsASuperLongIdentifieeeeeeeer3/
+let tuple = truth ? (1, 2, 3, 4) : (4, 5, 6, 7)
+let tuple = truth ? (thisIsASuperLongIdentifieeeeeeeer, thisIsASuperLongIdentifieeeeeeeer2, thisIsASuperLongIdentifieeeeeeeer3) : (thisIsASuperLongIdentifieeeeeeeer, thisIsASuperLongIdentifieeeeeeeer2, thisIsASuperLongIdentifieeeeeeeer3)
 
 let x = condition1 ? node.left : node.right 
 let x = condition1 ? nodeWithVeryLooooooooooooooooongNameHere.left : nodeWithVeryLooooooooooooooooongNameHere.right 
