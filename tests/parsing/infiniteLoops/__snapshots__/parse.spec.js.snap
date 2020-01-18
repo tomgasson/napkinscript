@@ -230,7 +230,50 @@ File \\"/napkinscript/tests/parsing/infiniteLoops/jsxChildren.js\\", line 5, cha
 [31m5[0m │  etype s = {x:list<i>}          
                           [31m^[0m
 
+Did you forget a \`,\` here? 
+
+
+File \\"/napkinscript/tests/parsing/infiniteLoops/jsxChildren.js\\", line 5, characters 20-21:
+
+
+3 │  let a: action = AddUser(\\"test\\")
+4 │  
+[31m5[0m │  etype s = {x:list<i>[31m}[0m
+
+I'm not sure what to parse here when looking at \\"}\\".
+
+
+File \\"/napkinscript/tests/parsing/infiniteLoops/jsxChildren.js\\", line 5, characters 21-22:
+
+
+3 │  let a: action = AddUser(\\"test\\")
+4 │  
+[31m5[0m │  etype s = {x:list<i>}          
+                           [31m^[0m
+
 Did you forget a \`]\` here? 
+
+
+File \\"/napkinscript/tests/parsing/infiniteLoops/jsxChildren.js\\", line 5, characters 21-22:
+
+
+3 │  let a: action = AddUser(\\"test\\")
+4 │  
+[31m5[0m │  etype s = {x:list<i>}          
+                           [31m^[0m
+
+Did you forget a \`,\` here? 
+
+
+File \\"/napkinscript/tests/parsing/infiniteLoops/jsxChildren.js\\", line 5, characters 21-22:
+
+
+3 │  let a: action = AddUser(\\"test\\")
+4 │  
+[31m5[0m │  etype s = {x:list<i>}          
+                           [31m^[0m
+
+Did you forget a \`}\` here? 
 
 
 File \\"/napkinscript/tests/parsing/infiniteLoops/jsxChildren.js\\", line 5, characters 8-9:

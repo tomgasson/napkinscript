@@ -1030,7 +1030,9 @@ module Grammar = struct
     | RecordRowsStringKey
     | ArgumentList
     | Signature
+    | Specification
     | Structure
+    | Implementation
     | Attribute
     | TypeConstraint
     | Primitive
@@ -1084,7 +1086,9 @@ module Grammar = struct
     | RecordRowsStringKey -> "rows of a record with string keys"
     | ArgumentList -> "arguments"
     | Signature -> "signature"
+    | Specification -> "specification"
     | Structure -> "structure"
+    | Implementation -> "implementation"
     | Attribute -> "an attribute"
     | TypeConstraint -> "constraints on a type"
     | Primitive -> "an external primitive"
@@ -1296,8 +1300,8 @@ module Grammar = struct
     | RecordRows -> isRecordRowStart token
     | RecordRowsStringKey -> isRecordRowStringKeyStart token
     | ArgumentList -> isArgumentStart token
-    | Signature -> isSignatureItemStart token
-    | Structure -> isStructureItemStart token
+    | Signature | Specification -> isSignatureItemStart token
+    | Structure | Implementation -> isStructureItemStart token
     | PatternMatching -> isPatternMatchStart token
     | PatternOcamlList -> isPatternOcamlListStart token
     | PatternRecord -> isPatternRecordItemStart token
@@ -1329,7 +1333,7 @@ module Grammar = struct
         || token = In (* for expressions *)
         || token = Equal (* let {x} = foo *)
     | ExprBlock -> token = Rbrace
-    | Structure -> token = Rbrace
+    | Structure | Signature -> token = Rbrace
     | TypeParams -> token = Rparen
     | ParameterList -> token = EqualGreater || token = Lbrace
     | Attribute -> token <> At
@@ -1339,6 +1343,7 @@ module Grammar = struct
     | Primitive -> isStructureItemStart token || token = Semicolon
     | JsxAttribute -> token = Forwardslash || token = GreaterThan
     | JsFfiImport -> token = Rbrace
+    | StringFieldDeclarations -> token = Rbrace
     | _ -> false
     )
 
@@ -1616,8 +1621,6 @@ module Diagnostics: sig
     -> t
 
   val makeReport: t list -> string -> string
-
-
 end = struct
   type category =
     | Unexpected of (Token.t * ((Grammar.t * Lexing.position) list))
@@ -4910,9 +4913,11 @@ Solution: directly use `concat`."
             | _ -> parseExprBlock ~first:e p
             end
         | _ ->
+          Parser.leaveBreadcrumb p Grammar.ExprBlock;
           let a = parsePrimaryExpr ~operand:(Ast_helper.Exp.ident ~loc:pathIdent.loc pathIdent) p in
           let e = parseBinaryExpr ~a p 1 in
           let e = parseTernaryExpr e p in
+          Parser.eatBreadcrumb p;
           begin match p.Parser.token with
           | Semicolon ->
             Parser.next p;
@@ -4922,9 +4927,11 @@ Solution: directly use `concat`."
           end
          end
       | _ ->
+        Parser.leaveBreadcrumb p Grammar.ExprBlock;
         let a = parsePrimaryExpr ~operand:valueOrConstructor p in
         let e = parseBinaryExpr ~a p 1 in
         let e = parseTernaryExpr e p in
+        Parser.eatBreadcrumb p;
         begin match p.Parser.token with
         | Semicolon ->
           Parser.next p;
@@ -6749,8 +6756,9 @@ Solution: directly use `concat`."
     let loc = mkLoc startPos p.prevEndPos in
     Ast_helper.Te.constructor ~loc ~attrs name kind
 
-  and parseStructure p : Parsetree.structure =
-    parseRegion p ~grammar:Grammar.Structure ~f:parseStructureItemRegion
+  (* module structure on the file level *)
+  and parseImplementation p : Parsetree.structure =
+    parseRegion p ~grammar:Grammar.Implementation ~f:parseStructureItemRegion
     [@@progress (Parser.next, Parser.expect, Recover.recoverLident, Recover.skipTokensAndMaybeRetry)]
 
   and parseStructureItemRegion p =
@@ -7248,7 +7256,18 @@ Solution: directly use `concat`."
       let mty = parseModuleType p in
       Parser.expect Rparen p;
       {mty with pmty_loc = mkLoc startPos p.prevEndPos}
-    | Lbrace -> parseSpecification p
+    | Lbrace ->
+      Parser.next p;
+      let spec =
+        parseDelimitedRegion
+          ~grammar:Grammar.Signature
+          ~closing:Rbrace
+          ~f:parseSignatureItemRegion
+          p
+      in
+      Parser.expect Rbrace p;
+      let loc = mkLoc startPos p.prevEndPos in
+      Ast_helper.Mty.signature ~loc spec
     | Module -> (* TODO: check if this is still atomic when implementing first class modules*)
       parseModuleTypeOf p
     | Percent ->
@@ -7416,20 +7435,9 @@ Solution: directly use `concat`."
     let moduleExpr = parseModuleExpr p in
     Ast_helper.Mty.typeof_ ~loc:(mkLoc startPos p.prevEndPos) moduleExpr
 
+  (* module signature on the file level *)
   and parseSpecification p =
-    Parser.expect Lbrace p;
-    let spec =
-      parseDelimitedRegion
-        ~grammar:Grammar.Signature
-        ~closing:Rbrace
-        ~f:parseSignatureItemRegion
-        p
-    in
-    Parser.expect Rbrace p;
-    Ast_helper.Mty.signature spec
-
-  and parseSignature p =
-    parseRegion ~grammar:Grammar.Signature ~f:parseSignatureItemRegion p
+    parseRegion ~grammar:Grammar.Specification ~f:parseSignatureItemRegion p
     [@@progress (Parser.next, Parser.expect, Recover.recoverLident, Recover.skipTokensAndMaybeRetry)]
 
   and parseSignatureItemRegion p =
@@ -14222,8 +14230,8 @@ end = struct
 
   let parse (type a) (kind : a file_kind) p : a =
     match kind with
-    | Structure -> NapkinScript.parseStructure p
-    | Signature -> NapkinScript.parseSignature p
+    | Structure -> NapkinScript.parseImplementation p
+    | Signature -> NapkinScript.parseSpecification p
 
   let parseFile kind filename =
     let src = if String.length filename > 0 then
@@ -14330,7 +14338,7 @@ end = struct
 
   let parseNapkin src filename =
     let p = Parser.make src filename in
-    NapkinScript.parseStructure p
+    NapkinScript.parseImplementation p
 
   let benchmark ~filename ~lang ~action =
     let src = IO.readFile filename in
@@ -14346,7 +14354,7 @@ end = struct
       )
     | (Napkin, Print) ->
       let p = Parser.make src filename in
-      let ast = NapkinScript.parseStructure p in
+      let ast = NapkinScript.parseImplementation p in
       (fun _ ->
         let _ = Sys.opaque_identity (
           let cmtTbl = CommentTable.make () in

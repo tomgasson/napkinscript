@@ -1,5 +1,51 @@
 // Jest Snapshot v1, https://goo.gl/fbAQLP
 
+exports[`closingBraces.ns 1`] = `
+"=====Parsetree==========================================
+let x = 1
+let y = 2
+=====Errors=============================================
+
+File \\"/napkinscript/tests/parsing/errors/structure/closingBraces.ns\\", line 3, characters 0-1:
+
+
+1 │  let x = 1
+2 │  
+[31m3[0m │  [31m}[0m}}
+4 │  
+5 │  let y = 2
+
+I'm not sure what to parse here when looking at \\"}\\".
+
+
+File \\"/napkinscript/tests/parsing/errors/structure/closingBraces.ns\\", line 3, characters 1-2:
+
+
+1 │  let x = 1
+2 │  
+[31m3[0m │  }[31m}[0m}
+4 │  
+5 │  let y = 2
+
+I'm not sure what to parse here when looking at \\"}\\".
+
+
+File \\"/napkinscript/tests/parsing/errors/structure/closingBraces.ns\\", line 3, characters 2-3:
+
+
+1 │  let x = 1
+2 │  
+[31m3[0m │  }}[31m}[0m
+4 │  
+5 │  let y = 2
+
+I'm not sure what to parse here when looking at \\"}\\".
+
+
+
+========================================================"
+`;
+
 exports[`letBinding.js 1`] = `
 "=====Parsetree==========================================
 let rightResource =
