@@ -96,7 +96,7 @@ and b = 2[@@onSecondBinding ]
 let f : type t. t foo =
   fun sideEffect ->
     let module M = struct exception E of t  end in
-      let () = sideEffect () in fun x -> M.E x
+      sideEffect (); (fun x -> M.E x)
 let f : type t x u. (t * x * y) list = fun l -> f l"
 `;
 

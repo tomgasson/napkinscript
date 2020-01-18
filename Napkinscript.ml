@@ -5062,14 +5062,9 @@ Solution: directly use `concat`."
       let e1 = parseExpr p in
       ignore (Parser.optional p Semicolon);
       if Grammar.isBlockExprStart p.Parser.token then
-        let fakeUnitPat =
-          let unitLid = Location.mknoloc (Longident.Lident "()") in
-          Ast_helper.Pat.construct unitLid None
-        in
         let e2 = parseExprBlock p in
-        let vb = Ast_helper.Vb.mk ~loc:e1.pexp_loc fakeUnitPat e1 in
         let loc = {e1.pexp_loc with loc_end = e2.pexp_loc.loc_end} in
-        Ast_helper.Exp.let_ ~loc Asttypes.Nonrecursive [vb] e2
+        Ast_helper.Exp.sequence ~loc e1 e2
       else e1
 
   (* blockExpr ::= expr
@@ -5097,25 +5092,15 @@ Solution: directly use `concat`."
       if Grammar.isBlockExprStart p.Parser.token then
         let next = parseExprBlockItem p in
         ignore(Parser.optional p Semicolon);
-        let fakeUnitPat =
-          let unitLid = Location.mknoloc (Longident.Lident "()") in
-          Ast_helper.Pat.construct unitLid None
-        in
-        let vb = Ast_helper.Vb.mk ~loc:item.pexp_loc fakeUnitPat item in
-        let loc = {vb.pvb_loc with loc_end = next.pexp_loc.loc_end} in
-        Ast_helper.Exp.let_ ~loc Asttypes.Nonrecursive [vb] next
+        let loc = {item.pexp_loc with loc_end = next.pexp_loc.loc_end} in
+        Ast_helper.Exp.sequence ~loc item next
       else
         item
     | token when Grammar.isBlockExprStart token ->
       let next = parseExprBlockItem p in
       ignore(Parser.optional p Semicolon);
-      let fakeUnitPat =
-        let unitLid = Location.mknoloc (Longident.Lident "()") in
-        Ast_helper.Pat.construct unitLid None
-      in
-      let vb = Ast_helper.Vb.mk ~loc:item.pexp_loc fakeUnitPat item in
-      let loc = {vb.pvb_loc with loc_end = next.pexp_loc.loc_end} in
-      Ast_helper.Exp.let_ ~loc Asttypes.Nonrecursive [vb] next
+      let loc = {item.pexp_loc with loc_end = next.pexp_loc.loc_end} in
+      Ast_helper.Exp.sequence ~loc item next
     | _ ->
       item
     in
@@ -6841,17 +6826,7 @@ Solution: directly use `concat`."
       let exp = parseExpr p in
       Parser.optional p Semicolon |> ignore;
       let loc = mkLoc startPos p.prevEndPos in
-      begin match exp.pexp_desc with
-      | Pexp_apply _ ->
-        let fakeUnitPat =
-          let unitLid = Location.mknoloc (Longident.Lident "()") in
-          Ast_helper.Pat.construct unitLid None
-        in
-        let vb = Ast_helper.Vb.mk ~attrs fakeUnitPat exp in
-        Some (Ast_helper.Str.value ~loc Asttypes.Nonrecursive [vb])
-       | _ ->
-       Some (Ast_helper.Str.eval ~loc ~attrs exp)
-      end
+      Some (Ast_helper.Str.eval ~loc ~attrs exp)
     | _ -> None
 
   and parseJsImport ~startPos ~attrs p =
@@ -9321,6 +9296,27 @@ module CommentTable = struct
           walkExpr expr2 t inside;
           attach t.trailing expr2.pexp_loc trailing
         )
+      | Pexp_sequence (expr1, expr2) ->
+        let (leading, inside, trailing) = partitionByLoc comments expr1.pexp_loc in
+        let comments = if isBlockExpr expr1 then (
+          let (afterExpr, comments) = partitionByOnSameLine expr1.pexp_loc trailing in
+          walkExpr expr1 t (List.concat [leading; inside; afterExpr]);
+          comments
+        ) else (
+          attach t.leading expr1.pexp_loc leading;
+          walkExpr expr1 t inside;
+          let (afterExpr, comments) = partitionByOnSameLine expr1.pexp_loc trailing in
+          attach t.trailing expr1.pexp_loc afterExpr;
+          comments
+        ) in
+        if isBlockExpr expr2 then (
+          walkExpr expr2 t comments
+        ) else (
+          let (leading, inside, trailing) = partitionByLoc comments expr2.pexp_loc in
+          attach t.leading expr2.pexp_loc leading;
+          walkExpr expr2 t inside;
+          attach t.trailing expr2.pexp_loc trailing
+        )
       | Pexp_open (_override, longident, expr2) ->
         let (leading, comments) =
           partitionLeadingTrailing comments expr.pexp_loc in
@@ -9794,15 +9790,14 @@ module CommentTable = struct
         rest
       | None -> rest
       in
-      begin match case.pc_rhs.pexp_desc with
-      | Pexp_letmodule _ | Pexp_letexception _ | Pexp_let _ | Pexp_sequence _ | Pexp_open _  ->
+      if isBlockExpr case.pc_rhs then (
         walkExpr case.pc_rhs t comments
-      | _ ->
+      ) else (
         let (before, inside, after) = partitionByLoc comments case.pc_rhs.pexp_loc in
         attach t.leading case.pc_rhs.pexp_loc before;
         walkExpr case.pc_rhs t inside;
         attach t.trailing case.pc_rhs.pexp_loc after
-      end
+      )
 
     and walkExprRecordRow (longident, expr) t comments =
       let (beforeLongident, afterLongident) =
@@ -13723,7 +13718,7 @@ module Printer = struct
       collectRows ((loc, openDoc)::acc) expr2
     | Pexp_sequence (expr1, expr2) ->
       let exprDoc =
-        let doc = printExpressionWithComments expr1 cmtTbl in
+        let doc = printExpression expr1 cmtTbl in
         if Parens.blockExpr expr1 then addParens doc else doc
       in
       let loc = expr1.pexp_loc in
