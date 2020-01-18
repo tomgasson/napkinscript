@@ -4120,7 +4120,8 @@ Solution: directly use `concat`."
         let loc = mkLoc startPos p.prevEndPos in
         Ast_helper.Exp.constant ~loc c
       | Backtick ->
-        parseTemplateExpr p
+        let expr = parseTemplateExpr p in
+        {expr with pexp_loc = mkLoc startPos p.prevEndPos}
       | Uident _ | Lident _ ->
         parseValueOrConstructor p
       | Lparen ->
@@ -4416,27 +4417,31 @@ Solution: directly use `concat`."
       Ast_helper.Exp.ident op
     in
     let rec loop acc p =
+      let startPos = p.Parser.startPos in
       match p.Parser.token with
       | TemplateTail txt ->
         Parser.next p;
+        let loc = mkLoc startPos p.prevEndPos in
         if String.length txt > 0 then
-          let str = Ast_helper.Exp.constant (Pconst_string(txt, Some "j")) in
-          Ast_helper.Exp.apply hiddenOperator
+          let str = Ast_helper.Exp.constant ~loc (Pconst_string(txt, Some "j")) in
+          Ast_helper.Exp.apply ~loc hiddenOperator
             [Nolabel, acc; Nolabel, str]
         else
           acc
       | TemplatePart txt ->
         Parser.next p;
+        let loc = mkLoc startPos p.prevEndPos in
         let expr = parseExprBlock p in
+        let fullLoc = mkLoc startPos p.prevEndPos in
         Scanner.setTemplateMode p.scanner;
         Parser.expect Rbrace p;
-        let str = Ast_helper.Exp.constant (Pconst_string(txt, Some "j")) in
+        let str = Ast_helper.Exp.constant ~loc (Pconst_string(txt, Some "j")) in
         let next =
           let a = if String.length txt > 0 then
-              Ast_helper.Exp.apply hiddenOperator [Nolabel, acc; Nolabel, str]
+              Ast_helper.Exp.apply ~loc:fullLoc hiddenOperator [Nolabel, acc; Nolabel, str]
             else acc
           in
-          Ast_helper.Exp.apply hiddenOperator
+          Ast_helper.Exp.apply ~loc:fullLoc hiddenOperator
             [Nolabel, a; Nolabel, expr]
         in
         loop next p
@@ -4446,19 +4451,23 @@ Solution: directly use `concat`."
     in
     Scanner.setTemplateMode p.scanner;
     Parser.expect Backtick p;
+    let startPos = p.Parser.startPos in
     match p.Parser.token with
     | TemplateTail txt ->
+      let loc = mkLoc startPos p.endPos in
       Parser.next p;
-      Ast_helper.Exp.constant (Pconst_string(txt, Some "j"))
+      Ast_helper.Exp.constant ~loc (Pconst_string(txt, Some "j"))
     | TemplatePart txt ->
+      let constantLoc = mkLoc startPos p.endPos in
       Parser.next p;
       let expr = parseExprBlock p in
+      let fullLoc = mkLoc startPos p.prevEndPos in
       Scanner.setTemplateMode p.scanner;
       Parser.expect Rbrace p;
-      let str = Ast_helper.Exp.constant (Pconst_string(txt, Some "j")) in
+      let str = Ast_helper.Exp.constant ~loc:constantLoc (Pconst_string(txt, Some "j")) in
       let next =
         if String.length txt > 0 then
-          Ast_helper.Exp.apply hiddenOperator [Nolabel, str; Nolabel, expr]
+          Ast_helper.Exp.apply ~loc:fullLoc hiddenOperator [Nolabel, str; Nolabel, expr]
         else
           expr
       in
@@ -7852,6 +7861,8 @@ module ParsetreeViewer : sig
       (Parsetree.pattern list * Parsetree.pattern)
 
   val isBlockExpr : Parsetree.expression -> bool
+
+  val isTemplateLiteral: Parsetree.expression -> bool
 end = struct
   open Parsetree
 
@@ -8213,6 +8224,16 @@ end = struct
     | Pexp_let _
     | Pexp_open _
     | Pexp_sequence _ -> true
+    | _ -> false
+
+  let rec isTemplateLiteral expr =
+    match expr.pexp_desc with
+    | Pexp_apply (
+        {pexp_desc = Pexp_ident {txt = Longident.Lident "^"}},
+        [Nolabel, arg1; Nolabel, arg2]
+      ) ->
+      isTemplateLiteral arg1 || isTemplateLiteral arg2
+    | Pexp_constant (Pconst_string (_, Some _)) -> true
     | _ -> false
 end
 
@@ -9633,12 +9654,6 @@ module CommentTable = struct
         walkExpr operand1 t inside;
         let (afterOperand1, rest) =
           partitionAdjacentTrailing operand1.pexp_loc after in
-          (* partitionBeforeAfterPos *)
-          (* operand1.pexp_loc after in *)
-
-        (* print_endline "==============="; *)
-        (* List.iter (fun c -> Comment.toString c |> print_endline) afterOperand1; *)
-        (* print_endline "==============="; *)
         attach t.trailing operand1.pexp_loc afterOperand1;
         let (before, inside, after) = partitionByLoc rest operand2.pexp_loc in
         attach t.leading operand2.pexp_loc before;
@@ -10618,7 +10633,13 @@ module Printer = struct
       | Some c -> Doc.text (s ^ (Char.escaped c))
       | None -> Doc.text s
       end
-    | Pconst_string (s, _) -> Doc.text ("\"" ^ (escapeStringContents s) ^ "\"")
+    | Pconst_string (txt, None) ->
+        Doc.text ("\"" ^ (escapeStringContents txt) ^ "\"")
+    | Pconst_string (txt, Some prefix) ->
+      Doc.concat [
+        if prefix = "j" then Doc.nil else Doc.text prefix;
+        Doc.text ("`" ^ txt ^ "`")
+      ]
     | Pconst_float (s, _) -> Doc.text s
     | Pconst_char c -> Doc.text ("'" ^ (Char.escaped c) ^ "'")
 
@@ -12496,6 +12517,8 @@ module Printer = struct
     | Pexp_apply _ ->
       if ParsetreeViewer.isUnaryExpression e then
         printUnaryExpression e cmtTbl
+      else if ParsetreeViewer.isTemplateLiteral e then
+        printTemplateLiteral e cmtTbl
       else if ParsetreeViewer.isBinaryExpression e then
         printBinaryExpression e cmtTbl
       else
@@ -12909,6 +12932,25 @@ module Printer = struct
       )
     in
     printComments doc cmtTbl loc
+
+  and printTemplateLiteral expr cmtTbl =
+    let rec walkExpr expr =
+      let open Parsetree in
+      match expr.pexp_desc with
+      | Pexp_apply (
+          {pexp_desc = Pexp_ident {txt = Longident.Lident "^"}},
+          [Nolabel, arg1; Nolabel, arg2]
+        ) ->
+          let lhs = walkExpr arg1 in
+          let rhs = walkExpr arg2 in
+          Doc.concat [lhs; rhs]
+      | Pexp_constant (Pconst_string (txt, Some "j")) -> Doc.text txt
+      | _ ->
+        let doc = printExpressionWithComments expr cmtTbl in
+        Doc.concat [Doc.text "${"; doc; Doc.rbrace]
+    in
+    let content = walkExpr expr in
+    Doc.concat [Doc.text "`"; content; Doc.text "`"]
 
   and printUnaryExpression expr cmtTbl =
     let printUnaryOperator op = Doc.text (
