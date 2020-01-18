@@ -5388,20 +5388,17 @@ Solution: directly use `concat`."
     | args -> args
     in
     let loc = {funExpr.pexp_loc with loc_end = p.prevEndPos} in
-
-    let rec group grp acc = function
-    | (uncurried, lbl, expr)::xs ->
+    let args = match args with
+    | (u, lbl, expr)::args ->
+      let rec group (grp, acc) (uncurried, lbl, expr) =
         let (_u, grp) = grp in
         if uncurried == true then
-          group (true, [lbl, expr]) ((_u, (List.rev grp))::acc) xs
+          ((true, [lbl, expr]), ((_u, (List.rev grp))::acc))
         else
-          group (_u, ((lbl, expr)::grp)) acc xs
-    | [] ->
-        let (_u, grp) = grp in
-        List.rev ((_u, (List.rev grp))::acc)
-    in
-    let args = match args with
-    | (u, lbl, expr)::args -> group (u, [lbl, expr]) [] args
+          ((_u, ((lbl, expr)::grp)), acc)
+      in
+      let ((_u, grp), acc) = List.fold_left group((u, [lbl, expr]), []) args in
+      List.rev ((_u, (List.rev grp))::acc)
     | [] -> []
     in
     let apply = List.fold_left (fun callBody group ->
