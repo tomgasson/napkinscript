@@ -18,3 +18,5 @@ exports[`semi.js 1`] = `
 ;;Red
 ;;foo := 1"
 `;
+
+exports[`singleLineCommentWithoutNewline.ns 1`] = `";;RootView.init ()"`;

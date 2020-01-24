@@ -2114,9 +2114,7 @@ module Scanner = struct
   let scanSingleLineComment scanner =
     let startOff = scanner.offset in
     let startPos = position scanner in
-    while not (CharacterCodes.isLineBreak scanner.ch) &&
-      scanner.rdOffset < (Bytes.length scanner.src)
-    do
+    while not (CharacterCodes.isLineBreak scanner.ch) && scanner.ch >= 0 do
       next scanner
     done;
     let endPos = position scanner in
