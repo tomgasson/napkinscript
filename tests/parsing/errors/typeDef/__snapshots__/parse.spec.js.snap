@@ -73,14 +73,17 @@ type nonrec ('from, '_) derivedNode =
   updateF: 'from -> 'to_ }
 =====Errors=============================================
 
-File \\"/napkinscript/tests/parsing/errors/typeDef/typeParams.js\\", line 1, characters 9-10:
+File \\"/napkinscript/tests/parsing/errors/typeDef/typeParams.js\\", line 1, characters 9-13:
 
 
-[31m1[0m │  type node[31m([0m'a) = {
+[31m1[0m │  type node[31m('a)[0m = {
 2 │    _value: Js.Nullable.value<'a>
 3 │  }
 
-Type params require diamonds, example: type node<'a>
+Type parameters require angle brackets:
+  node<'a>
+
+
 
 
 File \\"/napkinscript/tests/parsing/errors/typeDef/typeParams.js\\", line 5, characters 25-27:

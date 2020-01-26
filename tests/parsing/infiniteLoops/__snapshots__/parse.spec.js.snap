@@ -663,16 +663,19 @@ include
   end
 =====Errors=============================================
 
-File \\"/napkinscript/tests/parsing/infiniteLoops/nonRecTypes.js\\", line 4, characters 28-29:
+File \\"/napkinscript/tests/parsing/infiniteLoops/nonRecTypes.js\\", line 4, characters 28-36:
 
 
 2 │            include (
 3 │                      {
-[31m4[0m │                        type t[31m([0m'value) = {
+[31m4[0m │                        type t[31m('value)[0m = {
 5 │                          mutable size: int,
 6 │                          mutable root: option(node('value)),
 
-Type params require diamonds, example: type node<'a>
+Type parameters require angle brackets:
+  t<'value>
+
+
 
 
 File \\"/napkinscript/tests/parsing/infiniteLoops/nonRecTypes.js\\", line 6, characters 44-45:
@@ -1160,16 +1163,19 @@ File \\"/napkinscript/tests/parsing/infiniteLoops/nonRecTypes.js\\", line 68, ch
 I'm not sure what to parse here when looking at \\"let\\".
 
 
-File \\"/napkinscript/tests/parsing/infiniteLoops/nonRecTypes.js\\", line 434, characters 30-31:
+File \\"/napkinscript/tests/parsing/infiniteLoops/nonRecTypes.js\\", line 434, characters 30-38:
 
 
 432 │      updateSum(Some(node), ~delta);
 433 │    };
-[31m434[0m │  type nonrec oldNewVisibleNodes[31m([0m'value) = {
+[31m434[0m │  type nonrec oldNewVisibleNodes[31m('value)[0m = {
 435 │    mutable old: array('value),
 436 │    mutable new_: array('value),
 
-Type params require diamonds, example: type node<'a>
+Type parameters require angle brackets:
+  oldNewVisibleNodes<'value>
+
+
 
 
 File \\"/napkinscript/tests/parsing/infiniteLoops/nonRecTypes.js\\", line 435, characters 20-21:
