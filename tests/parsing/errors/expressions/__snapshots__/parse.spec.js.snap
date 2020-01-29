@@ -13,7 +13,7 @@ File \\"/napkinscript/tests/parsing/errors/expressions/ambiguousArrow.js\\", lin
 2 │  
 3 │  let x = {
 
-I'm having a hard time parsing this code. What did you mean?
+Did you mean to annotate the parameter type or the return type?
   1) (b): int => \\"hi\\"
   2) (b: int) => \\"hi\\"
 
@@ -28,7 +28,7 @@ File \\"/napkinscript/tests/parsing/errors/expressions/ambiguousArrow.js\\", lin
 [31m6[0m │    [31ma + b : int => \\"test\\"[0m
 7 │  }
 
-I'm having a hard time parsing this code. What did you mean?
+Did you mean to annotate the parameter type or the return type?
   1) (<expr>): int => \\"test\\"
   2) (<expr>: int) => \\"test\\"
 

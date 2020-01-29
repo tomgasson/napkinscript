@@ -10936,9 +10936,7 @@ Solution: directly use `concat`."
         let msg =
           Doc.breakableGroup ~forceBreak:true (
             Doc.concat [
-              Doc.text "I'm having a hard time parsing this code.";
-              Doc.space;
-              Doc.text "What did you mean?";
+              Doc.text "Did you mean to annotate the parameter type or the return type?";
               Doc.indent (
                 Doc.concat [
                   Doc.line;
