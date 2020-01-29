@@ -95,6 +95,8 @@ type nonrec (_, 'value) node =
   mutable updatedTime: float } -> (derived, 'value) node "
 `;
 
+exports[`diamond.js 1`] = `"type nonrec ('a, 'b) t = .."`;
+
 exports[`privateTypeEquation.js 1`] = `
 "type nonrec t = private 'a
 type nonrec t = private string
