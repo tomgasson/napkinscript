@@ -44,3 +44,9 @@ let s = `
 `
 
 let s = `$dollar without $braces $interpolation`
+
+// don't sugar to one single template literal, keep the concatenation
+`the sky` ++ `is blue`
+
+// will print as one template literal
+`my ${language.name} is ` ++ `Bond, ${jamesbond.firstName}.`

@@ -2265,11 +2265,15 @@ end = struct
     | _ -> false
 
   let rec isTemplateLiteral expr =
+    let isPexpConstantString expr = match expr.pexp_desc with
+    | Pexp_constant (Pconst_string (_, Some "j")) -> true
+    | _ -> false
+    in
     match expr.pexp_desc with
     | Pexp_apply (
         {pexp_desc = Pexp_ident {txt = Longident.Lident "^"}},
         [Nolabel, arg1; Nolabel, arg2]
-      ) ->
+      ) when not (isPexpConstantString arg1 && isPexpConstantString arg2) ->
       isTemplateLiteral arg1 || isTemplateLiteral arg2
     | Pexp_constant (Pconst_string (_, Some _)) -> true
     | _ -> false
@@ -12822,6 +12826,7 @@ Solution: directly use `concat`."
     let opening = p.Parser.token in
     match opening with
     | LessThan | Lparen when p.startPos.pos_lnum == p.prevEndPos.pos_lnum ->
+      Scanner.setDiamondMode p.scanner;
       let openingStartPos = p.startPos in
       Parser.leaveBreadcrumb p Grammar.TypeParams;
       Parser.next p;
