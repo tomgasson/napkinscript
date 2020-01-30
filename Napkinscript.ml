@@ -12287,31 +12287,47 @@ Solution: directly use `concat`."
     *)
   and parseTypeParameter p =
     if (
-      p.Parser.token = Token.Tilde ||
-      p.token = Dot ||
+      p.Parser.token = Dot ||
       Grammar.isTypExprStart p.token
     ) then (
       let startPos = p.Parser.startPos in
       let uncurried = Parser.optional p Dot in
       let attrs = parseAttributes p in
-      match p.Parser.token with
-      | Tilde ->
+      begin match p.Parser.token with
+      | Lident name ->
         Parser.next p;
-        let (name, _loc) = parseLident p in
-        Parser.expect Colon p;
-        let typ = parseTypExpr p in
-        begin match p.Parser.token with
-        | Equal ->
+        let identLoc = mkLoc p.startPos p.prevEndPos in
+        begin match p.token with
+        | Colon ->
           Parser.next p;
-          Parser.expect Question p;
-          Some (uncurried, attrs, Asttypes.Optional name, typ, startPos)
+          let typ = parseTypExpr p in
+          begin match p.Parser.token with
+          | Equal ->
+            Parser.next p;
+            Parser.expect Question p;
+            Some (uncurried, attrs, Asttypes.Optional name, typ, startPos)
+          | _ ->
+            Some (uncurried, attrs, Asttypes.Labelled name, typ, startPos)
+          end
         | _ ->
-          Some (uncurried, attrs, Asttypes.Labelled name, typ, startPos)
+          let constr = Location.mkloc (Longident.Lident name) identLoc in
+          let args = parseTypeConstructorArgs p in
+          let typ =
+            Ast_helper.Typ.constr
+              ~loc:(mkLoc identLoc.loc_start p.prevEndPos)
+              ~attrs
+              constr
+              args
+          in
+          Some (uncurried, [], Asttypes.Nolabel, typ, startPos)
         end
       | _ ->
         let typ = parseTypExpr p in
-        let typWithAttributes = {typ with ptyp_attributes = List.concat[attrs; typ.ptyp_attributes]} in
+        let typWithAttributes = {typ with ptyp_attributes =
+          List.concat [attrs; typ.ptyp_attributes]
+        } in
         Some (uncurried, [], Asttypes.Nolabel, typWithAttributes, startPos)
+      end
     ) else
       None
 
