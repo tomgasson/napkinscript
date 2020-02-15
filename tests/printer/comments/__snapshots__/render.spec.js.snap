@@ -1069,8 +1069,7 @@ let /* before */ {
 
 // Ppat_or
 let /* b1 */ Blue /* b2 */ | /* c1 */ Red /* c2 */ = color
-let /* b1 */ Blue /* b2 */
-| (/* c1 */ Red /* c2 */ | /* d1 */ Green) /* d2 */ = color
+let /* b1 */ Blue /* b2 */ | Red /* c2 */ | /* d1 */ Green /* d2 */ = color
 
 // Ppat_constraint
 let /* c0 */ number /* c1 */: /* c2 */ int /* c3 */ = 123

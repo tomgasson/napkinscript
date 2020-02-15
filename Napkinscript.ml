@@ -1901,6 +1901,9 @@ module ParsetreeViewer : sig
   val isBlockExpr : Parsetree.expression -> bool
 
   val isTemplateLiteral: Parsetree.expression -> bool
+
+  val collectOrPatternChain:
+    Parsetree.pattern -> Parsetree.pattern list
 end = struct
   open Parsetree
 
@@ -2277,6 +2280,16 @@ end = struct
       isTemplateLiteral arg1 || isTemplateLiteral arg2
     | Pexp_constant (Pconst_string (_, Some _)) -> true
     | _ -> false
+
+  let collectOrPatternChain pat =
+    let rec loop pattern chain =
+      match pattern.ppat_desc with
+      | Ppat_or (left, right) ->
+        loop right (left::chain)
+      | _ ->
+        List.rev (pattern::chain)
+    in
+    loop pat []
 end
 
 module Parens: sig
@@ -6224,22 +6237,20 @@ module Printer = struct
         Doc.group (
           Doc.concat [Doc.text "exception"; Doc.line; pat]
         )
-    | Ppat_or (p1, p2) ->
-      let p1 =
-        let p = printPattern p1 cmtTbl in
-        match p1.ppat_desc with
-        | Ppat_or (_, _) -> Doc.concat [Doc.text "("; p; Doc.text ")"]
-        | _ -> p
-      in
-      let p2 =
-        let p = printPattern p2 cmtTbl in
-        match p2.ppat_desc with
-        | Ppat_or (_, _) -> Doc.concat [Doc.text "("; p; Doc.text ")"]
-        | _ -> p
-      in
-      Doc.group(
-        Doc.concat([p1; Doc.line; Doc.text "| "; p2])
-      )
+    | Ppat_or _ ->
+      (* Blue | Red | Green -> [Blue; Red; Green] *)
+      let orChain = ParsetreeViewer.collectOrPatternChain p in
+      let docs = List.mapi (fun i pat ->
+        let patternDoc = printPattern pat cmtTbl in
+        Doc.concat [
+          if i == 0 then Doc.nil else Doc.concat [Doc.line; Doc.text "| "];
+          match pat.ppat_desc with
+          (* (Blue | Red) | (Green | Black) | White *)
+          | Ppat_or _ -> addParens patternDoc
+          | _ -> patternDoc
+        ]
+      ) orChain in
+      Doc.group (Doc.concat docs)
     | Ppat_extension ext ->
       printExtensionWithComments ext cmtTbl
     | Ppat_lazy p ->
@@ -7599,21 +7610,32 @@ module Printer = struct
       )
     in
     let shouldInlineRhs = match case.pc_rhs.pexp_desc with
-    | Pexp_construct ({txt = Longident.Lident "()"}, _) -> true
+    | Pexp_construct ({txt = Longident.Lident ("()" | "true" | "false")}, _)
+    | Pexp_constant _
+    | Pexp_ident _ -> true
+    | _ when ParsetreeViewer.isHuggableExpression case.pc_rhs -> true
     | _ -> false
     in
+    let shouldIndentPattern = match case.pc_lhs.ppat_desc with
+    | Ppat_or _ -> false
+    | _ -> true
+    in
+    let patternDoc = printPattern case.pc_lhs cmtTbl in
+    let content = Doc.concat [
+      if shouldIndentPattern then Doc.indent patternDoc else patternDoc;
+      Doc.indent guard;
+      Doc.text " =>";
+      Doc.indent (
+        Doc.concat [
+          if shouldInlineRhs then Doc.space else Doc.line;
+          rhs;
+        ]
+      )
+    ] in
     Doc.group (
       Doc.concat [
         Doc.text "| ";
-        Doc.indent (
-          Doc.concat [
-            printPattern case.pc_lhs cmtTbl;
-            guard;
-            Doc.text " =>";
-            if shouldInlineRhs then Doc.space else Doc.line;
-            rhs;
-          ]
-        );
+        content;
       ]
     )
 

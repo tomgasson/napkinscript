@@ -144,6 +144,47 @@ exports[`case.js 1`] = `
     )
   }
 
+let isHuggableExpression = expr =>
+  switch expr.pexp_desc {
+  | Pexp_array(_)
+  | Pexp_tuple(_)
+  | Pexp_construct({txt: Longident.Lident(\\"::\\")}, _)
+  | Pexp_construct({txt: Longident.Lident(\\"[]\\")}, _)
+  | Pexp_extension({txt: \\"bs.obj\\"}, _)
+  | Pexp_record(_) => true
+  | _ => false
+  }
+
+switch colour {
+| (Red | Blue)
+| ((Green | Purple) | Rosa)
+| (Black | White)
+| AnotherColoooooour => x
+}
+
+let precedence = x =>
+  switch x {
+  | HashEqual | ColonEqual => 1
+  | Lor => 2
+  | Land => 3
+  | Equal
+  | EqualEqual
+  | EqualEqualEqual
+  | LessThan
+  | GreaterThan
+  | BangEqual
+  | BangEqualEqual
+  | LessEqual
+  | GreaterEqual
+  | BarGreater => 4
+  | Plus | PlusDot | Minus | MinusDot | PlusPlus => 5
+  | Asterisk | AsteriskDot | Forwardslash | ForwardslashDot => 6
+  | Exponentiation => 7
+  | Hash | HashHash | MinusGreater => 8
+  | Dot => 9
+  | _ => 0
+  }
+
 "
 `;
 
