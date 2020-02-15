@@ -7267,6 +7267,76 @@ module Printer = struct
           member;
           Doc.rbracket;
         ])
+    | Pexp_apply (
+        {pexp_desc = Pexp_ident {txt = Longident.Ldot (Lident "Array", "set")}},
+        [Nolabel, parentExpr; Nolabel, memberExpr; Nolabel, targetExpr]
+      ) ->
+        let member =
+          let memberDoc = printExpressionWithComments memberExpr cmtTbl in
+          let shouldInline = match memberExpr.pexp_desc with
+          | Pexp_constant _ | Pexp_ident _ -> true
+          | _ -> false
+          in
+          if shouldInline then memberDoc else (
+            Doc.concat [
+              Doc.indent (
+                Doc.concat [
+                  Doc.softLine;
+                  memberDoc;
+                ]
+              );
+              Doc.softLine
+            ]
+          )
+        in
+        let shouldIndentTargetExpr =
+          ParsetreeViewer.isBinaryExpression targetExpr ||
+          (match targetExpr with
+          | {
+              pexp_attributes = [({Location.txt="ns.ternary"}, _)];
+              pexp_desc = Pexp_ifthenelse (ifExpr, _, _)
+            }  ->
+            ParsetreeViewer.isBinaryExpression ifExpr || ParsetreeViewer.hasAttributes ifExpr.pexp_attributes
+        | { pexp_desc = Pexp_newtype _} -> false
+        | e ->
+            ParsetreeViewer.hasAttributes e.pexp_attributes ||
+            ParsetreeViewer.isArrayAccess e
+          )
+        in
+        let targetExpr =
+          let exprDoc = printExpressionWithComments targetExpr cmtTbl in
+          let needsParens = match targetExpr.pexp_desc with
+          | Pexp_constraint(
+              {pexp_desc = Pexp_pack _},
+              {ptyp_desc = Ptyp_package _}
+            ) -> false
+          | Pexp_constraint _ -> true
+          | _ -> false
+          in
+          if needsParens then addParens exprDoc else exprDoc
+        in
+        Doc.group (
+          Doc.concat [
+          printAttributes expr.pexp_attributes;
+          printExpressionWithComments parentExpr cmtTbl;
+          Doc.lbracket;
+          member;
+          Doc.rbracket;
+          Doc.text " =";
+          if shouldIndentTargetExpr then
+            Doc.indent (
+              Doc.concat [
+                Doc.line;
+                targetExpr;
+              ]
+            )
+          else
+            Doc.concat [
+              Doc.space;
+              targetExpr;
+            ]
+          ]
+        )
     (* TODO: cleanup, are those branches even remotely performant? *)
     | Pexp_apply (
         {pexp_desc = Pexp_ident lident},
