@@ -567,10 +567,7 @@ switch x {
 `;
 
 exports[`expr.ns 1`] = `
-"[192:31 - 192:32]
-[193:31 - 193:32]
-[193:80 - 193:81]
-// Pexp_ident
+"// Pexp_ident
 let pi = /* before */ Math.pi // after
 
 // Pexp_constant

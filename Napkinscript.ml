@@ -709,6 +709,9 @@ module Comment: sig
 
   val makeSingleLineComment: loc:Location.t -> string -> t
   val makeMultiLineComment: loc:Location.t -> string -> t
+  val fromOcamlComment:
+    loc:Location.t -> txt:string -> prevTokEndPos:Lexing.position -> t
+
 end = struct
   type style =
     | SingleLine
@@ -756,6 +759,13 @@ end = struct
     loc;
     style = MultiLine;
     prevTokEndPos = Lexing.dummy_pos;
+  }
+
+  let fromOcamlComment ~loc ~txt ~prevTokEndPos = {
+    txt;
+    loc;
+    style = MultiLine;
+    prevTokEndPos = prevTokEndPos
   }
 end
 
@@ -2843,13 +2853,6 @@ module CommentTable = struct
         None,
         Ast_helper.Pat.var ~loc:stringLoc.loc var
       ) in
-      Format.sprintf
-        "[%d:%d - %d:%d]"
-        stringLoc.loc.loc_start.pos_lnum
-        (stringLoc.loc.loc_start.pos_cnum - stringLoc.loc.loc_start.pos_bol)
-        stringLoc.loc.loc_end.pos_lnum
-        (stringLoc.loc.loc_end.pos_cnum - stringLoc.loc.loc_end.pos_bol)
-      |> print_endline;
       collect attrsBefore (parameter::acc) returnExpr
     | {pexp_desc = Pexp_fun (lbl, defaultExpr, pattern, returnExpr); pexp_attributes = [({txt = "bs"}, _)] as attrs} ->
       let parameter = (attrs, lbl, defaultExpr, pattern) in
@@ -9093,6 +9096,8 @@ module JsFfi = struct
     |> Ast_helper.Str.include_ ~loc:importDescr.jid_loc
 end
 
+module OcamlParser = Parser
+
 module Parser = struct
   type t = {
     mutable scanner: Scanner.t;
@@ -14364,6 +14369,7 @@ module Clflags: sig
   val profile: bool ref
   val bench: bool ref
   val print: string ref
+  val origin: string ref
   val files: string list ref
 
   val parse: unit -> unit
@@ -14377,6 +14383,7 @@ end = struct
   let addFilename filename = files := filename::(!files)
 
   let print = ref ""
+  let origin = ref ""
 
   let usage = "Usage: napkinscript <options> <file>\nOptions are:"
 
@@ -14384,6 +14391,7 @@ end = struct
     ("-recover", Arg.Unit (fun () -> recover := true), "Emit partial ast");
     ("-bench", Arg.Unit (fun () -> bench := true), "Run internal benchmarks");
     ("-print", Arg.String (fun txt -> print := txt), "Print either binary, ocaml or ast");
+    ("-parse", Arg.String (fun txt -> origin := txt), "Parse ocaml or napkinscript");
     ("-profile", Arg.Unit (fun () -> profile := true), "Enable performance profiling");
   ]
 
@@ -14391,25 +14399,30 @@ end = struct
 end
 
 module Driver: sig
-  val processFile: recover: bool -> target: string -> string -> unit
+  val processFile: recover: bool -> origin:string -> target: string -> string -> unit
 end = struct
   type 'a file_kind =
     | Structure: Parsetree.structure file_kind
     | Signature: Parsetree.signature file_kind
 
-  let parse (type a) (kind : a file_kind) p : a =
+  let parseNapkin (type a) (kind : a file_kind) p : a =
     match kind with
     | Structure -> NapkinScript.parseImplementation p
     | Signature -> NapkinScript.parseSpecification p
 
-  let parseFile kind filename =
+  let parseOcaml (type a) (kind : a file_kind) lexbuf : a =
+    match kind with
+    | Structure -> Parse.implementation lexbuf
+    | Signature -> Parse.interface lexbuf
+
+  let parseNapkinFile kind filename =
     let src = if String.length filename > 0 then
       IO.readFile filename
     else
       IO.readStdin ()
     in
     let p = Parser.make src filename in
-    let ast = parse kind p in
+    let ast = parseNapkin kind p in
     let report = match p.diagnostics with
     | [] -> None
     | diagnostics ->
@@ -14419,11 +14432,59 @@ end = struct
     in
     (ast, report, p)
 
-  let parseImplementation filename =
-    parseFile Structure filename
+  let parseOcamlFile kind filename =
+    let lexbuf = if String.length filename > 0 then
+      IO.readFile filename |> Lexing.from_string
+    else
+      Lexing.from_channel stdin
+    in
+    let ast = parseOcaml kind lexbuf in
+    let lexbuf2 = if String.length filename > 0 then
+      IO.readFile filename |> Lexing.from_string
+    else
+      Lexing.from_channel stdin
+    in
+    let comments =
+      let rec next (prevTokEndPos : Lexing.position) comments lb =
+        let token = Lexer.token_with_comments lb in
+        match token with
+        | OcamlParser.EOF -> comments
+        | OcamlParser.COMMENT (txt, loc) ->
+          let comment = Comment.fromOcamlComment
+            ~loc
+            ~prevTokEndPos
+            ~txt
+          in
+          next loc.Location.loc_end (comment::comments) lb
+        | _ ->
+          next lb.Lexing.lex_curr_p comments lb
+      in
+      let cmts = next lexbuf2.Lexing.lex_start_p [] lexbuf2 in
+      cmts
+      (* List.iter (fun c -> Comment.toString c |> print_endline) cmts *)
+    in
+    (* let () = *)
+      (* let comments = Lexer.comments () in *)
+      (* List.iter (fun (txt, _loc) -> *)
+        (* print_endline txt) comments *)
+    (* in *)
+    let p = Parser.make "" filename in
+    p.comments <- comments;
+    (ast, None, p)
 
-  let parseInterface filename =
-    parseFile Signature filename
+  let parseImplementation ~origin filename =
+    match origin with
+    | "ml" | "ocaml" ->
+      parseOcamlFile Structure filename
+    | _ ->
+      parseNapkinFile Structure filename
+
+  let parseInterface ~origin filename =
+    match origin with
+    | "ml" | "ocaml" ->
+      parseOcamlFile Signature filename
+    | _ ->
+      parseNapkinFile Signature filename
 
   let process parseFn printFn recover filename =
     let (ast, report, parserState) =
@@ -14466,7 +14527,7 @@ end = struct
       output_value stdout filename;
       output_value stdout ast
 
-  let processFile ~recover ~target filename =
+  let processFile ~recover ~origin ~target filename =
     try
       let len = String.length filename in
       let action =
@@ -14475,9 +14536,9 @@ end = struct
       in
       match action with
       | ProcessImplementation ->
-        process parseImplementation (printImplementation ~target filename) recover filename
+        process (parseImplementation ~origin) (printImplementation ~target filename) recover filename
       | ProcessInterface ->
-        process parseInterface (printInterface ~target filename) recover filename
+        process (parseInterface ~origin) (printInterface ~target filename) recover filename
     with
     | Failure txt ->
       prerr_string txt;
@@ -14567,10 +14628,18 @@ let () =
   let () = match !Clflags.files with
   | (file::_) as files ->
     List.iter (fun filename ->
-      Driver.processFile ~recover:!Clflags.recover ~target:!Clflags.print filename
+      Driver.processFile
+        ~recover:!Clflags.recover
+        ~target:!Clflags.print
+        ~origin:!Clflags.origin
+        filename
     ) files;
   | [] ->
-    Driver.processFile ~recover:!Clflags.recover ~target:!Clflags.print ""
+    Driver.processFile
+      ~recover:!Clflags.recover
+      ~target:!Clflags.print
+      ~origin:!Clflags.origin
+      ""
   in
   if !Clflags.profile then Profile.print();
   if !Clflags.bench then Benchmarks.run();
