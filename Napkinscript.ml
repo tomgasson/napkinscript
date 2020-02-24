@@ -14415,6 +14415,21 @@ end = struct
     | Structure -> Parse.implementation lexbuf
     | Signature -> Parse.interface lexbuf
 
+  let parseReason (type a) (kind : a file_kind) lexbuf : a =
+    let open Refmt_main3.Migrate_parsetree in
+    let module Convert = Convert(OCaml_404)(OCaml_406) in
+    match kind with
+    | Structure ->
+      let (ast, _ ) =
+        Refmt_main3.Reason_toolchain_reason.implementation lexbuf
+      in
+      Convert.copy_structure ast
+    | Signature ->
+      let (ast, _) =
+        Refmt_main3.Reason_toolchain_reason.interface lexbuf
+      in
+      Convert.copy_signature ast
+
   let parseNapkinFile kind filename =
     let src = if String.length filename > 0 then
       IO.readFile filename
@@ -14461,13 +14476,46 @@ end = struct
       in
       let cmts = next lexbuf2.Lexing.lex_start_p [] lexbuf2 in
       cmts
-      (* List.iter (fun c -> Comment.toString c |> print_endline) cmts *)
     in
-    (* let () = *)
-      (* let comments = Lexer.comments () in *)
-      (* List.iter (fun (txt, _loc) -> *)
-        (* print_endline txt) comments *)
-    (* in *)
+    let p = Parser.make "" filename in
+    p.comments <- comments;
+    (ast, None, p)
+
+  let parseReasonFile kind filename =
+    let lexbuf = if String.length filename > 0 then
+      IO.readFile filename |> Lexing.from_string
+    else
+      Lexing.from_channel stdin
+    in
+    let ast =
+      let reasonLexer = Refmt_main3.Reason_lexer.init lexbuf in
+      parseReason kind reasonLexer
+    in
+    let lexbuf2 = if String.length filename > 0 then
+      IO.readFile filename |> Lexing.from_string
+    else
+      Lexing.from_channel stdin
+    in
+    let comments =
+      let module RawLex = Refmt_main3.Reason_declarative_lexer in
+      let state = RawLex.make () in
+      let rec next (prevTokEndPos : Lexing.position) comments state lb =
+        let token = RawLex.token state lexbuf2  in
+        match token with
+        | Refmt_main3.Reason_parser.EOF -> comments
+        | Refmt_main3.Reason_parser.COMMENT (txt, loc) ->
+          let comment = Comment.fromOcamlComment
+            ~loc
+            ~prevTokEndPos
+            ~txt
+          in
+          next loc.Location.loc_end (comment::comments) state lb
+        | _ ->
+          next lb.Lexing.lex_curr_p comments state lb
+      in
+      let cmts = next lexbuf2.Lexing.lex_curr_p [] state lexbuf2 in
+      cmts
+    in
     let p = Parser.make "" filename in
     p.comments <- comments;
     (ast, None, p)
@@ -14476,6 +14524,8 @@ end = struct
     match origin with
     | "ml" | "ocaml" ->
       parseOcamlFile Structure filename
+    | "re" | "reason" ->
+      parseReasonFile Structure filename
     | _ ->
       parseNapkinFile Structure filename
 
@@ -14483,6 +14533,8 @@ end = struct
     match origin with
     | "ml" | "ocaml" ->
       parseOcamlFile Signature filename
+    | "re" | "reason" ->
+      parseReasonFile Signature filename
     | _ ->
       parseNapkinFile Signature filename
 
