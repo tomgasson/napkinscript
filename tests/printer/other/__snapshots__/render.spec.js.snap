@@ -82,8 +82,9 @@ and inst<'t> = {
  */
 /* Make it even more generalized on action than necessary to avoid GADT
  * errors. */
-and replacer<'t> = inst<'t> => inst<'t> => unit constraint 't = ('s, 'a) => 'sub
-and subreplacer<'sub> = subtree<'sub> => subtree<'sub> => unit
+and replacer<'t> = (inst<'t> => inst<'t>) => unit
+  constraint 't = ('s, 'a) => 'sub
+and subreplacer<'sub> = (subtree<'sub> => subtree<'sub>) => unit
 
 "
 `;

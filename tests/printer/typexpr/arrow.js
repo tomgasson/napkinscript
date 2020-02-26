@@ -92,3 +92,8 @@ type t = (. @attr int) => unit
 type t = (. @attr int, . @attr2 int) => unit 
 type t = (. @attrOnInt int, @attrOnInt int, . @attrOnInt int, @attrOnInt int) => int
 type t = (. @attr ~x: int, ~y: int, . @attr ~z: int, @attr ~omega: int) => unit 
+
+@bs.val external requestAnimationFrame: (float => unit) => unit = "requestAnimationFrame"
+@bs.val external requestAnimationFrame: @attr (float => unit) => unit = "requestAnimationFrame"
+
+type arrows = (int, (float => unit) => unit, float) => unit

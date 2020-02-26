@@ -5756,6 +5756,12 @@ module Printer = struct
             ]
           else Doc.nil
           in
+          let typDoc =
+            let doc = printTypExpr n cmtTbl in
+            match n.ptyp_desc with
+            | Ptyp_arrow _ -> addParens doc
+            | _ -> doc
+          in
           Doc.group (
             Doc.concat [
               Doc.group attrs;
@@ -5766,7 +5772,7 @@ module Printer = struct
                     Doc.indent (
                       Doc.concat [
                         Doc.softLine;
-                        printTypExpr n cmtTbl;
+                        typDoc;
                         Doc.text " => ";
                         returnDoc;
                       ]
@@ -5776,7 +5782,7 @@ module Printer = struct
                   ]
                 else
                 Doc.concat [
-                  printTypExpr n cmtTbl;
+                  typDoc;
                   Doc.text " => ";
                   returnDoc;
                 ]
