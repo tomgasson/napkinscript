@@ -7870,7 +7870,18 @@ module Printer = struct
 			| Asttypes.Recursive -> Doc.text "rec "
 			in
       let letDoc = printValueBindings ~recFlag valueBindings cmtTbl in
-      collectRows ((loc, letDoc)::acc) expr2
+      (* let () = {
+       *   let () = foo()
+       *   ()
+       * }
+       * We don't need to print the () on the last line of the block
+       *)
+      begin match expr2.pexp_desc with
+      | Pexp_construct ({txt = Longident.Lident "()"}, _) ->
+        List.rev ((loc, letDoc)::acc)
+      | _ ->
+        collectRows ((loc, letDoc)::acc) expr2
+      end
     | _ ->
       let exprDoc =
         let doc = printExpression expr cmtTbl in

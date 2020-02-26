@@ -8,3 +8,7 @@ let x = {
   sideEffect2()
   ()
 }
+
+let () = {
+  let () = foo() // don't print unit on the next line
+}
