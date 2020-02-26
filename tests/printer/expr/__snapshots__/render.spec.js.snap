@@ -672,6 +672,122 @@ let () = {
 "
 `;
 
+exports[`braced.js 1`] = `
+"let f = (a, b) => { a + b }
+let f = (a, b) => { a }
+
+let f = (a, b) => {
+  a + b
+}
+
+let f = (a, b) => {
+  a
+}
+
+let x = { a }
+let x = { a + b }
+
+let x = {
+  // here
+  a
+}
+
+let x = {
+  // here
+  a + b
+}
+
+let _ = { a }
+
+let _ = { \\"constant\\" }
+
+let _ = { () => Js.log(\\"test\\") }
+let _ = {
+  switch b {
+  | true => ()
+  | false => ()
+  }
+}
+let _ = switch b {
+| true => ()
+| false => ()
+}
+let _ = { apply(a, b) }
+let _ = apply(a, b)
+
+let _ = {
+  try danger() catch {
+  | Exit => ()
+  }
+}
+let _ = try danger() catch {
+| Exit => ()
+}
+
+let _ = (a, b, x + y)
+let _ = { (a, b, x + y) }
+
+let _ = { Rgb(r, g, b) }
+let _ = Rgb(r, g, b)
+
+let _ = { {name: \\"steve\\", age: 30} }
+let _ = {name: \\"steve\\", age: 30}
+
+let _ = user.name.toString()
+let _ = { user.name.toString() }
+let _ = user.name.first
+let _ = { user.name.first }
+
+let _ = { [a, b, c] }
+let _ = [a, b, c]
+
+let _ = true ? true : false
+let _ = { true ? true : false }
+
+let _ = {
+  if true {
+    ()
+  } else {
+    ()
+  }
+}
+let _ = {
+  if true {
+    ()
+  } else {
+    ()
+  }
+}
+
+let _ = {
+  while true {
+    ()
+  }
+}
+let _ = while true {
+  ()
+}
+
+let _ = {
+  for _ in 0 to 10 {
+    ()
+  }
+}
+
+let _ = { (foo: string) }
+let f = (): string => foo // equivalent to  (): string => ...
+
+let _ = assert true
+let _ = { assert true }
+let _ = { lazy true }
+
+let _ = { %extension }
+let _ = { module(ME) }
+let _ = { module(ME: MyMod) }
+
+"
+`;
+
 exports[`bsObj.js 1`] = `
 "let user = {
   \\"name\\": \\"Steve\\",
@@ -1540,7 +1656,9 @@ let avatarSection =
           }
           onMouseEnter={_ => setHoveringAdmin(true)}
           onMouseLeave={_ => setHoveringAdmin(false)}
-          onClick={_e => stopImpersonating(csrfToken)}>
+          onClick={_e => {
+            stopImpersonating(csrfToken)
+          }}>
           <Avatar user=viewer size=45 />
         </div>
       : React.nullElement}
@@ -2372,7 +2490,7 @@ let f = isPositive ? x => x + 1 : y => y - 1
 let f = isPositive ? ((a, b): int => a + b) : ((c, d): int => c - d)
 let f = isPositive ? ((a, b): int => a + b) : ((c, d): int => c - d)
 
-a => a ? () => a : () => a
+a => a ? () => { a } : () => { a }
 a => a ? a : a
 a =>
   a ? aasdasdasdasdasdasdaaasdasdasdasdasdasdasdasdasdasdasdasdasdaaaaaaaaa : a

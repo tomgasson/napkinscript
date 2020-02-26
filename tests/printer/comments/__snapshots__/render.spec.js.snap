@@ -46,6 +46,10 @@ exports[`blockExpr.ns 1`] = `
 
 let () = {
   /* c0 */ sideEffect1() /* c1 */
+}
+
+let () = {
+  /* c0 */ sideEffect1() /* c1 */
   /* c2 */ sideEffect2() /* c3 */
 }
 

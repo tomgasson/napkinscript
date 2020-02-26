@@ -127,39 +127,47 @@ exports[`binaryNoEs6Arrow.js 1`] = `
 
 exports[`block.js 1`] = `
 "let b =
-  let module Array = Belt.Array in
-    ([|1;2|] |. (Array.map (fun x -> x + 1))) |. Js.log
-let b = let open Belt.Array in ([|1;2|] |. (map (fun x -> x + 1))) |. Js.log
-let b = let exception QuitEarly  in raise QuitEarly
-let b = let a = 1 in let b = 2 in a + b
-let b = let _ = sideEffect () in ()
-let b = let _ = sideEffect () in ()
-let b = a (); b (); c ()
-let b = a (); b (); (let a = 1 in f a)
-let b = let a = 1 in let b = 2 in ()
+  ((let module Array = Belt.Array in
+      ([|1;2|] |. (Array.map (fun x -> x + 1))) |. Js.log)
+  [@ns.braces ])
 let b =
-  let module Array = Belt.Array in
-    let open Array in
-      let exception Terminate of int  in
-        let a = 1 in
-        let b = 2 in
-        sideEffect ();
-        (let x = (1 + 2) |. (fun x -> x + 1) in raise (Terminate x))
-let b = f (); g (); h (); (let arr = [|1;2;3|] in ())
+  ((let open Belt.Array in ([|1;2|] |. (map (fun x -> x + 1))) |. Js.log)
+  [@ns.braces ])
+let b = ((let exception QuitEarly  in raise QuitEarly)[@ns.braces ])
+let b = ((let a = 1 in let b = 2 in a + b)[@ns.braces ])
+let b = ((let _ = sideEffect () in ())[@ns.braces ])
+let b = ((let _ = sideEffect () in ())[@ns.braces ])
+let b = ((a (); b (); c ())[@ns.braces ])
+let b = ((a (); b (); (let a = 1 in f a))[@ns.braces ])
+let b = ((let a = 1 in let b = 2 in ())[@ns.braces ])
+let b =
+  ((let module Array = Belt.Array in
+      let open Array in
+        let exception Terminate of int  in
+          let a = 1 in
+          let b = 2 in
+          sideEffect ();
+          (let x = (1 + 2) |. (fun x -> x + 1) in raise (Terminate x)))
+  [@ns.braces ])
+let b = ((f (); g (); h (); (let arr = [|1;2;3|] in ()))[@ns.braces ])
 let res =
-  let a = \\"a starts out as\\" in
-  (print_string a; (let a = 20 in print_int a)); print_string a
+  ((let a = \\"a starts out as\\" in
+    (print_string a; (let a = 20 in print_int a)); print_string a)
+  [@ns.braces ])
 let res =
-  let a = \\"first its a string\\" in
-  let a = 20 in print_int a; print_int a; print_int a
+  ((let a = \\"first its a string\\" in
+    let a = 20 in print_int a; print_int a; print_int a)
+  [@ns.braces ])
 let res =
-  let a = \\"a is always a string\\" in
-  print_string a; (let b = 30 in print_int b)
-let nestedLet = let _ = 1 in ()
-let nestedLet = let _ = 1 in 2
-let init () = foo (1 == 1); [%assert 1 == 2]
-let init () = [%assert 1 == 2]; foo (1 == 1); [%assert 1 == 2]
-let f () = let x = 1 in fun _ -> ()"
+  ((let a = \\"a is always a string\\" in
+    print_string a; (let b = 30 in print_int b))
+  [@ns.braces ])
+let nestedLet = ((let _ = 1 in ())[@ns.braces ])
+let nestedLet = ((let _ = 1 in 2)[@ns.braces ])
+let init () = ((foo (1 == 1); [%assert 1 == 2])[@ns.braces ])
+let init () = (([%assert 1 == 2]; foo (1 == 1); [%assert 1 == 2])
+  [@ns.braces ])
+let f () = ((let x = 1 in fun _ -> ())[@ns.braces ])"
 `;
 
 exports[`bracedOrRecord.js 1`] = `
@@ -169,24 +177,26 @@ let r = { a = expr }
 let r = { a = expr }
 let r = { a = expr; b = expr2 }
 let r = { f = (fun x -> x + b) }
-let e = a
-let e = a
-let e = a; b ()
-let e = - a
-let e = a + b
-let e = ((if a then true else false)[@ns.ternary ])
-let e = ((if a |> computation then true else false)[@ns.ternary ])
-let e = a.(0)
-let e = f b
-let e = (a.b).c
-let e = arr.(x) <- 20
-let e x = (x + 1) |> (doStuff config)
-let e = (fun x -> x + 1) |> (doStuff config)
-let e = ((if fun x -> x + 1 then true else false)[@ns.ternary ])
-let e = (fun x -> x + 1) |> sideEffect; logToAnalytics Shady.ml
-let f event = (event.target).value
-let f event = ((event.target).value : string)
-let x = let a = 1 in let b = 2 in a + b"
+let e = ((a)[@ns.braces ])
+let e = ((a)[@ns.braces ])
+let e = ((a; b ())[@ns.braces ])
+let e = ((- a)[@ns.braces ])
+let e = ((a + b)[@ns.braces ])
+let e = ((if a then true else false)[@ns.braces ][@ns.ternary ])
+let e = ((if a |> computation then true else false)
+  [@ns.braces ][@ns.ternary ])
+let e = ((a.(0))[@ns.braces ])
+let e = ((f b)[@ns.braces ])
+let e = (((a.b).c)[@ns.braces ])
+let e = ((arr.(x) <- 20)[@ns.braces ])
+let e = ((fun x -> (x + 1) |> (doStuff config))[@ns.braces ])
+let e = (((fun x -> x + 1) |> (doStuff config))[@ns.braces ])
+let e = ((if fun x -> x + 1 then true else false)[@ns.braces ][@ns.ternary ])
+let e = (((fun x -> x + 1) |> sideEffect; logToAnalytics Shady.ml)
+  [@ns.braces ])
+let f = ((fun event -> (event.target).value)[@ns.braces ])
+let f = ((fun event -> ((event.target).value : string))[@ns.braces ])
+let x = ((let a = 1 in let b = 2 in a + b)[@ns.braces ])"
 `;
 
 exports[`bsObject.js 1`] = `
@@ -194,16 +204,18 @@ exports[`bsObject.js 1`] = `
 let y = [%bs.obj { age = 30 }]
 let y = [%bs.obj { age = 30; name = \\"steve\\" }]
 let y = [%bs.obj { age = 30; name = \\"steve\\" }]
-let x = \\"age\\"
-let x = \\"age\\".(0)
-let x = \\"age\\" |. Js.log
-let x = ((if \\"age\\" then true else false)[@ns.ternary ])
-let x = \\"age\\" |. Js.log; (let foo = 1 in let bar = 2 in foo + bar)
+let x = ((\\"age\\")[@ns.braces ])
+let x = ((\\"age\\".(0))[@ns.braces ])
+let x = ((\\"age\\" |. Js.log)[@ns.braces ])
+let x = ((if \\"age\\" then true else false)[@ns.braces ][@ns.ternary ])
+let x = ((\\"age\\" |. Js.log; (let foo = 1 in let bar = 2 in foo + bar))
+  [@ns.braces ])
 let x =
-  ((if \\"age\\" then true else false)
-  [@ns.ternary ]);
-  (let foo = 1 in let bar = 2 in foo + bar)
-let x = \\"age\\".(0); (let foo = 1 in let bar = 2 in foo + bar)"
+  ((((if \\"age\\" then true else false)
+    [@ns.ternary ]);
+    (let foo = 1 in let bar = 2 in foo + bar))
+  [@ns.braces ])
+let x = ((\\"age\\".(0); (let foo = 1 in let bar = 2 in foo + bar))[@ns.braces ])"
 `;
 
 exports[`constants.js 1`] = `
@@ -259,7 +271,7 @@ let x = ' '
 let x = '\\\\017'
 let x = '\\\\170'
 let x = '\\\\179'
-let () = getResult (); (-10)"
+let () = ((getResult (); (-10))[@ns.braces ])"
 `;
 
 exports[`constructor.js 1`] = `
@@ -320,9 +332,10 @@ let x = ([%bs.raw \\"1\\"]) + ([%bs.raw \\"2\\"])"
 
 exports[`firstClassModule.js 1`] = `
 "let makeSet (type s) cmp =
-  let module S = (Set.Make)(struct type nonrec t = s
-                                   let compare = cmp end) in ((module
-    S) : (module Set.S with type elt = s))
+  ((let module S = (Set.Make)(struct type nonrec t = s
+                                     let compare = cmp end) in ((module
+      S) : (module Set.S with type elt = s)))
+  [@ns.braces ])
 let three = ((module Three) : (module X_int))
 let numbers = [|three;(module Four)|]
 let numbers = (three, (module Four))
@@ -330,8 +343,9 @@ let numbers = [three; (module Four)]
 let numbers = [|three;(module struct let x = 4 end)|]
 let numbers = (three, (module struct let x = 4 end))
 let numbers = [three; (module struct let x = 4 end)]
-let plus m1 m2 = ((module
-  struct let x = (to_int m1) + (to_int m2) end) : (module X_int))
+let plus m1 m2 = ((((module
+  struct let x = (to_int m1) + (to_int m2) end) : (module X_int)))
+  [@ns.braces ])
 let plus m1 m2 = ((module
   struct let x = (to_int m1) + (to_int m2) end) : (module X_int))
 let unique_instance = ((module
@@ -344,15 +358,18 @@ let build_instance (type a)
          let this = Q.create config end) : (module Query_handler_instance))
 let build_instance (type a)
   ((module Q)  : (module Query_handler with type config = a)) config =
-  ((module
+  ((((module
   struct module Query_handler = Q
-         let this = Q.create config end) : (module Query_handler_instance))
+         let this = Q.create config end) : (module Query_handler_instance)))
+  [@ns.braces ])
 let unique_instance = build_instance (module Unique) 0
 let build_dispatch_table handlers =
-  let table = Hashtbl.create (module String) in
-  List.iter handlers
-    ~f:(fun (((module I)  : (module Query_handler_instance)) as instance) ->
-          Hashtbl.set table ~key:I.Query_handler.name ~data:instance) table
+  ((let table = Hashtbl.create (module String) in
+    List.iter handlers
+      ~f:(fun (((module I)  : (module Query_handler_instance)) as instance)
+            -> Hashtbl.set table ~key:I.Query_handler.name ~data:instance)
+      table)
+  [@ns.braces ])
 ;;(module Three)
 ;;((module Three) : (module X_int))"
 `;
@@ -516,19 +533,20 @@ let y =
                             updater
                               (fun latestComponentBag ->
                                  fun _ ->
-                                   let currentActualPath =
-                                     Routes.hashOfUri newUrl in
-                                   let pathFromState =
-                                     Routes.stateToPath
-                                       latestComponentBag.state in
-                                   ((if currentActualPath = pathFromState
-                                     then None
-                                     else
-                                       dispatchEventless
-                                         (State.UriNavigated
-                                            currentActualPath)
-                                         latestComponentBag ())
-                                     [@ns.ternary ])) ())[@ns.jsxPropLoc ])
+                                   ((let currentActualPath =
+                                       Routes.hashOfUri newUrl in
+                                     let pathFromState =
+                                       Routes.stateToPath
+                                         latestComponentBag.state in
+                                     ((if currentActualPath = pathFromState
+                                       then None
+                                       else
+                                         dispatchEventless
+                                           (State.UriNavigated
+                                              currentActualPath)
+                                           latestComponentBag ())
+                                       [@ns.ternary ]))
+                                   [@ns.braces ])) ())[@ns.jsxPropLoc ])
       ~children:[] ())
   [@JSX ])
 let z =
@@ -674,8 +692,9 @@ let _ =
       [@ns.jsxPropLoc ]) ~children:[] ())
   [@JSX ])
 let _ =
-  ((div ~onClick:((fun event -> Js.log event; handleChange event)
-      [@ns.jsxPropLoc ]) ~children:[] ())
+  ((div
+      ~onClick:((fun event -> ((Js.log event; handleChange event)
+                   [@ns.braces ]))[@ns.jsxPropLoc ]) ~children:[] ())
   [@JSX ])
 let _ =
   ((StaticDiv.createElement
@@ -684,8 +703,8 @@ let _ =
                      fun baz ->
                        fun lineBreak ->
                          fun identifier ->
-                           doStuff foo bar baz; bar lineBreak identifier)
-      [@ns.jsxPropLoc ]) ~children:[] ())
+                           ((doStuff foo bar baz; bar lineBreak identifier)
+                           [@ns.braces ]))[@ns.jsxPropLoc ]) ~children:[] ())
   [@JSX ])
 let _ =
   ((AttrDiv.createElement ~onClick:((fun event -> handleChange event)
@@ -707,11 +726,13 @@ let _ =
       [@ns.jsxPropLoc ]) ~children:[] ())
   [@JSX ])
 let _ =
-  ((div ~onClick:((fun e -> (doStuff (); bar foo : event))[@ns.jsxPropLoc ])
-      ~children:[] ())
+  ((div ~onClick:((fun e -> (((doStuff (); bar foo)[@ns.braces ]) : event))
+      [@ns.jsxPropLoc ]) ~children:[] ())
   [@JSX ])
 let _ =
-  ((div ~onClick:((fun e -> fun e2 -> (doStuff (); bar foo : event))
+  ((div
+      ~onClick:((fun e ->
+                   fun e2 -> (((doStuff (); bar foo)[@ns.braces ]) : event))
       [@ns.jsxPropLoc ]) ~children:[] ())
   [@JSX ])
 let _ =
@@ -720,10 +741,10 @@ let _ =
                    fun bar ->
                      fun baz ->
                        fun superLongIdent ->
-                         fun breakLine ->
-                           (doStuff (); bar foo : (event * event2 * event3 *
-                                                    event4 * event5)))
-      [@ns.jsxPropLoc ]) ~children:[] ())
+                         fun breakLine -> (((doStuff (); bar foo)
+                           [@ns.braces ]) : (event * event2 * event3 * event4
+                                              * event5)))[@ns.jsxPropLoc ])
+      ~children:[] ())
   [@JSX ])
 let _ =
   ((div
@@ -785,19 +806,21 @@ let _ =
                                    ~height:\\"20px\\" ~borderRadius:\\"100%\\"
                                    ~backgroundColor:\\"red\\")[@ns.jsxPropLoc ])
                         ~children:[] ())
-                    [@JSX ]))[@foo ]) ())
+                    [@ns.braces ][@JSX ]))[@foo ]) ())
   [@JSX ])
 let _ =
   ((Animated.createElement ~initialValue:((0.0)[@ns.jsxPropLoc ])
       ~value:((value)[@ns.jsxPropLoc ])
       ~children:(fun value ->
-                   let width = \\"20px\\" in
-                   let height = \\"20px\\" in
-                   ((div
-                       ~style:((ReactDOMRe.Style.make ~width ~height
-                                  ~borderRadius:\\"100%\\" ~backgroundColor:\\"red\\")
-                       [@ns.jsxPropLoc ]) ~children:[] ())
-                     [@JSX ])) ())
+                   ((let width = \\"20px\\" in
+                     let height = \\"20px\\" in
+                     ((div
+                         ~style:((ReactDOMRe.Style.make ~width ~height
+                                    ~borderRadius:\\"100%\\"
+                                    ~backgroundColor:\\"red\\")[@ns.jsxPropLoc ])
+                         ~children:[] ())
+                       [@JSX ]))
+                   [@ns.braces ])) ())
   [@JSX ])
 let _ =
   ((div ~callback:((reduce (fun () -> not state))[@ns.jsxPropLoc ])
@@ -947,10 +970,12 @@ let r = { (make () : myRecord) with foo = bar }"
 exports[`sideEffects.js 1`] = `
 ";;foo ()
 ;;bar ()
-let () = foo (); bar ()
+let () = ((foo (); bar ())[@ns.braces ])
 let () =
-  let x = 1 in
-  sideEffect (); (let y = 2 in sideEffect2 (); (let z = 3 in sideEffect3 ()))
+  ((let x = 1 in
+    sideEffect ();
+    (let y = 2 in sideEffect2 (); (let z = 3 in sideEffect3 ())))
+  [@ns.braces ])
 ;;while true do
     sideEffect1 ();
     (let x = 1 in sideEffect2 (); (let y = 2 in sideEffect3 ())) done
@@ -969,7 +994,7 @@ exports[`try.js 1`] = `
 ";;try let x = 1 in let y = 2 in dangerousCall (x + y)
   with | Foo -> Js.log \\"catched Foo\\" | Exit -> Js.log \\"catched exit\\"
 ;;try myDangerousFn () with | Foo -> Js.log \\"catched Foo\\"[@@attr ]
-let x = let y = 1 in try apply y with | _ -> 2"
+let x = ((let y = 1 in try apply y with | _ -> 2)[@ns.braces ])"
 `;
 
 exports[`tuple.js 1`] = `
@@ -982,7 +1007,7 @@ exports[`tupleVsDivision.js 1`] = `
 ";;(foo ()) / 1
 ;;foo ()
 ;;(1, 2) |. printTuple
-let f () = (foo ()) / 1; foo (); (1, 2) |. printTuple"
+let f () = (((foo ()) / 1; foo (); (1, 2) |. printTuple)[@ns.braces ])"
 `;
 
 exports[`unary.js 1`] = `
@@ -1001,8 +1026,10 @@ let width =
   (((w -. innerLeft) -. imageWidth) -. imageRightGap) -. rowInnerRight
 let width = (((w - innerLeft) - imageWidth) - imageRightGap) - rowInnerRight
 let width =
-  w; -. innerLeft; -. imageWidth; -. imageRightGap; -. rowInnerRight
-let width = w; - innerLeft; - imageWidth; - imageRightGap; - rowInnerRight"
+  ((w; -. innerLeft; -. imageWidth; -. imageRightGap; -. rowInnerRight)
+  [@ns.braces ])
+let width = ((w; - innerLeft; - imageWidth; - imageRightGap; - rowInnerRight)
+  [@ns.braces ])"
 `;
 
 exports[`uncurried.js 1`] = `

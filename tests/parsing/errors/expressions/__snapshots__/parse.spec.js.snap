@@ -3,7 +3,8 @@
 exports[`ambiguousArrow.js 1`] = `
 "=====Parsetree==========================================
 let a b = (\\"hi\\" : int)
-let x = let a = 1 in let b = 2 in fun (<expr>) -> (\\"test\\" : int)
+let x = ((let a = 1 in let b = 2 in fun (<expr>) -> (\\"test\\" : int))
+  [@ns.braces ])
 =====Errors=============================================
 
 File \\"/napkinscript/tests/parsing/errors/expressions/ambiguousArrow.js\\", line 1, characters 8-21:
@@ -61,7 +62,8 @@ Did you forget a \`]\` here?
 exports[`arrow.js 1`] = `
 "=====Parsetree==========================================
 ;;(Object.keys providers).reduce
-    (fun elements -> fun providerId -> let x = 1 in let b = 2 in x + b)
+    (fun elements ->
+       fun providerId -> ((let x = 1 in let b = 2 in x + b)[@ns.braces ]))
 =====Errors=============================================
 
 File \\"/napkinscript/tests/parsing/errors/expressions/arrow.js\\", line 1, characters 51-52:
@@ -103,18 +105,20 @@ Did you forget a \`)\` here?
 exports[`block.js 1`] = `
 "=====Parsetree==========================================
 let findThreadByIdLinearScan ~threads  ~id  =
-  Js.Array2.findi ThreadsModel.threads
-    (fun thread ->
-       fun i ->
-         let thisId =
-           match thread with
-           | ServerData.OneToOne { otherPersonIDWhichIsAlsoThreadID } ->
-               otherPersonIDWhichIsAlsoThreadID
-           | Group { id } -> id
-           | Unknown { id } ->
-               (unknown.id |. Js.String.make) |. FBID.ofStringUnsafe in
-         thisId == id)
-let x = loop 0 (Nil |. (push doc))
+  ((Js.Array2.findi ThreadsModel.threads
+      (fun thread ->
+         fun i ->
+           ((let thisId =
+               match thread with
+               | ServerData.OneToOne { otherPersonIDWhichIsAlsoThreadID } ->
+                   otherPersonIDWhichIsAlsoThreadID
+               | Group { id } -> id
+               | Unknown { id } ->
+                   (unknown.id |. Js.String.make) |. FBID.ofStringUnsafe in
+             thisId == id)
+           [@ns.braces ])))
+  [@ns.braces ])
+let x = ((loop 0 (Nil |. (push doc)))[@ns.braces ])
 ;;match stack with
   | Empty -> [%napkinscript.exprhole ]
   | Cons (doc, rest) -> ()
@@ -192,8 +196,8 @@ Looks like there might be an expression missing here
 
 exports[`emptyBlock.js 1`] = `
 "=====Parsetree==========================================
-let x = ()
-let f a b = ()
+let x = ((())[@ns.braces ])
+let f a b = ((())[@ns.braces ])
 =====Errors=============================================
 
 File \\"/napkinscript/tests/parsing/errors/expressions/emptyBlock.js\\", line 1, characters 9-10:
@@ -340,7 +344,7 @@ Did you forget a \`catch\` here?
 
 exports[`unexpectedConstraint.js 1`] = `
 "=====Parsetree==========================================
-let x = let a = 1 in let b = 2 in (a + b : int)
+let x = ((let a = 1 in let b = 2 in (a + b : int))[@ns.braces ])
 let x = (\\"hi\\" : string)
 =====Errors=============================================
 

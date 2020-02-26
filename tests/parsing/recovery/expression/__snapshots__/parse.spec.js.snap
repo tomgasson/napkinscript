@@ -1,8 +1,8 @@
 // Jest Snapshot v1, https://goo.gl/fbAQLP
 
 exports[`emptyBlock.js 1`] = `
-"let x = ()
-let f a b = ()"
+"let x = ((())[@ns.braces ])
+let f a b = ((())[@ns.braces ])"
 `;
 
 exports[`if.js 1`] = `";;if foo = bar then Js.log \\"if-branch\\" else Js.log \\"else-branch\\""`;
@@ -20,10 +20,11 @@ exports[`list.js 1`] = `
     then
       let parts = Utils.split_on_char ' ' flags in
       let rec loop items =
-        match items with
-        | [|\\"-pp\\";_ppFlag;rest|] -> loop rest
-        | [|x;rest|] -> [|x;(loop rest)|]
-        | [||] -> [||] in
+        ((match items with
+          | [|\\"-pp\\";_ppFlag;rest|] -> loop rest
+          | [|x;rest|] -> [|x;(loop rest)|]
+          | [||] -> [||])
+        [@ns.braces ]) in
       (loop parts) |> (String.concat \\" \\")
     else flags)
   [@ns.ternary ])"

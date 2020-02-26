@@ -51,8 +51,8 @@ exports[`letBinding.js 1`] = `
 let rightResource =
   (ur.resources).find
     (fun r -> r.account_id == ((connection.left).account).id)
-let x = let field = p |. parseFieldDeclaration in field
-let t = let (_, _, token) = scanner |. scan in token
+let x = ((let field = p |. parseFieldDeclaration in field)[@ns.braces ])
+let t = ((let (_, _, token) = scanner |. scan in token)[@ns.braces ])
 let (keyTable : int Belt.Map.String.t) = [%napkinscript.exprhole ]
 let foo = [%napkinscript.exprhole ]
 =====Errors=============================================

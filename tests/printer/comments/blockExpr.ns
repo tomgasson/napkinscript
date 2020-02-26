@@ -1,3 +1,5 @@
+let () = /* c0 */ sideEffect1() /* c1 */
+
 let () = {
   /* c0 */ sideEffect1() /* c1 */
 }

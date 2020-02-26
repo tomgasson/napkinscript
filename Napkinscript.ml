@@ -1904,6 +1904,10 @@ module ParsetreeViewer : sig
 
   val collectOrPatternChain:
     Parsetree.pattern -> Parsetree.pattern list
+
+  val processBracesAttr : Parsetree.expression -> (Parsetree.attribute option * Parsetree.expression)
+
+  val filterParsingAttrs : Parsetree.attributes -> Parsetree.attributes
 end = struct
   open Parsetree
 
@@ -2290,6 +2294,20 @@ end = struct
         List.rev (pattern::chain)
     in
     loop pat []
+
+  let processBracesAttr expr =
+    match expr.pexp_attributes with
+    | (({txt = "ns.braces"}, _) as attr)::attrs ->
+      (Some attr, {expr with pexp_attributes = attrs})
+    | _ ->
+      (None, expr)
+
+  let filterParsingAttrs attrs =
+    List.filter (fun attr ->
+      match attr with
+      | ({Location.txt = ("ns.ternary" | "ns.braces")}, _) -> false
+      | _ -> true
+    ) attrs
 end
 
 module Parens: sig
@@ -2433,7 +2451,9 @@ end = struct
     match expr with
     | {Parsetree.pexp_attributes = attrs} when
         let (uncurried, attrs) =
-          ParsetreeViewer.processUncurriedAttribute attrs
+          attrs
+          |> ParsetreeViewer.filterParsingAttrs
+          |> ParsetreeViewer.processUncurriedAttribute
         in
         begin match attrs with
         | _::_ -> true
@@ -5961,9 +5981,9 @@ module Printer = struct
           if hasGenType then Doc.text "export " else Doc.nil
         ]
 		in
+    let (optBraces, expr) = ParsetreeViewer.processBracesAttr vb.pvb_expr in
     let printedExpr =
-      let exprDoc = printExpressionWithComments vb.pvb_expr cmtTbl in
-      let needsParens = match vb.pvb_expr.pexp_desc with
+      let needsParens = match expr.pexp_desc with
       | Pexp_constraint(
           {pexp_desc = Pexp_pack _},
           {ptyp_desc = Ptyp_package _}
@@ -5971,24 +5991,31 @@ module Printer = struct
       | Pexp_constraint _ -> true
       | _ -> false
       in
-      if needsParens then addParens exprDoc else exprDoc
+      match optBraces with
+      | Some braces -> printBracedExpr ~parens:needsParens expr braces cmtTbl
+      | None ->
+        let exprDoc = printExpressionWithComments expr cmtTbl in
+        if needsParens then addParens exprDoc else exprDoc
     in
 		if isGhost then
 			printedExpr
 		else
       let shouldIndent =
-        ParsetreeViewer.isBinaryExpression vb.pvb_expr ||
-        (match vb.pvb_expr with
-        | {
-            pexp_attributes = [({Location.txt="ns.ternary"}, _)];
-            pexp_desc = Pexp_ifthenelse (ifExpr, _, _)
-          }  ->
-          ParsetreeViewer.isBinaryExpression ifExpr || ParsetreeViewer.hasAttributes ifExpr.pexp_attributes
-      | { pexp_desc = Pexp_newtype _} -> false
-      | e ->
-          ParsetreeViewer.hasAttributes e.pexp_attributes ||
-          ParsetreeViewer.isArrayAccess e
-        )
+        match optBraces with
+        | Some _ -> false
+        | _ ->
+          ParsetreeViewer.isBinaryExpression expr ||
+          (match vb.pvb_expr with
+          | {
+              pexp_attributes = [({Location.txt="ns.ternary"}, _)];
+              pexp_desc = Pexp_ifthenelse (ifExpr, _, _)
+            }  ->
+            ParsetreeViewer.isBinaryExpression ifExpr || ParsetreeViewer.hasAttributes ifExpr.pexp_attributes
+        | { pexp_desc = Pexp_newtype _} -> false
+        | e ->
+            ParsetreeViewer.hasAttributes e.pexp_attributes ||
+            ParsetreeViewer.isArrayAccess e
+          )
       in
       Doc.group (
         Doc.concat [
@@ -6364,6 +6391,13 @@ module Printer = struct
     printComments doc cmtTbl expr.Parsetree.pexp_loc
 
   and printExpression (e : Parsetree.expression) cmtTbl =
+    (* let e = { *)
+      (* e with pexp_attributes = List.filter (fun attr -> *)
+        (* match attr with *)
+        (* | ({Location.txt = "ns.braces"}, _) -> false *)
+        (* | _ -> true *)
+        (* ) e.pexp_attributes *)
+    (* } in *)
     let printedExpression = match e.pexp_desc with
     | Parsetree.Pexp_constant c -> printConstant c
     | Pexp_construct _ when ParsetreeViewer.hasJsxAttribute e.pexp_attributes ->
@@ -6773,18 +6807,39 @@ module Printer = struct
         cmtTbl
       in
       let returnExprDoc =
-        let shouldInline = match returnExpr.pexp_desc with
-        | Pexp_array _
+        let (optBraces, returnExpr) = ParsetreeViewer.processBracesAttr returnExpr in
+        let shouldInline = match (returnExpr.pexp_desc, optBraces) with
+        | (_, Some _ ) -> true
+        | ((Pexp_array _
         | Pexp_tuple _
         | Pexp_construct (_, Some _)
-        | Pexp_record _ -> true
+        | Pexp_record _), _) -> true
         | _ -> false
         in
         let shouldIndent = match returnExpr.pexp_desc with
-        | Pexp_sequence _ | Pexp_let _ | Pexp_letmodule _ | Pexp_letexception _ | Pexp_open _ -> false
+        | Pexp_sequence _
+        | Pexp_let _
+        | Pexp_letmodule _
+        | Pexp_letexception _
+        | Pexp_open _ -> false
         | _ -> true
         in
-        let returnDoc = printExpressionWithComments returnExpr cmtTbl in
+        let returnDoc =
+          let needsParens = match returnExpr.pexp_desc with
+          | Pexp_constraint(
+              {pexp_desc = Pexp_pack _},
+              {ptyp_desc = Ptyp_package _}
+            ) -> false
+          | Pexp_constraint _ -> true
+          | _ -> false
+          in
+          match optBraces with
+          | Some braces ->
+              printBracedExpr ~parens:needsParens returnExpr braces cmtTbl
+          | None ->
+            let exprDoc = printExpressionWithComments returnExpr cmtTbl in
+            if needsParens then addParens exprDoc else exprDoc
+        in
         if shouldInline then Doc.concat [
           Doc.space;
           returnDoc;
@@ -6859,7 +6914,7 @@ module Printer = struct
     | attrs when not shouldPrintItsOwnAttributes ->
       Doc.group (
         Doc.concat [
-          printAttributes attrs;
+          printAttributes (ParsetreeViewer.filterParsingAttrs attrs);
           printedExpression;
         ]
       )
@@ -7913,6 +7968,52 @@ module Printer = struct
         ]
       else block
     )
+
+  (*
+   * // user types:
+   * let f = (a, b) => { a + b }
+   *
+   * // printer: everything is on one line
+   * let f = (a, b) => { a + b }
+   *
+   * // user types: over multiple lines
+   * let f = (a, b) => {
+   *   a + b
+   * }
+   *
+   * // printer: over multiple lines
+   * let f = (a, b) => {
+   *   a + b
+   * }
+   *)
+  and printBracedExpr ~parens expr ({Location.loc = bracesLoc}, _) cmtTbl =
+    let overMultipleLines =
+      let open Location in
+      bracesLoc.loc_end.pos_lnum > bracesLoc.loc_start.pos_lnum
+    in
+    match expr.Parsetree.pexp_desc with
+    | _ when overMultipleLines -> printExpressionBlock ~braces:true expr cmtTbl
+    | Pexp_letmodule _
+    | Pexp_letexception _
+    | Pexp_let _
+    | Pexp_open _
+    | Pexp_sequence _ ->
+      printExpressionBlock ~braces:true expr cmtTbl
+    | _ ->
+      let exprDoc = printExpressionWithComments expr cmtTbl in
+      Doc.group (
+        Doc.concat [
+          Doc.lbrace;
+          Doc.indent (
+            Doc.concat [
+              Doc.line;
+              if parens then addParens exprDoc else exprDoc;
+            ]
+          );
+          Doc.line;
+          Doc.rbrace;
+        ]
+      )
 
   and printOverrideFlag overrideFlag = match overrideFlag with
     | Asttypes.Override -> Doc.text "!"
@@ -9388,6 +9489,7 @@ Solution: directly use `concat`."
   let jsxAttr = (Location.mknoloc "JSX", Parsetree.PStr [])
   let uncurryAttr = (Location.mknoloc "bs", Parsetree.PStr [])
   let ternaryAttr = (Location.mknoloc "ns.ternary", Parsetree.PStr [])
+  let makeBracesAttr loc = (Location.mkloc "ns.braces" loc, Parsetree.PStr [])
 
   type typDefOrExt =
     | TypeDef of (Asttypes.rec_flag * Parsetree.type_declaration list)
@@ -10411,7 +10513,7 @@ Solution: directly use `concat`."
     in
     Parser.expect EqualGreater p;
     let body =
-      let expr = parseExpr p in
+      let (expr : Parsetree.expression) = parseExprAndRetainBraces p in
       match returnType with
       | Some typ ->
         Ast_helper.Exp.constraint_
@@ -10678,7 +10780,7 @@ Solution: directly use `concat`."
       | Lbracket ->
         parseArrayExp p
       | Lbrace ->
-        parseBracedOrRecordExpr p
+        parseBracedOrRecordExpr ~retainBraces:false p
       | LessThan ->
         parseJsx p
       | Percent ->
@@ -11117,18 +11219,30 @@ Solution: directly use `concat`."
           let loc = {pat.ppat_loc with loc_end = polyType.Parsetree.ptyp_loc.loc_end} in
           let pat = Ast_helper.Pat.constraint_ ~loc pat polyType in
           Parser.expect Token.Equal p;
-          let exp = overParseConstrainedOrArrowExpression p (parseExpr p) in
+          let exp = overParseConstrainedOrArrowExpression p (parseExprAndRetainBraces p) in
           (pat, exp)
         end
       | _ ->
         Parser.expect Token.Equal p;
-        let exp = overParseConstrainedOrArrowExpression p (parseExpr p) in
+        let exp = overParseConstrainedOrArrowExpression p (parseExprAndRetainBraces p) in
         (pat, exp)
     in
     let loc = mkLoc startPos p.prevEndPos in
     let vb = Ast_helper.Vb.mk ~loc ~attrs pat exp in
     Parser.eatBreadcrumb p;
     vb
+
+  (* parses an expr and retains braces when user typed them *)
+  and parseExprAndRetainBraces p =
+    match p.Parser.token with
+    | Lbrace ->
+      Parser.leaveBreadcrumb p Grammar.ExprOperand;
+      let expr = parseBracedOrRecordExpr ~retainBraces:true p in
+      Parser.eatBreadcrumb p;
+      let a = parsePrimaryExpr ~operand:expr p in
+      let e = parseBinaryExpr ~a p 1 in
+      parseTernaryExpr e p
+    | _ -> parseExpr p
 
   (* TODO: find a better way? Is it possible?
    * let a = 1
@@ -11434,8 +11548,9 @@ Solution: directly use `concat`."
       (true, [parsePrimaryExpr ~operand:(parseAtomicExpr p) ~noCall:true p])
     | _ -> (false, loop p [])
 
-  and parseBracedOrRecordExpr p =
+  and parseBracedOrRecordExpr ~retainBraces p =
     let startPos = p.Parser.startPos in
+    let retainBraces = ref retainBraces in
     Parser.expect Lbrace p;
     let expr = match p.Parser.token with
     | Rbrace ->
@@ -11444,6 +11559,7 @@ Solution: directly use `concat`."
       Ast_helper.Exp.construct
         ~loc (Location.mkloc (Longident.Lident "()") loc) None
     | DotDotDot ->
+      retainBraces := false;
       (* beginning of record spread, parse record *)
       Parser.next p;
       let spreadExpr = parseConstrainedExpr p in
@@ -11457,6 +11573,7 @@ Solution: directly use `concat`."
       in
       begin match p.Parser.token with
       | Colon ->
+        retainBraces := false;
         Parser.next p;
         let fieldExpr = parseExpr p in
         Parser.optional p Comma |> ignore;
@@ -11482,9 +11599,11 @@ Solution: directly use `concat`."
         begin match p.Parser.token with
         | Comma ->
           Parser.next p;
+          retainBraces := false;
           parseRecordExpr ~startPos [(pathIdent, valueOrConstructor)] p
         | Colon ->
           Parser.next p;
+          retainBraces := false;
           let fieldExpr = parseExpr p in
           begin match p.token with
           | Rbrace ->
@@ -11496,6 +11615,7 @@ Solution: directly use `concat`."
           end
         (* error case *)
         | Lident _ ->
+          retainBraces := false;
           if p.prevEndPos.pos_lnum < p.startPos.pos_lnum then (
             Parser.expect Comma p;
             parseRecordExpr ~startPos [(pathIdent, valueOrConstructor)] p
@@ -11554,11 +11674,23 @@ Solution: directly use `concat`."
         | _ -> parseExprBlock ~first:e p
         end
          end
-    | _ ->
+    | Lbrace ->
       parseExprBlock p
+    | _ ->
+      let expr = parseExprBlock p in
+      let () = match expr.pexp_desc with
+      | Pexp_record _ ->
+        retainBraces := false
+      | _ -> ()
+      in
+      expr
     in
     Parser.expect Rbrace p;
-    expr
+    if !retainBraces then
+      let braces = makeBracesAttr (mkLoc startPos p.prevEndPos) in
+      {expr with pexp_attributes = braces::expr.pexp_attributes}
+    else
+      expr
 
   and parseRecordRowWithStringKey p =
     match p.Parser.token with
