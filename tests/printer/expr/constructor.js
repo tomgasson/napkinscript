@@ -81,3 +81,15 @@ let x =
     )
   | Foo => ()
   };
+
+// tuple as single argument
+let x = Some((1, 2))
+
+let math = if discriminant < 0. {
+  None
+} else {
+  Some((
+    (-.b -. Js.Math.sqrt(discriminant)) /. (2. *. a),
+    (-.b +. Js.Math.sqrt(discriminant)) /. (2. *. a),
+  ))
+}

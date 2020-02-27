@@ -6444,6 +6444,13 @@ module Printer = struct
       | None -> Doc.nil
       | Some({pexp_desc = Pexp_construct ({txt = Longident.Lident "()"}, _)}) ->
         Doc.text "()"
+      (* Some((1, 2) *)
+      | Some({pexp_desc = Pexp_tuple [{pexp_desc = Pexp_tuple _} as arg]}) ->
+        Doc.concat [
+          Doc.lparen;
+          printExpressionWithComments arg cmtTbl;
+          Doc.rparen;
+        ]
       | Some({pexp_desc = Pexp_tuple args }) ->
         Doc.concat [
           Doc.lparen;
@@ -10465,9 +10472,11 @@ Solution: directly use `concat`."
       parseCommaDelimitedRegion
         p ~grammar:Grammar.PatternList ~closing:Rparen ~f:parseConstrainedPatternRegion
     with
+    | [{ppat_desc = Ppat_tuple _}] as patterns ->
+      Some (Ast_helper.Pat.tuple ~loc:(mkLoc lparen p.endPos) patterns)
     | [pattern] -> Some pattern
     | patterns ->
-        Some (Ast_helper.Pat.tuple ~loc:(mkLoc lparen p.endPos) patterns)
+      Some (Ast_helper.Pat.tuple ~loc:(mkLoc lparen p.endPos) patterns)
     in
     Parser.expect Rparen p;
     Ast_helper.Pat.construct ~loc:(mkLoc startPos p.prevEndPos) ~attrs constr args
@@ -12187,7 +12196,12 @@ Solution: directly use `concat`."
           let lident = buildLongident (ident::acc) in
           let tail = match args with
           | [] -> None
-          | [arg] -> Some arg
+          (* Keep Some((1, 2)) as Some((1, 2)) *)
+          | [{Parsetree.pexp_desc = Pexp_tuple _}] as args ->
+            let loc = mkLoc lparen rparen in
+            Some (Ast_helper.Exp.tuple ~loc args)
+          | [arg] ->
+            Some arg
           | args ->
             let loc = mkLoc lparen rparen in
             Some (Ast_helper.Exp.tuple ~loc args)

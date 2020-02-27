@@ -14,3 +14,8 @@ switch truth {
 | true => Js.log("true")
 | false => Js.log("false")
 }
+
+switch sphere->intersect(~ray) {
+| None => assert false
+| Some((x, y)) => assert true
+}
