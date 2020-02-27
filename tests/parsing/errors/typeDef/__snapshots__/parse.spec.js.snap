@@ -1,5 +1,27 @@
 // Jest Snapshot v1, https://goo.gl/fbAQLP
 
+exports[`emptyInlineRecord.ns 1`] = `
+"=====Parsetree==========================================
+type nonrec 'a node =
+  | Nil 
+  | Node of {
+  } 
+=====Errors=============================================
+
+File \\"/napkinscript/tests/parsing/errors/typeDef/emptyInlineRecord.ns\\", line 3, characters 9-11:
+
+
+1 │  type node<'a> =
+2 │    | Nil
+[31m3[0m │    | Node([31m{}[0m)
+
+An inline record declaration needs at least one field
+
+
+
+========================================================"
+`;
+
 exports[`emptyRecord.js 1`] = `
 "=====Parsetree==========================================
 type nonrec record = {

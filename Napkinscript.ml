@@ -12823,6 +12823,7 @@ Solution: directly use `concat`."
       (* TODO: this could use some cleanup/stratification *)
       begin match p.Parser.token with
       | Lbrace ->
+        let lbrace = p.startPos in
         Parser.next p;
         let startPos = p.Parser.startPos in
         begin match p.Parser.token with
@@ -12920,6 +12921,12 @@ Solution: directly use `concat`."
                     ~f:parseFieldDeclarationRegion
                     p
                 )
+              in
+              let () = match fields with
+              | [] -> Parser.err ~startPos:lbrace p (
+                  Diagnostics.message "An inline record declaration needs at least one field"
+                )
+              | _ -> ()
               in
               Parser.expect Rbrace p;
               Parser.optional p Comma |> ignore;
