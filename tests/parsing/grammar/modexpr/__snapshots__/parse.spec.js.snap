@@ -22,9 +22,9 @@ include (X : MyMod)"
 
 exports[`firstClassModules.js 1`] = `
 "module Device = (val
-  (let deviceName = parseCmdline () in
-   try Hashtbl.find devices deviceName with | Not_found -> exit 2 : (module
-                                                                    Device)))
+  (((let deviceName = parseCmdline () in
+     try Hashtbl.find devices deviceName with | Not_found -> exit 2)
+  [@ns.braces ]) : (module Device)))
 let draw_using_device device_name picture =
   ((let module Device = (val
       (Hashtbl.find devices device_name : (module DEVICE))) in

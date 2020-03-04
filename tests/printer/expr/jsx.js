@@ -165,7 +165,9 @@ let x =
     }}
     lazyExpr={lazy stuff()}
     assertExpr={assert true}
+    pack=module(Foo)
     pack={module(Foo)}
+    pack=module(Foo: Bar)
     pack={module(Foo: Bar)}
     openExpr={open React; React.render()}
     extension=%bs.raw("eval()")
@@ -237,7 +239,9 @@ let x =
     {lazy stuff()}
     {assert true}
     {module(Foo)}
+    module(Foo)
     {module(Foo: Bar)}
+    module(Foo: Bar)
     {open React; React.render()}
     %bs.raw("eval()")
     {"x": 1, "y": 2} 

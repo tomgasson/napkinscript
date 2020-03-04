@@ -152,7 +152,9 @@ let b =
 let b = ((f (); g (); h (); (let arr = [|1;2;3|] in ()))[@ns.braces ])
 let res =
   ((let a = \\"a starts out as\\" in
-    (print_string a; (let a = 20 in print_int a)); print_string a)
+    (((print_string a; (let a = 20 in print_int a)))
+    [@ns.braces ]);
+    print_string a)
   [@ns.braces ])
 let res =
   ((let a = \\"first its a string\\" in
@@ -428,11 +430,13 @@ let _ = ((div ~className:((\\"menu\\")[@ns.jsxPropLoc ]) ~children:[] ())[@JSX ]
 let _ = ((div ~className:((\\"menu\\")[@ns.jsxPropLoc ]) ~children:[] ())[@JSX ])
 let _ =
   ((div ~className:((\\"menu\\")[@ns.jsxPropLoc ])
-      ~onClick:((fun _ -> Js.log \\"click\\")[@ns.jsxPropLoc ]) ~children:[] ())
+      ~onClick:((fun _ -> Js.log \\"click\\")[@ns.jsxPropLoc ][@ns.braces ])
+      ~children:[] ())
   [@JSX ])
 let _ =
   ((div ~className:((\\"menu\\")[@ns.jsxPropLoc ])
-      ~onClick:((fun _ -> Js.log \\"click\\")[@ns.jsxPropLoc ]) ~children:[] ())
+      ~onClick:((fun _ -> Js.log \\"click\\")[@ns.jsxPropLoc ][@ns.braces ])
+      ~children:[] ())
   [@JSX ])
 let _ = ((Navbar.createElement ~children:[] ())[@JSX ])
 let _ = ((Nav.Navbar.createElement ~children:[] ())[@JSX ])
@@ -471,7 +475,9 @@ let _ =
 let _ = ((Foo.createElement ~children:[|a|] ())[@JSX ])
 let _ = ((Foo.createElement ~children:(1, 2) ())[@JSX ])
 let _ = ((Foo.createElement ~children:(1, 2) ())[@JSX ])
-let _ = ((div ~children:[ident; [|1;2;3|]; call a b; (x.y).z] ())[@JSX ])
+let _ =
+  ((div ~children:[ident; [|1;2;3|]; ((call a b)[@ns.braces ]); (x.y).z] ())
+  [@JSX ])
 let _ =
   ((Outer.createElement ~inner:((Inner.createElement ~children:[] ())
       [@ns.jsxPropLoc ][@JSX ]) ~children:[] ())
@@ -546,8 +552,8 @@ let y =
                                               currentActualPath)
                                            latestComponentBag ())
                                        [@ns.ternary ]))
-                                   [@ns.braces ])) ())[@ns.jsxPropLoc ])
-      ~children:[] ())
+                                   [@ns.braces ])) ())
+      [@ns.jsxPropLoc ][@ns.braces ]) ~children:[] ())
   [@JSX ])
 let z =
   ((div
@@ -588,7 +594,8 @@ let icon =
               | v when v < 0.1 -> \\"sound-off\\"
               | v when v < 0.11 -> \\"sound-min\\"
               | v when v < 0.51 -> \\"sound-med\\"
-              | _ -> \\"sound-max\\")[@ns.jsxPropLoc ]) ~children:[] ())
+              | _ -> \\"sound-max\\")[@ns.jsxPropLoc ][@ns.braces ]) ~children:[]
+      ())
   [@JSX ])
 let _ =
   ((MessengerSharedPhotosAlbumViewPhotoReact.createElement
@@ -626,17 +633,17 @@ let y =
 let _ =
   ((Description.createElement
       ~term:((Text.createElement ~text:((\\"Age\\")[@ns.jsxPropLoc ])
-                ~children:[] ())[@ns.jsxPropLoc ][@JSX ]) ~children:[child]
-      ())
+                ~children:[] ())[@ns.jsxPropLoc ][@ns.braces ][@JSX ])
+      ~children:[child] ())
   [@JSX ])
 let _ =
   ((Description.createElement
       ~term:((Text.createElement ~text:\\"Age\\" ~children:[||] ())
-      [@ns.jsxPropLoc ]) ~children:[child] ())
+      [@ns.jsxPropLoc ][@ns.braces ]) ~children:[child] ())
   [@JSX ])
 let _ =
   ((Description.createElement ~term:((Text.createElement ~text:\\"Age\\" ())
-      [@ns.jsxPropLoc ][@JSX ]) ~children:[child] ())
+      [@ns.jsxPropLoc ][@ns.braces ][@JSX ]) ~children:[child] ())
   [@JSX ])
 let _ =
   ((Description.createElement
@@ -644,35 +651,35 @@ let _ =
                 [@ns.jsxPropLoc ])
                 ~anotherSuperLongOneCrazyLongThingHere:((anotherSuperLongOneCrazyLongThingHere)
                 [@ns.jsxPropLoc ]) ~text:((\\"Age\\")[@ns.jsxPropLoc ])
-                ~children:[] ())[@ns.jsxPropLoc ][@JSX ]) ~children:[child]
-      ())
+                ~children:[] ())[@ns.jsxPropLoc ][@ns.braces ][@JSX ])
+      ~children:[child] ())
   [@JSX ])
 let _ =
   ((Foo.createElement
       ~bar:((Baz.createElement ~superLongPunnedProp:((superLongPunnedProp)
                [@ns.jsxPropLoc ])
                ~anotherSuperLongOneCrazyLongThingHere:((anotherSuperLongOneCrazyLongThingHere)
-               [@ns.jsxPropLoc ]) ~children:[] ())[@ns.jsxPropLoc ][@JSX ])
-      ~children:[] ())
+               [@ns.jsxPropLoc ]) ~children:[] ())
+      [@ns.jsxPropLoc ][@ns.braces ][@JSX ]) ~children:[] ())
   [@JSX ])
 let _ = ((div ~children:[((span ~children:[str \\"hello\\"] ())[@JSX ])] ())
   [@JSX ])
 let _ =
   ((description
       ~term:((text ~text:((\\"Age\\")[@ns.jsxPropLoc ]) ~children:[] ())
-      [@ns.jsxPropLoc ][@JSX ]) ~children:[child] ())
+      [@ns.jsxPropLoc ][@ns.braces ][@JSX ]) ~children:[child] ())
   [@JSX ])
 let _ =
-  ((description ~term:((text ~text:\\"Age\\" ~children:[||] ())[@ns.jsxPropLoc ])
-      ~children:[child] ())
+  ((description ~term:((text ~text:\\"Age\\" ~children:[||] ())
+      [@ns.jsxPropLoc ][@ns.braces ]) ~children:[child] ())
   [@JSX ])
 let _ =
   ((description ~term:((text ~text:\\"Age\\" ~children:[||])
-      [@ns.jsxPropLoc ][@JSX ]) ~children:[child] ())
+      [@ns.jsxPropLoc ][@ns.braces ][@JSX ]) ~children:[child] ())
   [@JSX ])
 let _ =
-  ((description ~term:((text ~text:\\"Age\\" ())[@ns.jsxPropLoc ][@JSX ])
-      ~children:[child] ())
+  ((description ~term:((text ~text:\\"Age\\" ())
+      [@ns.jsxPropLoc ][@ns.braces ][@JSX ]) ~children:[child] ())
   [@JSX ])
 let _ =
   ((description
@@ -680,21 +687,22 @@ let _ =
                 [@ns.jsxPropLoc ])
                 ~anotherSuperLongOneCrazyLongThingHere:((anotherSuperLongOneCrazyLongThingHere)
                 [@ns.jsxPropLoc ]) ~text:((\\"Age\\")[@ns.jsxPropLoc ])
-                ~children:[] ())[@ns.jsxPropLoc ][@JSX ]) ~children:[child]
-      ())
+                ~children:[] ())[@ns.jsxPropLoc ][@ns.braces ][@JSX ])
+      ~children:[child] ())
   [@JSX ])
 let _ =
-  ((div ~onClick:((fun event -> handleChange event)[@ns.jsxPropLoc ])
-      ~children:[] ())
+  ((div ~onClick:((fun event -> handleChange event)
+      [@ns.jsxPropLoc ][@ns.braces ]) ~children:[] ())
   [@JSX ])
 let _ =
   ((div ~onClick:((fun eventWithLongIdent -> handleChange eventWithLongIdent)
-      [@ns.jsxPropLoc ]) ~children:[] ())
+      [@ns.jsxPropLoc ][@ns.braces ]) ~children:[] ())
   [@JSX ])
 let _ =
   ((div
       ~onClick:((fun event -> ((Js.log event; handleChange event)
-                   [@ns.braces ]))[@ns.jsxPropLoc ]) ~children:[] ())
+                   [@ns.braces ]))[@ns.jsxPropLoc ][@ns.braces ])
+      ~children:[] ())
   [@JSX ])
 let _ =
   ((StaticDiv.createElement
@@ -704,16 +712,17 @@ let _ =
                        fun lineBreak ->
                          fun identifier ->
                            ((doStuff foo bar baz; bar lineBreak identifier)
-                           [@ns.braces ]))[@ns.jsxPropLoc ]) ~children:[] ())
+                           [@ns.braces ]))[@ns.jsxPropLoc ][@ns.braces ])
+      ~children:[] ())
   [@JSX ])
 let _ =
   ((AttrDiv.createElement ~onClick:((fun event -> handleChange event)
-      [@ns.jsxPropLoc ][@bar ]) ~children:[] ())
+      [@ns.jsxPropLoc ][@ns.braces ][@bar ]) ~children:[] ())
   [@JSX ])
 let _ =
   ((AttrDiv.createElement
       ~onClick:((fun eventLongIdentifier -> handleChange eventLongIdentifier)
-      [@ns.jsxPropLoc ][@bar ]) ~children:[] ())
+      [@ns.jsxPropLoc ][@ns.braces ][@bar ]) ~children:[] ())
   [@JSX ])
 let _ =
   ((StaticDivNamed.createElement
@@ -723,17 +732,17 @@ let _ =
                        fun ~lineBreak ->
                          fun ~identifier ->
                            fun () -> bar lineBreak identifier)
-      [@ns.jsxPropLoc ]) ~children:[] ())
+      [@ns.jsxPropLoc ][@ns.braces ]) ~children:[] ())
   [@JSX ])
 let _ =
   ((div ~onClick:((fun e -> (((doStuff (); bar foo)[@ns.braces ]) : event))
-      [@ns.jsxPropLoc ]) ~children:[] ())
+      [@ns.jsxPropLoc ][@ns.braces ]) ~children:[] ())
   [@JSX ])
 let _ =
   ((div
       ~onClick:((fun e ->
                    fun e2 -> (((doStuff (); bar foo)[@ns.braces ]) : event))
-      [@ns.jsxPropLoc ]) ~children:[] ())
+      [@ns.jsxPropLoc ][@ns.braces ]) ~children:[] ())
   [@JSX ])
 let _ =
   ((div
@@ -743,8 +752,8 @@ let _ =
                        fun superLongIdent ->
                          fun breakLine -> (((doStuff (); bar foo)
                            [@ns.braces ]) : (event * event2 * event3 * event4
-                                              * event5)))[@ns.jsxPropLoc ])
-      ~children:[] ())
+                                              * event5)))
+      [@ns.jsxPropLoc ][@ns.braces ]) ~children:[] ())
   [@JSX ])
 let _ =
   ((div
@@ -754,48 +763,28 @@ let _ =
                        fun superLongIdent ->
                          fun breakLine ->
                            (doStuff () : (event * event2 * event3 * event4 *
-                                           event5)))[@ns.jsxPropLoc ])
-      ~children:[] ())
+                                           event5)))
+      [@ns.jsxPropLoc ][@ns.braces ]) ~children:[] ())
   [@JSX ])
 let _ =
   ((div
-      ~children:[(match color with
-                  | Black -> ReasonReact.string \\"black\\"
-                  | Red -> ReasonReact.string \\"red\\")] ())
+      ~children:[(((match color with
+                    | Black -> ReasonReact.string \\"black\\"
+                    | Red -> ReasonReact.string \\"red\\"))
+                [@ns.braces ])] ())
   [@JSX ])
 let _ =
   ((div
       ~style:((ReactDOMRe.Style.make ~width:\\"20px\\" ~height:\\"20px\\"
                  ~borderRadius:\\"100%\\" ~backgroundColor:\\"red\\")
-      [@ns.jsxPropLoc ][@foo ]) ~children:[] ())
+      [@ns.jsxPropLoc ][@ns.braces ][@foo ]) ~children:[] ())
   [@JSX ])
 let _ =
   ((Animated.createElement ~initialValue:((0.0)[@ns.jsxPropLoc ])
       ~value:((value)[@ns.jsxPropLoc ])
-      ~children:(ReactDOMRe.Style.make ~width:\\"20px\\" ~height:\\"20px\\"
-                   ~borderRadius:\\"100%\\" ~backgroundColor:\\"red\\") ())
-  [@JSX ])
-let _ =
-  ((Animated.createElement ~initialValue:((0.0)[@ns.jsxPropLoc ])
-      ~value:((value)[@ns.jsxPropLoc ])
-      ~children:(fun value ->
-                   ((div
-                       ~style:((ReactDOMRe.Style.make ~width:\\"20px\\"
-                                  ~height:\\"20px\\" ~borderRadius:\\"100%\\"
-                                  ~backgroundColor:\\"red\\")[@ns.jsxPropLoc ])
-                       ~children:[] ())
-                   [@JSX ])) ())
-  [@JSX ])
-let _ =
-  ((Animated.createElement ~initialValue:((0.0)[@ns.jsxPropLoc ])
-      ~value:((value)[@ns.jsxPropLoc ])
-      ~children:(fun value ->
-                   (((div
-                        ~style:((ReactDOMRe.Style.make ~width:\\"20px\\"
-                                   ~height:\\"20px\\" ~borderRadius:\\"100%\\"
-                                   ~backgroundColor:\\"red\\")[@ns.jsxPropLoc ])
-                        ~children:[] ())
-                   [@JSX ]) : ReasonReact.element)) ())
+      ~children:((ReactDOMRe.Style.make ~width:\\"20px\\" ~height:\\"20px\\"
+                    ~borderRadius:\\"100%\\" ~backgroundColor:\\"red\\")
+      [@ns.braces ]) ())
   [@JSX ])
 let _ =
   ((Animated.createElement ~initialValue:((0.0)[@ns.jsxPropLoc ])
@@ -804,70 +793,97 @@ let _ =
                     ((div
                         ~style:((ReactDOMRe.Style.make ~width:\\"20px\\"
                                    ~height:\\"20px\\" ~borderRadius:\\"100%\\"
-                                   ~backgroundColor:\\"red\\")[@ns.jsxPropLoc ])
-                        ~children:[] ())
-                    [@ns.braces ][@JSX ]))[@foo ]) ())
+                                   ~backgroundColor:\\"red\\")
+                        [@ns.jsxPropLoc ][@ns.braces ]) ~children:[] ())
+                    [@JSX ]))[@ns.braces ]) ())
   [@JSX ])
 let _ =
   ((Animated.createElement ~initialValue:((0.0)[@ns.jsxPropLoc ])
       ~value:((value)[@ns.jsxPropLoc ])
-      ~children:(fun value ->
-                   ((let width = \\"20px\\" in
-                     let height = \\"20px\\" in
-                     ((div
-                         ~style:((ReactDOMRe.Style.make ~width ~height
-                                    ~borderRadius:\\"100%\\"
-                                    ~backgroundColor:\\"red\\")[@ns.jsxPropLoc ])
-                         ~children:[] ())
-                       [@JSX ]))
-                   [@ns.braces ])) ())
+      ~children:((fun value ->
+                    (((div
+                         ~style:((ReactDOMRe.Style.make ~width:\\"20px\\"
+                                    ~height:\\"20px\\" ~borderRadius:\\"100%\\"
+                                    ~backgroundColor:\\"red\\")
+                         [@ns.jsxPropLoc ][@ns.braces ]) ~children:[] ())
+                    [@JSX ]) : ReasonReact.element))[@ns.braces ]) ())
   [@JSX ])
 let _ =
-  ((div ~callback:((reduce (fun () -> not state))[@ns.jsxPropLoc ])
-      ~children:[] ())
+  ((Animated.createElement ~initialValue:((0.0)[@ns.jsxPropLoc ])
+      ~value:((value)[@ns.jsxPropLoc ])
+      ~children:((fun value ->
+                    ((div
+                        ~style:((ReactDOMRe.Style.make ~width:\\"20px\\"
+                                   ~height:\\"20px\\" ~borderRadius:\\"100%\\"
+                                   ~backgroundColor:\\"red\\")
+                        [@ns.jsxPropLoc ][@ns.braces ]) ~children:[] ())
+                    [@ns.braces ][@JSX ]))[@ns.braces ][@foo ]) ())
+  [@JSX ])
+let _ =
+  ((Animated.createElement ~initialValue:((0.0)[@ns.jsxPropLoc ])
+      ~value:((value)[@ns.jsxPropLoc ])
+      ~children:((fun value ->
+                    ((let width = \\"20px\\" in
+                      let height = \\"20px\\" in
+                      ((div
+                          ~style:((ReactDOMRe.Style.make ~width ~height
+                                     ~borderRadius:\\"100%\\"
+                                     ~backgroundColor:\\"red\\")
+                          [@ns.jsxPropLoc ][@ns.braces ]) ~children:[] ())
+                        [@JSX ]))
+                    [@ns.braces ]))[@ns.braces ]) ())
+  [@JSX ])
+let _ =
+  ((div ~callback:((reduce (fun () -> not state))
+      [@ns.jsxPropLoc ][@ns.braces ]) ~children:[] ())
   [@JSX ])
 let _ =
   ((button ?id:((id)[@ns.jsxPropLoc ])
-      ~className:((Cn.make [|\\"button\\";\\"is-fullwidth\\"|])[@ns.jsxPropLoc ])
-      ~onClick:((onClick)[@ns.jsxPropLoc ]) ~children:[\\"Submit\\" |> ste] ())
+      ~className:((Cn.make [|\\"button\\";\\"is-fullwidth\\"|])
+      [@ns.jsxPropLoc ][@ns.braces ]) ~onClick:((onClick)[@ns.jsxPropLoc ])
+      ~children:[((\\"Submit\\" |> ste)[@ns.braces ])] ())
   [@JSX ])
 let _ =
   ((button ?id:((id)[@ns.jsxPropLoc ])
-      ~className:((Cn.make [\\"button\\"; \\"is-fullwidth\\"])[@ns.jsxPropLoc ])
-      ~onClick:((onClick)[@ns.jsxPropLoc ]) ~children:[\\"Submit\\" |> ste] ())
+      ~className:((Cn.make [\\"button\\"; \\"is-fullwidth\\"])
+      [@ns.jsxPropLoc ][@ns.braces ]) ~onClick:((onClick)[@ns.jsxPropLoc ])
+      ~children:[((\\"Submit\\" |> ste)[@ns.braces ])] ())
   [@JSX ])
 let _ =
   ((button ?id:((id)[@ns.jsxPropLoc ])
-      ~className:((Cn.make (\\"button\\", \\"is-fullwidth\\"))[@ns.jsxPropLoc ])
-      ~onClick:((onClick)[@ns.jsxPropLoc ]) ~children:[\\"Submit\\" |> ste] ())
+      ~className:((Cn.make (\\"button\\", \\"is-fullwidth\\"))
+      [@ns.jsxPropLoc ][@ns.braces ]) ~onClick:((onClick)[@ns.jsxPropLoc ])
+      ~children:[((\\"Submit\\" |> ste)[@ns.braces ])] ())
   [@JSX ])
 let _ =
   ((button ?id:((id)[@ns.jsxPropLoc ]) ~className:((Cn.make { a = b })
-      [@ns.jsxPropLoc ]) ~onClick:((onClick)[@ns.jsxPropLoc ])
-      ~children:[\\"Submit\\" |> ste] ())
+      [@ns.jsxPropLoc ][@ns.braces ]) ~onClick:((onClick)[@ns.jsxPropLoc ])
+      ~children:[((\\"Submit\\" |> ste)[@ns.braces ])] ())
   [@JSX ])
 let _ =
   ((X.createElement ~y:((z |. (Belt.Option.getWithDefault \\"\\"))
-      [@ns.jsxPropLoc ]) ~children:[] ())
+      [@ns.jsxPropLoc ][@ns.braces ]) ~children:[] ())
   [@JSX ])
 let _ =
-  ((div ~style:((getStyle ())[@ns.jsxPropLoc ])
-      ~children:[ReasonReact.string \\"BugTest\\"] ())
+  ((div ~style:((getStyle ())[@ns.jsxPropLoc ][@ns.braces ])
+      ~children:[((ReasonReact.string \\"BugTest\\")[@ns.braces ])] ())
   [@JSX ])
 let _ =
   ((div
-      ~children:[(let left = limit |. Int.toString in
-                  (left ^ {j| characters left|j}) |. React.string)] ())
+      ~children:[(((let left = limit |. Int.toString in
+                    (left ^ {j| characters left|j}) |. React.string))
+                [@ns.braces ])] ())
   [@JSX ])
 let _ =
   ((View.createElement ~style:((styles ## backgroundImageWrapper)
       [@ns.jsxPropLoc ])
-      ~children:[(let uri = \\"/images/header-background.png\\" in
-                  ((Image.createElement ~resizeMode:((Contain)
-                      [@ns.jsxPropLoc ]) ~style:((styles ## backgroundImage)
-                      [@ns.jsxPropLoc ]) ~uri:((uri)[@ns.jsxPropLoc ])
-                      ~children:[] ())
-                    [@JSX ]))] ())
+      ~children:[(((let uri = \\"/images/header-background.png\\" in
+                    ((Image.createElement ~resizeMode:((Contain)
+                        [@ns.jsxPropLoc ])
+                        ~style:((styles ## backgroundImage)[@ns.jsxPropLoc ])
+                        ~uri:((uri)[@ns.jsxPropLoc ]) ~children:[] ())
+                      [@JSX ])))
+                [@ns.braces ])] ())
   [@JSX ])"
 `;
 
@@ -910,7 +926,7 @@ let aList = [1; 2]
 let anArray = [|1;2|]
 let aTuple = (1, 2)
 let aRecord = { name = \\"steve\\"; age = 30 }
-let blockExpression = let a = 1 in let b = 2 in a + b
+let blockExpression = ((let a = 1 in let b = 2 in a + b)[@ns.braces ])
 let assertSmthing = assert true
 let lazyThing = lazy true
 let jsx = ((div ~className:((\\"cx\\")[@ns.jsxPropLoc ]) ~children:[foo] ())
@@ -991,10 +1007,11 @@ exports[`switch.js 1`] = `
 `;
 
 exports[`try.js 1`] = `
-";;try let x = 1 in let y = 2 in dangerousCall (x + y)
+";;try ((let x = 1 in let y = 2 in dangerousCall (x + y))[@ns.braces ])
   with | Foo -> Js.log \\"catched Foo\\" | Exit -> Js.log \\"catched exit\\"
 ;;try myDangerousFn () with | Foo -> Js.log \\"catched Foo\\"[@@attr ]
-let x = ((let y = 1 in try apply y with | _ -> 2)[@ns.braces ])"
+let x = ((let y = 1 in try ((apply y)[@ns.braces ]) with | _ -> 2)
+  [@ns.braces ])"
 `;
 
 exports[`tuple.js 1`] = `

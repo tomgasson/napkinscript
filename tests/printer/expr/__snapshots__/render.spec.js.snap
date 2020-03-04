@@ -7,7 +7,7 @@ let rbt = make(~compare)
 let rbt = make(~compare?)
 let rbt = make(~compare=intCompare)
 let rbt = make(~compare=?intCompare)
-let rbt = make(~compare=?intCompare: (int, int) => int)
+let rbt = make(~compare=?(intCompare: (int, int) => int))
 
 let () = applyFunctionToArguments(
   superLongIdentifierWooooooowThisIsSuchLong,
@@ -673,8 +673,8 @@ let () = {
 `;
 
 exports[`braced.js 1`] = `
-"let f = (a, b) => { a + b }
-let f = (a, b) => { a }
+"let f = (a, b) => {a + b}
+let f = (a, b) => {a}
 
 let f = (a, b) => {
   a + b
@@ -684,8 +684,8 @@ let f = (a, b) => {
   a
 }
 
-let x = { a }
-let x = { a + b }
+let x = {a}
+let x = {a + b}
 
 let x = {
   // here
@@ -697,52 +697,100 @@ let x = {
   a + b
 }
 
-let _ = { a }
+let _ = {a}
 
-let _ = { \\"constant\\" }
+let _ = {\\"constant\\"}
 
-let _ = { () => Js.log(\\"test\\") }
+let _ = {() => Js.log(\\"test\\")}
 let _ = {
   switch b {
   | true => ()
   | false => ()
   }
 }
-let _ = switch b {
+let _ = switch {b} {
 | true => ()
 | false => ()
 }
-let _ = { apply(a, b) }
-let _ = apply(a, b)
+let _ = {apply(a, b)}
+let _ = {apply}(a, b)
 
 let _ = {
   try danger() catch {
   | Exit => ()
   }
 }
-let _ = try danger() catch {
+let _ = try {danger()} catch {
 | Exit => ()
 }
 
-let _ = (a, b, x + y)
-let _ = { (a, b, x + y) }
+let _ = ({a}, {b}, {x + y})
+let _ = {({a}, {b}, {x + y})}
 
-let _ = { Rgb(r, g, b) }
-let _ = Rgb(r, g, b)
+let _ = {Rgb(r, g, b)}
+let _ = Rgb({r}, {g}, {b})
+let _ = Rgb(
+  {
+    r
+  },
+  {
+    g
+  },
+  {
+    b
+  },
+)
 
-let _ = { {name: \\"steve\\", age: 30} }
-let _ = {name: \\"steve\\", age: 30}
+let _ = {{name: \\"steve\\", age: 30}}
+let _ = {name: {\\"steve\\"}, age: {30}}
+let _ = {
+  name: {
+    \\"steve\\"
+  },
+  age: {
+    30
+  },
+}
 
-let _ = user.name.toString()
-let _ = { user.name.toString() }
-let _ = user.name.first
-let _ = { user.name.first }
+let _ = {user.name}.toString()
+let _ = {{user.name}.toString()}
+let _ = {user.name}.first
+let _ = {{user.name}.first}
 
-let _ = { [a, b, c] }
-let _ = [a, b, c]
+let _ = {[a, b, c]}
+let _ = [{a}, {b}, {c}]
+let _ = [
+  {
+    a
+  },
+  {
+    b
+  },
+  {
+    c
+  },
+]
 
-let _ = true ? true : false
-let _ = { true ? true : false }
+let _ = {list[a, b, c]}
+let _ = {list[{a}, {b}, {c}]}
+let _ = {
+  list[
+    {
+      a
+    },
+    {
+      b
+    },
+    {
+      c
+    },
+  ]
+}
+
+let _ = list[1, 2, ...{list2}]
+
+let _ = {true} ? {true} : {false}
+let _ = {{true} ? {true} : {false}}
 
 let _ = {
   if true {
@@ -752,11 +800,33 @@ let _ = {
   }
 }
 let _ = {
-  if true {
+  if {true} {
     ()
   } else {
     ()
   }
+}
+
+if {
+  true
+} {
+  ()
+} else if {
+  false
+} {
+  ()
+}
+
+if {
+  true
+} {
+  ()
+} else if {
+  false
+} {
+  ()
+} else {
+  ()
 }
 
 let _ = {
@@ -764,26 +834,154 @@ let _ = {
     ()
   }
 }
-let _ = while true {
+let _ = while {true} {
+  ()
+}
+while {/* c0 */ true /* c1 */} {
+  ()
+}
+while (
+  {
+    true
+  }
+) {
+  ()
+}
+while (
+  {
+    /* c0 */ true // c1
+  }
+) {
   ()
 }
 
 let _ = {
-  for _ in 0 to 10 {
+  for _ in {0} to {10} {
     ()
   }
 }
+for _ in {
+  0
+} to {
+  10
+} {
+  ()
+}
 
-let _ = { (foo: string) }
-let f = (): string => foo // equivalent to  (): string => ...
+let _ = {(foo: string)}
+let f = (): string => {foo} // equivalent to  (): string => ...
 
-let _ = assert true
-let _ = { assert true }
-let _ = { lazy true }
+let _ = assert {true}
+let _ = {assert {true}}
+let _ = {lazy {true}}
 
-let _ = { %extension }
-let _ = { module(ME) }
-let _ = { module(ME: MyMod) }
+let _ = {%extension}
+let _ = {module(ME)}
+let _ = {module(ME: MyMod)}
+
+{myArray}[{0}]
+{
+  myArray
+}[{
+  0
+}]
+{myArray}[{0}] = {20}
+{
+  myArray
+}[{
+  0
+}] = {
+  20
+}
+
+myArray[20] = {
+  a + b
+}
+
+{jsObject}[\\"foo\\"]
+{jsObject}[\\"foo\\"] = {\\"bar\\"}
+{jsObject}[\\"foo\\"] = {
+  a + b
+}
+
+{
+  jsObject
+}[\\"foo\\"]
+{jsObject}[\\"foo\\"] = {\\"bar\\"}
+
+apply({a}, {b}, {c})
+apply(
+  {
+    a
+  },
+  {
+    b
+  },
+  {
+    c
+  },
+)
+
+Thing.map(foo, (arg1, arg2) => {MyModuleBlah.toList(argument)})
+Thing.map({foo}, (arg1, arg2) => {
+  MyModuleBlah.toList(argument)
+})
+
+Thing.map(
+  {fooSuperLongIdentifierName},
+  {fooSuperLongIdentifierName},
+  {fooSuperLongIdentifierName},
+  (arg1, arg2) => {
+    MyModuleBlah.toList(argument)
+  },
+)
+
+arr->Belt.Array.map(x => {
+  a
+})
+
+apply(~a={a})
+apply({
+  a
+})
+apply(.{
+  a
+})
+
+let x = {<div> child </div>}
+
+// not valid jsx
+let x = {@JSX child}
+
+let x = {
+  // comment1
+  a + b
+}
+
+let x = {
+  // commment2
+  !truth
+}
+
+{
+  /* c0 */
+  x
+  /* c1 */
+}
+
+{
+  // comment
+  a +
+  b
+}
+
+{a} + {b}
+{
+  a
+} +
+{
+  b
+}
 
 "
 `;
@@ -1595,83 +1793,83 @@ let x =
   />
 
 let nav =
-  <Nav isMobile fullScreen={!isMobile ? false : isOpen}>
+  <Nav isMobile={isMobile} fullScreen={!isMobile ? false : isOpen}>
     <NavContent>
       <WidescreenMenu
-        menuItems=props.items
-        trial=props.trial
-        user=props.user
-        viewer=props.viewer
+        menuItems={props.items}
+        trial={props.trial}
+        user={props.user}
+        viewer={props.viewer}
       />
     </NavContent>
   </Nav>
 
 let nav2 =
-  <Nav isMobile fullScreen={!isMobile ? false : isOpen}>
+  <Nav isMobile={isMobile} fullScreen={!isMobile ? false : isOpen}>
     <NavContent>
       {switch isMobile {
       | true =>
         <MobileMenu
           handleOpenToggle={_ =>
             setOpen(open_ => !open_)}
-          menuItems=props.items
-          isOpen
+          menuItems={props.items}
+          isOpen={isOpen}
           forceOpen={_ => setOpen(true)}
           forceClose={_ => setOpen(false)}
-          user=props.user
+          user={props.user}
         />
       | false =>
         <WidescreenMenu
-          menuItems=props.items
-          trial=props.trial
-          user=props.user
-          viewer=props.viewer
+          menuItems={props.items}
+          trial={props.trial}
+          user={props.user}
+          viewer={props.viewer}
         />
       }}
     </NavContent>
   </Nav>
 
 let nav3 =
-  <Nav isMobile fullScreen={!isMobile ? false : isOpen}>
+  <Nav isMobile={isMobile} fullScreen={!isMobile ? false : isOpen}>
     <NavContent>
       {isMobile
         ? <MobileMenu
             handleOpenToggle={_ =>
               setOpen(open_ => !open_)}
-            menuItems=props.items
-            isOpen
+            menuItems={props.items}
+            isOpen={isOpen}
             forceOpen={_ => setOpen(true)}
             forceClose={_ => setOpen(false)}
-            user=props.user
+            user={props.user}
           />
         : <WidescreenMenu
-            menuItems=props.items
-            trial=props.trial
-            user=props.user
-            viewer=props.viewer
+            menuItems={props.items}
+            trial={props.trial}
+            user={props.user}
+            viewer={props.viewer}
           />}
     </NavContent>
   </Nav>
 
 let avatarSection =
   <>
-    <div style={\\"zIndex\\": \\"1\\", \\"opacity\\": opacityUser}>
-      <Avatar user size=45 />
+    <div style={{\\"zIndex\\": \\"1\\", \\"opacity\\": opacityUser}}>
+      <Avatar user={user} size={45} />
     </div>
     {user.email !== viewer.email
       ? <div
-          style={
+          style={{
             \\"marginLeft\\": marginLeft + \\"em\\",
             \\"opacity\\": opacityAdmin,
             \\"zIndex\\": \\"0\\",
             \\"cursor\\": \\"pointer\\",
-          }
+          }}
           onMouseEnter={_ => setHoveringAdmin(true)}
           onMouseLeave={_ => setHoveringAdmin(false)}
           onClick={_e => {
             stopImpersonating(csrfToken)
           }}>
-          <Avatar user=viewer size=45 />
+          <Avatar user={viewer} size={45} />
         </div>
       : React.nullElement}
   </>
@@ -1754,7 +1952,9 @@ let x =
     lazyExpr={lazy stuff()}
     assertExpr={assert true}
     pack=module(Foo)
+    pack={module(Foo)}
     pack=module(Foo: Bar)
+    pack={module(Foo: Bar)}
     openExpr={
       open React
       React.render()
@@ -1832,7 +2032,9 @@ let x =
     }
     {lazy stuff()}
     {assert true}
+    {module(Foo)}
     module(Foo)
+    {module(Foo: Bar)}
     module(Foo: Bar)
     {
       open React
@@ -2502,7 +2704,7 @@ let f = isPositive ? x => x + 1 : y => y - 1
 let f = isPositive ? ((a, b): int => a + b) : ((c, d): int => c - d)
 let f = isPositive ? ((a, b): int => a + b) : ((c, d): int => c - d)
 
-a => a ? () => { a } : () => { a }
+a => a ? () => {a} : () => {a}
 a => a ? a : a
 a =>
   a ? aasdasdasdasdasdasdaaasdasdasdasdasdasdasdasdasdasdasdasdasdaaaaaaaaa : a
@@ -2529,7 +2731,9 @@ try myDangerousFn() catch {
 
 let x = {
   let y = 1
-  try apply() catch {
+  try {
+    apply()
+  } catch {
   | _ => 2
   }
 }

@@ -1908,6 +1908,8 @@ module ParsetreeViewer : sig
   val processBracesAttr : Parsetree.expression -> (Parsetree.attribute option * Parsetree.expression)
 
   val filterParsingAttrs : Parsetree.attributes -> Parsetree.attributes
+
+  val isBracedExpr : Parsetree.expression -> bool
 end = struct
   open Parsetree
 
@@ -2030,6 +2032,25 @@ end = struct
     | expr -> collect [] [] expr
     end
 
+  let processBracesAttr expr =
+    match expr.pexp_attributes with
+    | (({txt = "ns.braces"}, _) as attr)::attrs ->
+      (Some attr, {expr with pexp_attributes = attrs})
+    | _ ->
+      (None, expr)
+
+  let filterParsingAttrs attrs =
+    List.filter (fun attr ->
+      match attr with
+      | ({Location.txt = ("ns.ternary" | "ns.braces" | "bs")}, _) -> false
+      | _ -> true
+    ) attrs
+
+  let isBracedExpr expr =
+    match processBracesAttr expr with
+    | (Some _, _) -> true
+    | _ -> false
+
   let isHuggableExpression expr =
     match expr.pexp_desc with
     | Pexp_array _
@@ -2038,6 +2059,7 @@ end = struct
     | Pexp_construct ({txt = Longident.Lident "[]"}, _)
     | Pexp_extension ({txt = "bs.obj"}, _)
     | Pexp_record _ -> true
+    | _ when isBracedExpr expr -> true
     | _ -> false
 
   let isHuggablePattern pattern =
@@ -2122,7 +2144,7 @@ end = struct
 
   let hasAttributes attrs =
     let attrs = List.filter (fun attr -> match attr with
-      | ({Location.txt = "bs" | "ns.ternary"}, _) -> false
+      | ({Location.txt = "bs" | "ns.ternary" | "ns.braces"}, _) -> false
       | _ -> true
     ) attrs in
     match attrs with
@@ -2136,19 +2158,25 @@ end = struct
       ) -> true
     | _ -> false
 
+  let rec hasTernaryAttribute attrs =
+    match attrs with
+    | [] -> false
+    | ({Location.txt="ns.ternary"},_)::_ -> true
+    | _::attrs -> hasTernaryAttribute attrs
+
   let isTernaryExpr expr = match expr with
     | {
-        pexp_attributes = ({txt="ns.ternary"},_)::_;
+        pexp_attributes = attrs;
         pexp_desc = Pexp_ifthenelse _
-      } -> true
+      } when hasTernaryAttribute attrs -> true
     | _ -> false
 
   let collectTernaryParts expr =
     let rec collect acc expr = match expr with
     | {
-        pexp_attributes = ({txt="ns.ternary"},_)::_;
+        pexp_attributes = attrs;
         pexp_desc = Pexp_ifthenelse (condition, consequent, Some(alternate))
-      } -> collect ((condition, consequent)::acc) alternate
+      } when hasTernaryAttribute attrs -> collect ((condition, consequent)::acc) alternate
     | alternate -> (List.rev acc, alternate)
     in
     collect [] expr
@@ -2163,11 +2191,16 @@ end = struct
       | _ -> true
     ) attrs
 
-  let isJsxExpression expr = match expr with
-    | {
-        pexp_attributes = [({txt = "JSX"}, _)];
-        pexp_desc = Pexp_apply _
-      } -> true
+  let isJsxExpression expr =
+    let rec loop attrs =
+      match attrs with
+      | [] -> false
+      | ({Location.txt = "JSX"}, _)::_ -> true
+      | _::attrs -> loop attrs
+    in
+    match expr.pexp_desc with
+    | Pexp_apply _ ->
+      loop expr.Parsetree.pexp_attributes
     | _ -> false
 
   let hasJsxAttribute attributes = match attributes with
@@ -2294,95 +2327,127 @@ end = struct
         List.rev (pattern::chain)
     in
     loop pat []
-
-  let processBracesAttr expr =
-    match expr.pexp_attributes with
-    | (({txt = "ns.braces"}, _) as attr)::attrs ->
-      (Some attr, {expr with pexp_attributes = attrs})
-    | _ ->
-      (None, expr)
-
-  let filterParsingAttrs attrs =
-    List.filter (fun attr ->
-      match attr with
-      | ({Location.txt = ("ns.ternary" | "ns.braces")}, _) -> false
-      | _ -> true
-    ) attrs
 end
 
 module Parens: sig
-  val unaryExprOperand: Parsetree.expression -> bool
+  type kind = Parenthesized | Braced of Location.t | Nothing
 
-  val binaryExprOperand: isLhs:bool -> Parsetree.expression -> string -> bool
+  val expr: Parsetree.expression -> kind
+  val structureExpr: Parsetree.expression -> kind
+
+  val unaryExprOperand: Parsetree.expression -> kind
+
+  val binaryExprOperand: isLhs:bool -> Parsetree.expression -> string -> kind
   val subBinaryExprOperand: string -> string -> bool
   val flattenOperandRhs: string -> Parsetree.expression -> bool
 
-  val lazyOrAssertExprRhs: Parsetree.expression -> bool
+  val lazyOrAssertExprRhs: Parsetree.expression -> kind
 
-  val fieldExpr: Parsetree.expression -> bool
+  val fieldExpr: Parsetree.expression -> kind
 
-  val blockExpr: Parsetree.expression -> bool
+  val setFieldExprRhs: Parsetree.expression -> kind
 
-  val setFieldExprRhs: Parsetree.expression -> bool
+  val ternaryOperand: Parsetree.expression -> kind
 
-  val ternaryOperand: Parsetree.expression -> bool
+  val jsxPropExpr: Parsetree.expression -> kind
+  val jsxChildExpr: Parsetree.expression -> kind
 
-  val jsxPropExpr: Parsetree.expression -> bool
-  val jsxChildExpr: Parsetree.expression -> bool
-
-  val binaryExpr: Parsetree.expression -> bool
+  val binaryExpr: Parsetree.expression -> kind
   val modTypeFunctorReturn: Parsetree.module_type -> bool
   val modTypeWithOperand: Parsetree.module_type -> bool
   val modExprFunctorConstraint: Parsetree.module_type -> bool
-end = struct
-  let unaryExprOperand expr = match expr with
-    | {Parsetree.pexp_attributes = attrs} when
-        let (uncurried, attrs) =
-          ParsetreeViewer.processUncurriedAttribute attrs
-        in
-        begin match attrs with
-        | _::_ -> true
-        | [] -> false
-        end
-        -> true
-    | expr when
-        ParsetreeViewer.isUnaryExpression expr ||
-        ParsetreeViewer.isBinaryExpression expr
-      -> true
-    | {pexp_desc = Pexp_constraint (
-        {pexp_desc = Pexp_pack _},
-        {ptyp_desc = Ptyp_package _}
-      )} -> false
-    | {pexp_desc =
-          Pexp_lazy _
-        | Pexp_assert _
-        | Pexp_fun _
-        | Pexp_newtype _
-        | Pexp_function _
-        | Pexp_constraint _
-        | Pexp_setfield _
-        | Pexp_extension _ (* readability? maybe remove *)
-        | Pexp_match _
-        | Pexp_try _
-        | Pexp_while _
-        | Pexp_for _
-        | Pexp_ifthenelse _
-      } -> true
-    | _ -> false
 
-  let binaryExprOperand ~isLhs expr parentOperator = match expr with
-    | {Parsetree.pexp_desc = Pexp_constraint (
-        {pexp_desc = Pexp_pack _},
-        {ptyp_desc = Ptyp_package _}
-      )} -> false
-    | {pexp_desc = Pexp_constraint _ | Pexp_fun _ | Pexp_function _ | Pexp_newtype _} -> true
-    | expr when ParsetreeViewer.isBinaryExpression expr -> true
-    | expr when ParsetreeViewer.isTernaryExpr expr -> true
-    | {pexp_desc =
-          Pexp_lazy _
-        | Pexp_assert _
-      } when isLhs -> true
-    | _ -> false
+  val bracedExpr: Parsetree.expression -> bool
+end = struct
+  type kind = Parenthesized | Braced of Location.t | Nothing
+
+  let expr expr =
+    let optBraces, _ = ParsetreeViewer.processBracesAttr expr in
+    match optBraces with
+    | Some ({Location.loc = bracesLoc}, _) -> Braced(bracesLoc)
+    | _ ->
+      begin match expr with
+      | {Parsetree.pexp_desc = Pexp_constraint (
+          {pexp_desc = Pexp_pack _},
+          {ptyp_desc = Ptyp_package _}
+        )} -> Nothing
+      | {pexp_desc = Pexp_constraint _ } -> Parenthesized
+      |  _ -> Nothing
+      end
+
+  let structureExpr expr =
+    let optBraces, _ = ParsetreeViewer.processBracesAttr expr in
+    match optBraces with
+    | Some ({Location.loc = bracesLoc}, _) -> Braced(bracesLoc)
+    | None ->
+      begin match expr with
+      | _ when ParsetreeViewer.hasAttributes expr.pexp_attributes &&
+        not (ParsetreeViewer.isJsxExpression expr) -> Parenthesized
+      | {Parsetree.pexp_desc = Pexp_constraint (
+          {pexp_desc = Pexp_pack _},
+          {ptyp_desc = Ptyp_package _}
+        )} -> Nothing
+      | {pexp_desc = Pexp_constraint _ } -> Parenthesized
+      |  _ -> Nothing
+      end
+
+  let unaryExprOperand expr =
+    let optBraces, _ = ParsetreeViewer.processBracesAttr expr in
+    match optBraces with
+    | Some ({Location.loc = bracesLoc}, _) -> Braced(bracesLoc)
+    | None ->
+      begin match expr with
+      | {Parsetree.pexp_attributes = attrs} when
+          begin match ParsetreeViewer.filterParsingAttrs attrs with
+          | _::_ -> true
+          | [] -> false
+          end
+          -> Parenthesized
+      | expr when
+          ParsetreeViewer.isUnaryExpression expr ||
+          ParsetreeViewer.isBinaryExpression expr
+        -> Parenthesized
+      | {pexp_desc = Pexp_constraint (
+          {pexp_desc = Pexp_pack _},
+          {ptyp_desc = Ptyp_package _}
+        )} -> Nothing
+      | {pexp_desc =
+            Pexp_lazy _
+          | Pexp_assert _
+          | Pexp_fun _
+          | Pexp_newtype _
+          | Pexp_function _
+          | Pexp_constraint _
+          | Pexp_setfield _
+          | Pexp_extension _ (* readability? maybe remove *)
+          | Pexp_match _
+          | Pexp_try _
+          | Pexp_while _
+          | Pexp_for _
+          | Pexp_ifthenelse _
+        } -> Parenthesized
+      | _ -> Nothing
+      end
+
+  let binaryExprOperand ~isLhs expr parentOperator =
+    let optBraces, _ = ParsetreeViewer.processBracesAttr expr in
+    match optBraces with
+    | Some ({Location.loc = bracesLoc}, _) -> Braced(bracesLoc)
+    | None ->
+      begin match expr with
+      | {Parsetree.pexp_desc = Pexp_constraint (
+          {pexp_desc = Pexp_pack _},
+          {ptyp_desc = Ptyp_package _}
+        )} -> Nothing
+      | {pexp_desc = Pexp_constraint _ | Pexp_fun _ | Pexp_function _ | Pexp_newtype _} -> Parenthesized
+      | expr when ParsetreeViewer.isBinaryExpression expr -> Parenthesized
+      | expr when ParsetreeViewer.isTernaryExpr expr -> Parenthesized
+      | {pexp_desc =
+            Pexp_lazy _
+          | Pexp_assert _
+        } when isLhs -> Parenthesized
+      | _ -> Nothing
+      end
 
   let subBinaryExprOperand parentOperator childOperator =
     let precParent = ParsetreeViewer.operatorPrecedence parentOperator in
@@ -2415,106 +2480,109 @@ end = struct
     | _ -> false
 
   let lazyOrAssertExprRhs expr =
-    match expr with
-    | {Parsetree.pexp_attributes = attrs} when
-        let (uncurried, attrs) =
-          ParsetreeViewer.processUncurriedAttribute attrs
-        in
-        begin match attrs with
-        | _::_ -> true
-        | [] -> false
-        end
-        -> true
-    | expr when ParsetreeViewer.isBinaryExpression expr -> true
-    | {pexp_desc = Pexp_constraint (
-        {pexp_desc = Pexp_pack _},
-        {ptyp_desc = Ptyp_package _}
-      )} -> false
-    | {pexp_desc =
-          Pexp_lazy _
-        | Pexp_assert _
-        | Pexp_fun _
-        | Pexp_newtype _
-        | Pexp_function _
-        | Pexp_constraint _
-        | Pexp_setfield _
-        | Pexp_match _
-        | Pexp_try _
-        | Pexp_while _
-        | Pexp_for _
-        | Pexp_ifthenelse _
-      } -> true
-    | _ -> false
-
+    let optBraces, _ = ParsetreeViewer.processBracesAttr expr in
+    match optBraces with
+    | Some ({Location.loc = bracesLoc}, _) -> Braced(bracesLoc)
+    | None ->
+      begin match expr with
+      | {Parsetree.pexp_attributes = attrs} when
+          begin match ParsetreeViewer.filterParsingAttrs attrs with
+          | _::_ -> true
+          | [] -> false
+          end
+          -> Parenthesized
+      | expr when ParsetreeViewer.isBinaryExpression expr -> Parenthesized
+      | {pexp_desc = Pexp_constraint (
+          {pexp_desc = Pexp_pack _},
+          {ptyp_desc = Ptyp_package _}
+        )} -> Nothing
+      | {pexp_desc =
+            Pexp_lazy _
+          | Pexp_assert _
+          | Pexp_fun _
+          | Pexp_newtype _
+          | Pexp_function _
+          | Pexp_constraint _
+          | Pexp_setfield _
+          | Pexp_match _
+          | Pexp_try _
+          | Pexp_while _
+          | Pexp_for _
+          | Pexp_ifthenelse _
+        } -> Parenthesized
+      | _ -> Nothing
+      end
 
   let fieldExpr expr =
-    match expr with
-    | {Parsetree.pexp_attributes = attrs} when
-        let (uncurried, attrs) =
-          attrs
-          |> ParsetreeViewer.filterParsingAttrs
-          |> ParsetreeViewer.processUncurriedAttribute
-        in
-        begin match attrs with
-        | _::_ -> true
-        | [] -> false
-        end
-        -> true
-    | expr when
-        ParsetreeViewer.isBinaryExpression expr ||
-        ParsetreeViewer.isUnaryExpression expr
-      -> true
-    | {pexp_desc = Pexp_constraint (
-        {pexp_desc = Pexp_pack _},
-        {ptyp_desc = Ptyp_package _}
-      )} -> false
-    | {pexp_desc =
-          Pexp_lazy _
-        | Pexp_assert _
-        | Pexp_fun _
-        | Pexp_newtype _
-        | Pexp_function _
-        | Pexp_constraint _
-        | Pexp_setfield _
-        | Pexp_match _
-        | Pexp_try _
-        | Pexp_while _
-        | Pexp_for _
-        | Pexp_ifthenelse _
-      } -> true
-    | _ -> false
-
-  let blockExpr expr =
-    match expr with
-    | {Parsetree.pexp_desc = Pexp_constraint (
-        {pexp_desc = Pexp_pack _},
-        {ptyp_desc = Ptyp_package _}
-      )} -> false
-    | {pexp_desc = Pexp_constraint _ } -> true
-    |  _ -> false
+    let optBraces, _ = ParsetreeViewer.processBracesAttr expr in
+    match optBraces with
+    | Some ({Location.loc = bracesLoc}, _) -> Braced(bracesLoc)
+    | None ->
+      begin match expr with
+      | {Parsetree.pexp_attributes = attrs} when
+          begin match ParsetreeViewer.filterParsingAttrs attrs with
+          | _::_ -> true
+          | [] -> false
+          end
+          -> Parenthesized
+      | expr when
+          ParsetreeViewer.isBinaryExpression expr ||
+          ParsetreeViewer.isUnaryExpression expr
+        -> Parenthesized
+      | {pexp_desc = Pexp_constraint (
+          {pexp_desc = Pexp_pack _},
+          {ptyp_desc = Ptyp_package _}
+        )} -> Nothing
+      | {pexp_desc =
+            Pexp_lazy _
+          | Pexp_assert _
+          | Pexp_fun _
+          | Pexp_newtype _
+          | Pexp_function _
+          | Pexp_constraint _
+          | Pexp_setfield _
+          | Pexp_match _
+          | Pexp_try _
+          | Pexp_while _
+          | Pexp_for _
+          | Pexp_ifthenelse _
+        } -> Parenthesized
+      | _ -> Nothing
+      end
 
   let setFieldExprRhs expr =
-    match expr with
-    | {Parsetree.pexp_desc = Pexp_constraint (
-        {pexp_desc = Pexp_pack _},
-        {ptyp_desc = Ptyp_package _}
-      )} -> false
-    | {pexp_desc = Pexp_constraint _ } -> true
-    | _ -> false
-
-  let ternaryOperand expr = match expr with
-    | {Parsetree.pexp_desc = Pexp_constraint (
-        {pexp_desc = Pexp_pack _},
-        {ptyp_desc = Ptyp_package _}
-      )} -> false
-    | {pexp_desc = Pexp_constraint _ } -> true
-    | {pexp_desc = Pexp_fun _ | Pexp_newtype _} ->
-      let (_attrsOnArrow, _parameters, returnExpr) = ParsetreeViewer.funExpr expr in
-      begin match returnExpr.pexp_desc with
-      | Pexp_constraint _ -> true
-      | _ -> false
+    let optBraces, _ = ParsetreeViewer.processBracesAttr expr in
+    match optBraces with
+    | Some ({Location.loc = bracesLoc}, _) -> Braced(bracesLoc)
+    | None ->
+      begin match expr with
+      | {Parsetree.pexp_desc = Pexp_constraint (
+          {pexp_desc = Pexp_pack _},
+          {ptyp_desc = Ptyp_package _}
+        )} -> Nothing
+      | {pexp_desc = Pexp_constraint _ } -> Parenthesized
+      | _ -> Nothing
       end
-    | _ -> false
+
+  let ternaryOperand expr =
+    let optBraces, _ = ParsetreeViewer.processBracesAttr expr in
+    match optBraces with
+    | Some ({Location.loc = bracesLoc}, _) -> Braced(bracesLoc)
+    | None ->
+      begin match expr with
+      | {Parsetree.pexp_desc = Pexp_constraint (
+          {pexp_desc = Pexp_pack _},
+          {ptyp_desc = Ptyp_package _}
+        )} -> Nothing
+      | {pexp_desc = Pexp_constraint _ } -> Parenthesized
+      | {pexp_desc = Pexp_fun _ | Pexp_newtype _} ->
+        let (_attrsOnArrow, _parameters, returnExpr) = ParsetreeViewer.funExpr expr in
+        begin match returnExpr.pexp_desc with
+        | Pexp_constraint _ -> Parenthesized
+        | _ -> Nothing
+        end
+      | _ -> Nothing
+      end
 
   let startsWithMinus txt =
     let len = String.length txt in
@@ -2524,46 +2592,80 @@ end = struct
       let s = String.get txt 0 in
       s = '-'
 
-  let jsxPropExpr expr = match expr with
-    | {Parsetree.pexp_desc =
-        Pexp_constant (Pconst_integer (x, _) | Pconst_float (x, _));
-        pexp_attributes = []}
-      when startsWithMinus x -> true
-    | {Parsetree.pexp_desc =
-        Pexp_ident _ | Pexp_constant _ | Pexp_field _ | Pexp_construct _ |
-        Pexp_array _ | Pexp_pack _ | Pexp_record _ | Pexp_extension _ |
-        Pexp_letmodule _ | Pexp_letexception _ | Pexp_open _ | Pexp_sequence _ |
-        Pexp_let _ | Pexp_tuple _;
-       pexp_attributes = []
-      } -> false
-    | {Parsetree.pexp_desc = Pexp_constraint (
-        {pexp_desc = Pexp_pack _},
-        {ptyp_desc = Ptyp_package _}
-    ); pexp_attributes = []} -> false
-    | _ -> true
+  let jsxPropExpr expr =
+    match expr.Parsetree.pexp_desc with
+    | Parsetree.Pexp_let _
+    | Pexp_sequence _
+    | Pexp_letexception _
+    | Pexp_letmodule _
+    | Pexp_open _ -> Nothing
+    | _ ->
+      let optBraces, _ = ParsetreeViewer.processBracesAttr expr in
+      begin match optBraces with
+      | Some ({Location.loc = bracesLoc}, _) -> Braced(bracesLoc)
+      | None ->
+        begin match expr with
+        | {Parsetree.pexp_desc =
+            Pexp_constant (Pconst_integer (x, _) | Pconst_float (x, _));
+            pexp_attributes = []}
+          when startsWithMinus x -> Parenthesized
+        | {Parsetree.pexp_desc =
+            Pexp_ident _ | Pexp_constant _ | Pexp_field _ | Pexp_construct _ |
+            Pexp_array _ | Pexp_pack _ | Pexp_record _ | Pexp_extension _ |
+            Pexp_letmodule _ | Pexp_letexception _ | Pexp_open _ | Pexp_sequence _ |
+            Pexp_let _ | Pexp_tuple _;
+           pexp_attributes = []
+          } -> Nothing
+        | {Parsetree.pexp_desc = Pexp_constraint (
+            {pexp_desc = Pexp_pack _},
+            {ptyp_desc = Ptyp_package _}
+          ); pexp_attributes = []} -> Nothing
+        | _ -> Parenthesized
+        end
+      end
 
-  let jsxChildExpr expr = match expr with
-    | {Parsetree.pexp_desc = Pexp_constant (Pconst_integer (x, _) | Pconst_float (x, _));
-       pexp_attributes = []
-      } when startsWithMinus x -> true
-    | {Parsetree.pexp_desc =
-        Pexp_ident _ | Pexp_constant _ | Pexp_field _ | Pexp_construct _ |
-        Pexp_array _ | Pexp_pack _ | Pexp_record _ | Pexp_extension _ |
-        Pexp_letmodule _ | Pexp_letexception _ | Pexp_open _ | Pexp_sequence _ |
-        Pexp_let _;
-        pexp_attributes = []
-      } -> false
-    | {Parsetree.pexp_desc = Pexp_constraint (
-        {pexp_desc = Pexp_pack _},
-        {ptyp_desc = Ptyp_package _}
-       ); pexp_attributes = []} -> false
-    | expr when ParsetreeViewer.isJsxExpression expr -> false
-    | _ -> true
+  let jsxChildExpr expr =
+    match expr.Parsetree.pexp_desc with
+    | Parsetree.Pexp_let _
+    | Pexp_sequence _
+    | Pexp_letexception _
+    | Pexp_letmodule _
+    | Pexp_open _ -> Nothing
+    | _ ->
+      let optBraces, _ = ParsetreeViewer.processBracesAttr expr in
+      begin match optBraces with
+      | Some ({Location.loc = bracesLoc}, _) -> Braced(bracesLoc)
+      | _ ->
+        begin match expr with
+        | {Parsetree.pexp_desc = Pexp_constant (Pconst_integer (x, _) | Pconst_float (x, _));
+           pexp_attributes = []
+          } when startsWithMinus x -> Parenthesized
+        | {Parsetree.pexp_desc =
+            Pexp_ident _ | Pexp_constant _ | Pexp_field _ | Pexp_construct _ |
+            Pexp_array _ | Pexp_pack _ | Pexp_record _ | Pexp_extension _ |
+            Pexp_letmodule _ | Pexp_letexception _ | Pexp_open _ | Pexp_sequence _ |
+            Pexp_let _;
+            pexp_attributes = []
+          } -> Nothing
+        | {Parsetree.pexp_desc = Pexp_constraint (
+            {pexp_desc = Pexp_pack _},
+            {ptyp_desc = Ptyp_package _}
+           ); pexp_attributes = []} -> Nothing
+        | expr when ParsetreeViewer.isJsxExpression expr -> Nothing
+        | _ -> Parenthesized
+        end
+      end
 
-  let binaryExpr expr = match expr with
-    | {Parsetree.pexp_attributes = _::_} as expr
-      when ParsetreeViewer.isBinaryExpression expr -> true
-    | _ -> false
+  let binaryExpr expr =
+    let optBraces, _ = ParsetreeViewer.processBracesAttr expr in
+    match optBraces with
+    | Some ({Location.loc = bracesLoc}, _) -> Braced(bracesLoc)
+    | None ->
+      begin match expr with
+      | {Parsetree.pexp_attributes = _::_} as expr
+        when ParsetreeViewer.isBinaryExpression expr -> Parenthesized
+      | _ -> Nothing
+      end
 
   let modTypeFunctorReturn modType = match modType with
     | {Parsetree.pmty_desc = Pmty_with _} -> true
@@ -2580,6 +2682,14 @@ end = struct
 
   let modExprFunctorConstraint modType = match modType with
     | {Parsetree.pmty_desc = Pmty_functor _} -> true
+    | _ -> false
+
+  let bracedExpr expr = match expr.Parsetree.pexp_desc with
+    | Pexp_constraint (
+        {pexp_desc = Pexp_pack _},
+        {ptyp_desc = Ptyp_package _}
+      ) -> false
+    | Pexp_constraint _ -> true
     | _ -> false
 end
 
@@ -2902,17 +3012,6 @@ module CommentTable = struct
     | Pexp_field (expr, _) when isBlockExpr expr -> true
     | Pexp_setfield (expr, _, _) when isBlockExpr expr -> true
     | _ -> false
-
-  (* TODO: ParsetreeViewer? *)
-  (* let functorType modtype = *)
-    (* let rec process acc modtype = match modtype with *)
-    (* | {pmty_desc = Pmty_functor (lbl, argType, returnType); pmty_attributes = attrs} -> *)
-      (* let arg = (attrs, lbl, argType) in *)
-      (* process (arg::acc) returnType *)
-    (* | modType -> *)
-      (* (List.rev acc, modType) *)
-    (* in *)
-    (* process [] modtype *)
 
   let rec walkStructure s t comments =
     match s with
@@ -4762,14 +4861,12 @@ module Printer = struct
     | Pstr_primitive valueDescription ->
       printValueDescription valueDescription cmtTbl
     | Pstr_eval (expr, attrs) ->
-      let needsParens = match expr with
-      | {pexp_attributes=[({txt="ns.ternary"},_)]; pexp_desc = Pexp_ifthenelse _} -> false
-      | _ when ParsetreeViewer.hasAttributes expr.pexp_attributes -> true
-      | _ -> false
-      in
       let exprDoc =
         let doc = printExpressionWithComments expr cmtTbl in
-        if needsParens then addParens doc else doc
+        match Parens.structureExpr expr with
+        | Parens.Parenthesized -> addParens doc
+        | Braced braces  -> printBraces doc expr braces
+        | Nothing -> doc
       in
       Doc.concat [
         printAttributes attrs;
@@ -5983,19 +6080,11 @@ module Printer = struct
 		in
     let (optBraces, expr) = ParsetreeViewer.processBracesAttr vb.pvb_expr in
     let printedExpr =
-      let needsParens = match expr.pexp_desc with
-      | Pexp_constraint(
-          {pexp_desc = Pexp_pack _},
-          {ptyp_desc = Ptyp_package _}
-        ) -> false
-      | Pexp_constraint _ -> true
-      | _ -> false
-      in
-      match optBraces with
-      | Some braces -> printBracedExpr ~parens:needsParens expr braces cmtTbl
-      | None ->
-        let exprDoc = printExpressionWithComments expr cmtTbl in
-        if needsParens then addParens exprDoc else exprDoc
+      let doc = printExpressionWithComments vb.pvb_expr cmtTbl in
+      match Parens.expr vb.pvb_expr with
+      | Parens.Parenthesized -> addParens doc
+      | Braced braces  -> printBraces doc expr braces
+      | Nothing -> doc
     in
 		if isGhost then
 			printedExpr
@@ -6391,13 +6480,6 @@ module Printer = struct
     printComments doc cmtTbl expr.Parsetree.pexp_loc
 
   and printExpression (e : Parsetree.expression) cmtTbl =
-    (* let e = { *)
-      (* e with pexp_attributes = List.filter (fun attr -> *)
-        (* match attr with *)
-        (* | ({Location.txt = "ns.braces"}, _) -> false *)
-        (* | _ -> true *)
-        (* ) e.pexp_attributes *)
-    (* } in *)
     let printedExpression = match e.pexp_desc with
     | Parsetree.Pexp_constant c -> printConstant c
     | Pexp_construct _ when ParsetreeViewer.hasJsxAttribute e.pexp_attributes ->
@@ -6416,7 +6498,11 @@ module Printer = struct
           Doc.text ",";
           Doc.line;
           Doc.dotdotdot;
-          printExpressionWithComments expr cmtTbl
+          let doc = printExpressionWithComments expr cmtTbl in
+          match Parens.expr expr with
+          | Parens.Parenthesized -> addParens doc
+          | Braced braces -> printBraces doc expr braces
+          | Nothing -> doc
         ]
       | None -> Doc.nil
       in
@@ -6428,7 +6514,13 @@ module Printer = struct
               Doc.softLine;
               Doc.join ~sep:(Doc.concat [Doc.text ","; Doc.line])
                 (List.map
-                  (fun expr -> printExpressionWithComments expr cmtTbl)
+                  (fun expr ->
+                    let doc = printExpressionWithComments expr cmtTbl in
+                    match Parens.expr expr with
+                    | Parens.Parenthesized -> addParens doc
+                    | Braced braces -> printBraces doc expr braces
+                    | Nothing -> doc
+                  )
                   expressions);
               spreadDoc;
             ])
@@ -6448,7 +6540,11 @@ module Printer = struct
       | Some({pexp_desc = Pexp_tuple [{pexp_desc = Pexp_tuple _} as arg]}) ->
         Doc.concat [
           Doc.lparen;
-          printExpressionWithComments arg cmtTbl;
+          (let doc = printExpressionWithComments arg cmtTbl in
+          match Parens.expr arg with
+          | Parens.Parenthesized -> addParens doc
+          | Braced braces -> printBraces doc arg braces
+          | Nothing -> doc);
           Doc.rparen;
         ]
       | Some({pexp_desc = Pexp_tuple args }) ->
@@ -6459,7 +6555,12 @@ module Printer = struct
               Doc.softLine;
               Doc.join ~sep:(Doc.concat [Doc.comma; Doc.line]) (
                 List.map
-                  (fun expr -> printExpressionWithComments expr cmtTbl)
+                  (fun expr ->
+                    let doc = printExpressionWithComments expr cmtTbl in
+                    match Parens.expr expr with
+                    | Parens.Parenthesized -> addParens doc
+                    | Braced braces -> printBraces doc expr braces
+                    | Nothing -> doc)
                   args
               )
             ]
@@ -6469,7 +6570,13 @@ module Printer = struct
           Doc.rparen;
         ]
       | Some(arg) ->
-        let argDoc = printExpressionWithComments arg cmtTbl in
+        let argDoc =
+          let doc = printExpressionWithComments arg cmtTbl in
+          match Parens.expr arg with
+          | Parens.Parenthesized -> addParens doc
+          | Braced braces -> printBraces doc arg braces
+          | Nothing -> doc
+        in
         let shouldHug = ParsetreeViewer.isHuggableExpression arg in
         Doc.concat [
           Doc.lparen;
@@ -6498,7 +6605,13 @@ module Printer = struct
             Doc.concat([
               Doc.softLine;
               Doc.join ~sep:(Doc.concat [Doc.text ","; Doc.line])
-                (List.map (fun expr -> printExpressionWithComments expr cmtTbl) exprs)
+                (List.map (fun expr ->
+                  let doc = printExpressionWithComments expr cmtTbl in
+                  match Parens.expr expr with
+                  | Parens.Parenthesized -> addParens doc
+                  | Braced braces -> printBraces doc expr braces
+                  | Nothing -> doc)
+                 exprs)
             ])
           );
           Doc.ifBreaks (Doc.text ",") Doc.nil;
@@ -6520,7 +6633,13 @@ module Printer = struct
             Doc.concat([
               Doc.softLine;
               Doc.join ~sep:(Doc.concat [Doc.text ","; Doc.line])
-                (List.map (fun expr -> printExpressionWithComments expr cmtTbl) exprs)
+                (List.map (fun expr ->
+                  let doc = printExpressionWithComments expr cmtTbl in
+                  match Parens.expr expr with
+                  | Parens.Parenthesized -> addParens doc
+                  | Braced braces -> printBraces doc expr braces
+                  | Nothing -> doc
+                  ) exprs)
             ])
           );
           Doc.trailingComma;
@@ -6533,7 +6652,11 @@ module Printer = struct
       | None -> Doc.nil
       | Some expr -> Doc.concat [
           Doc.dotdotdot;
-          printExpression expr cmtTbl;
+          (let doc = printExpressionWithComments expr cmtTbl in
+          match Parens.expr expr with
+          | Parens.Parenthesized -> addParens doc
+          | Braced braces -> printBraces doc expr braces
+          | Nothing -> doc);
           Doc.comma;
           Doc.line;
         ]
@@ -6612,7 +6735,10 @@ module Printer = struct
     | Pexp_field (expr, longidentLoc) ->
       let lhs =
         let doc = printExpressionWithComments expr cmtTbl in
-        if Parens.fieldExpr expr then addParens doc else doc
+        match Parens.fieldExpr expr with
+        | Parens.Parenthesized -> addParens doc
+        | Braced braces  -> printBraces doc expr braces
+        | Nothing -> doc
       in
       Doc.concat [
         lhs;
@@ -6658,7 +6784,9 @@ module Printer = struct
         | _ -> Doc.nil
         in
         let attrs = ParsetreeViewer.filterTernaryAttributes e.pexp_attributes in
-        let needsParens = match attrs with | [] -> false | _ -> true in
+        let needsParens = match ParsetreeViewer.filterParsingAttrs attrs with
+        | [] -> false | _ -> true
+        in
         Doc.concat [
           printAttributes attrs;
           if needsParens then addParens ternaryDoc else ternaryDoc;
@@ -6673,9 +6801,12 @@ module Printer = struct
               printExpressionBlock ~braces:true ifExpr cmtTbl
             else
               let doc = printExpressionWithComments ifExpr cmtTbl in
-              Doc.group (
-                Doc.ifBreaks (addParens doc) doc
-              )
+              match Parens.expr ifExpr with
+              | Parens.Parenthesized -> addParens doc
+              | Braced braces -> printBraces doc ifExpr braces
+              | Nothing -> Doc.group (
+                  Doc.ifBreaks (addParens doc) doc
+                )
           in
           Doc.concat [
             ifTxt;
@@ -6698,7 +6829,13 @@ module Printer = struct
         elseDoc;
       ]
     | Pexp_while (expr1, expr2) ->
-      let condition = printExpressionWithComments expr1 cmtTbl in
+      let condition =
+        let doc = printExpressionWithComments expr1 cmtTbl in
+        match Parens.expr expr1 with
+        | Parens.Parenthesized -> addParens doc
+        | Braced braces  -> printBraces doc expr1 braces
+        | Nothing -> doc
+      in
       Doc.breakableGroup ~forceBreak:true (
         Doc.concat [
           Doc.text "while ";
@@ -6718,9 +6855,17 @@ module Printer = struct
           Doc.text "for ";
           printPattern pattern cmtTbl;
           Doc.text " in ";
-          printExpressionWithComments fromExpr cmtTbl;
+          (let doc = printExpressionWithComments fromExpr cmtTbl in
+          match Parens.expr fromExpr with
+          | Parens.Parenthesized -> addParens doc
+          | Braced braces -> printBraces doc fromExpr braces
+          | Nothing -> doc);
           printDirectionFlag directionFlag;
-          printExpressionWithComments toExpr cmtTbl;
+          (let doc = printExpressionWithComments toExpr cmtTbl in
+          match Parens.expr toExpr with
+          | Parens.Parenthesized -> addParens doc
+          | Braced braces -> printBraces doc toExpr braces
+          | Nothing -> doc);
           Doc.space;
           printExpressionBlock ~braces:true body cmtTbl;
         ]
@@ -6749,8 +6894,15 @@ module Printer = struct
       )
 
     | Pexp_constraint (expr, typ) ->
+      let exprDoc =
+        let doc = printExpressionWithComments expr cmtTbl in
+        match Parens.expr expr with
+        | Parens.Parenthesized -> addParens doc
+        | Braced braces  -> printBraces doc expr braces
+        | Nothing -> doc
+      in
       Doc.concat [
-        printExpressionWithComments expr cmtTbl;
+        exprDoc;
         Doc.text ": ";
         printTypExpr typ cmtTbl;
       ]
@@ -6761,7 +6913,10 @@ module Printer = struct
     | Pexp_assert expr ->
       let rhs =
         let doc = printExpressionWithComments expr cmtTbl in
-        if Parens.lazyOrAssertExprRhs expr then addParens doc else doc
+        match Parens.lazyOrAssertExprRhs expr with
+        | Parens.Parenthesized -> addParens doc
+        | Braced braces  -> printBraces doc expr braces
+        | Nothing -> doc
       in
       Doc.concat [
         Doc.text "assert ";
@@ -6770,7 +6925,10 @@ module Printer = struct
     | Pexp_lazy expr ->
       let rhs =
         let doc = printExpressionWithComments expr cmtTbl in
-        if Parens.lazyOrAssertExprRhs expr then addParens doc else doc
+        match Parens.lazyOrAssertExprRhs expr with
+        | Parens.Parenthesized -> addParens doc
+        | Braced braces  -> printBraces doc expr braces
+        | Nothing -> doc
       in
       Doc.group (
         Doc.concat [
@@ -6802,7 +6960,10 @@ module Printer = struct
         ParsetreeViewer.processUncurriedAttribute attrsOnArrow
       in
       let (returnExpr, typConstraint) = match returnExpr.pexp_desc with
-      | Pexp_constraint (expr, typ) -> (expr, Some typ)
+      | Pexp_constraint (expr, typ) -> (
+          {expr with pexp_attributes = returnExpr.pexp_attributes},
+          Some typ
+        )
       | _ -> (returnExpr, None)
       in
       let hasConstraint = match typConstraint with | Some _ -> true | None -> false in
@@ -6814,7 +6975,7 @@ module Printer = struct
         cmtTbl
       in
       let returnExprDoc =
-        let (optBraces, returnExpr) = ParsetreeViewer.processBracesAttr returnExpr in
+        let (optBraces, _) = ParsetreeViewer.processBracesAttr returnExpr in
         let shouldInline = match (returnExpr.pexp_desc, optBraces) with
         | (_, Some _ ) -> true
         | ((Pexp_array _
@@ -6832,20 +6993,11 @@ module Printer = struct
         | _ -> true
         in
         let returnDoc =
-          let needsParens = match returnExpr.pexp_desc with
-          | Pexp_constraint(
-              {pexp_desc = Pexp_pack _},
-              {ptyp_desc = Ptyp_package _}
-            ) -> false
-          | Pexp_constraint _ -> true
-          | _ -> false
-          in
-          match optBraces with
-          | Some braces ->
-              printBracedExpr ~parens:needsParens returnExpr braces cmtTbl
-          | None ->
-            let exprDoc = printExpressionWithComments returnExpr cmtTbl in
-            if needsParens then addParens exprDoc else exprDoc
+          let doc = printExpressionWithComments returnExpr cmtTbl in
+          match Parens.expr returnExpr with
+          | Parens.Parenthesized -> addParens doc
+          | Braced braces  -> printBraces doc returnExpr braces
+          | Nothing -> doc
         in
         if shouldInline then Doc.concat [
           Doc.space;
@@ -6870,13 +7022,7 @@ module Printer = struct
       | Some(typ) -> Doc.concat [Doc.text ": "; printTypExpr typ cmtTbl]
       | _ -> Doc.nil
       in
-      let attrs = match attrs with
-      | [] -> Doc.nil
-      | attrs -> Doc.concat [
-          Doc.join ~sep:Doc.line (List.map printAttribute attrs);
-          Doc.space;
-        ]
-      in
+      let attrs = printAttributes attrs in
       Doc.group (
         Doc.concat [
           attrs;
@@ -6887,16 +7033,30 @@ module Printer = struct
         ]
       )
     | Pexp_try (expr, cases) ->
+      let exprDoc =
+        let doc = printExpressionWithComments expr cmtTbl in
+        match Parens.expr expr with
+        | Parens.Parenthesized -> addParens doc
+        | Braced braces  -> printBraces doc expr braces
+        | Nothing -> doc
+      in
       Doc.concat [
         Doc.text "try ";
-        printExpressionWithComments expr cmtTbl;
+        exprDoc;
         Doc.text " catch ";
         printCases cases cmtTbl;
       ]
     | Pexp_match (expr, cases) ->
+      let exprDoc =
+        let doc = printExpressionWithComments expr cmtTbl in
+        match Parens.expr expr with
+        | Parens.Parenthesized -> addParens doc
+        | Braced braces  -> printBraces doc expr braces
+        | Nothing -> doc
+      in
       Doc.concat [
         Doc.text "switch ";
-        printExpressionWithComments expr cmtTbl;
+        exprDoc;
         Doc.space;
         printCases cases cmtTbl;
       ]
@@ -6916,17 +7076,18 @@ module Printer = struct
     | Pexp_construct _ when ParsetreeViewer.hasJsxAttribute e.pexp_attributes -> true
     | _ -> false
     in
-    begin match e.pexp_attributes with
+    match e.pexp_attributes with
     | [] -> printedExpression
     | attrs when not shouldPrintItsOwnAttributes ->
       Doc.group (
         Doc.concat [
-          printAttributes (ParsetreeViewer.filterParsingAttrs attrs);
+          printAttributes attrs;
           printedExpression;
         ]
       )
     | _ -> printedExpression
-    end
+
+
 
   and printPexpFun ~inCallback e cmtTbl =
       let (attrsOnArrow, parameters, returnExpr) = ParsetreeViewer.funExpr e in
@@ -6934,7 +7095,7 @@ module Printer = struct
         ParsetreeViewer.processUncurriedAttribute attrsOnArrow
       in
       let (returnExpr, typConstraint) = match returnExpr.pexp_desc with
-      | Pexp_constraint (expr, typ) -> (expr, Some typ)
+      | Pexp_constraint (expr, typ) -> ({expr with pexp_attributes = returnExpr.pexp_attributes}, Some typ)
       | _ -> (returnExpr, None)
       in
       let parametersDoc = printExprFunParameters
@@ -6947,14 +7108,22 @@ module Printer = struct
       | _ -> true
       in
       let returnExprDoc =
-        let shouldInline = match returnExpr.pexp_desc with
-        | Pexp_array _
+        let (optBraces, _) = ParsetreeViewer.processBracesAttr returnExpr in
+        let shouldInline = match (returnExpr.pexp_desc, optBraces) with
+        | (_, Some _) -> true
+        | ((Pexp_array _
         | Pexp_tuple _
         | Pexp_construct (_, Some _)
-        | Pexp_record _ -> true
+        | Pexp_record _), _) -> true
         | _ -> false
         in
-        let returnDoc = printExpressionWithComments returnExpr cmtTbl in
+        let returnDoc =
+          let doc = printExpressionWithComments returnExpr cmtTbl in
+          match Parens.expr returnExpr with
+          | Parens.Parenthesized -> addParens doc
+          | Braced braces  -> printBraces doc returnExpr braces
+          | Nothing -> doc
+        in
         if shouldInline then Doc.concat [
           Doc.space;
           returnDoc;
@@ -7003,16 +7172,25 @@ module Printer = struct
 
   and printTernaryOperand expr cmtTbl =
     let doc = printExpressionWithComments expr cmtTbl in
-    if Parens.ternaryOperand expr then addParens doc else doc
+    match Parens.ternaryOperand expr with
+    | Parens.Parenthesized -> addParens doc
+    | Braced braces  -> printBraces doc expr braces
+    | Nothing -> doc
 
   and printSetFieldExpr attrs lhs longidentLoc rhs loc cmtTbl =
     let rhsDoc =
       let doc = printExpressionWithComments rhs cmtTbl in
-      if Parens.setFieldExprRhs rhs then addParens doc else doc
+      match Parens.setFieldExprRhs rhs with
+      | Parens.Parenthesized -> addParens doc
+      | Braced braces  -> printBraces doc rhs braces
+      | Nothing -> doc
     in
     let lhsDoc =
       let doc = printExpressionWithComments lhs cmtTbl in
-      if Parens.fieldExpr lhs then addParens doc else doc
+      match Parens.fieldExpr lhs with
+      | Parens.Parenthesized -> addParens doc
+      | Braced braces  -> printBraces doc lhs braces
+      | Nothing -> doc
     in
     let shouldIndent = ParsetreeViewer.isBinaryExpression rhs in
     let doc = Doc.concat [
@@ -7076,7 +7254,10 @@ module Printer = struct
       ) ->
       let printedOperand =
         let doc = printExpressionWithComments operand cmtTbl in
-        if Parens.unaryExprOperand operand then addParens doc else doc
+        match Parens.unaryExprOperand operand with
+        | Parens.Parenthesized -> addParens doc
+        | Braced braces  -> printBraces doc operand braces
+        | Nothing -> doc
       in
       let doc = Doc.concat [
         printUnaryOperator operator;
@@ -7199,18 +7380,12 @@ module Printer = struct
             in
             if isLhs then addParens doc else doc
           | _ ->
-            let doc =
-              (* let needsNewline = match getFirstLeadingComment cmtTbl expr.pexp_loc with *)
-              (* | Some cmt  *)
-              let doc = printExpressionWithComments expr cmtTbl in
-              doc
-              (* if isLhs then *)
-               (* Doc.concat [doc; Doc.hardLine] *)
-              (* else doc *)
-            in
-            if Parens.binaryExprOperand ~isLhs expr parentOperator then
-              addParens doc
-            else doc
+            let doc = printExpressionWithComments expr cmtTbl in
+            begin match Parens.binaryExprOperand ~isLhs expr parentOperator with
+            | Parens.Parenthesized -> addParens doc
+            | Braced braces  -> printBraces doc expr braces
+            | Nothing -> doc
+            end
           end
       in
       flatten ~isLhs expr parentOperator
@@ -7225,14 +7400,16 @@ module Printer = struct
       ) ->
       let lhsDoc = printOperand ~isLhs:true lhs op in
       let rhsDoc = printOperand ~isLhs:false rhs op in
-      Doc.concat [
-        lhsDoc;
-        (match op with
-        | "|." -> Doc.text "->"
-        | "|>" -> Doc.text " |> "
-        | _ -> assert false);
-        rhsDoc;
-      ]
+      Doc.group (
+        Doc.concat [
+          lhsDoc;
+          (match op with
+          | "|." -> Doc.text "->"
+          | "|>" -> Doc.text " |> "
+          | _ -> assert false);
+          rhsDoc;
+        ]
+      )
     | Pexp_apply (
         {pexp_desc = Pexp_ident {txt = Longident.Lident operator}},
         [Nolabel, lhs; Nolabel, rhs]
@@ -7253,10 +7430,21 @@ module Printer = struct
           right
         ]
       ) in
-      Doc.concat [
-        printAttributes expr.pexp_attributes;
-        if Parens.binaryExpr expr then addParens doc else doc
-      ]
+      Doc.group (
+        Doc.concat [
+          printAttributes expr.pexp_attributes;
+          match Parens.binaryExpr {expr with
+            pexp_attributes = List.filter (fun attr ->
+              match attr with
+              | ({Location.txt = ("ns.braces")}, _) -> false
+              | _ -> true
+            ) expr.pexp_attributes
+          } with
+          | Braced(bracesLoc) -> printBraces doc expr bracesLoc
+          | Parenthesized -> addParens doc
+          | Nothing -> doc;
+        ]
+      )
     | _ -> Doc.nil
 
   (* callExpr(arg1, arg2)*)
@@ -7266,13 +7454,20 @@ module Printer = struct
         {pexp_desc = Pexp_ident {txt = Longident.Lident "##"}},
         [Nolabel, parentExpr; Nolabel, memberExpr]
       ) ->
+        let parentDoc =
+          let doc = printExpressionWithComments parentExpr cmtTbl in
+          match Parens.expr parentExpr with
+          | Parens.Parenthesized -> addParens doc
+          | Braced braces  -> printBraces doc parentExpr braces
+          | Nothing -> doc
+        in
         let member =
           let memberDoc = printExpressionWithComments memberExpr cmtTbl in
           Doc.concat [Doc.text "\""; memberDoc; Doc.text "\""]
         in
         Doc.group (Doc.concat [
           printAttributes expr.pexp_attributes;
-          printExpressionWithComments parentExpr cmtTbl;
+          parentDoc;
           Doc.lbracket;
           member;
           Doc.rbracket;
@@ -7281,9 +7476,15 @@ module Printer = struct
         {pexp_desc = Pexp_ident {txt = Longident.Lident "#="}},
         [Nolabel, lhs; Nolabel, rhs]
       ) ->
-        let rhsDoc = printExpressionWithComments rhs cmtTbl in
+        let rhsDoc =
+          let doc = printExpressionWithComments rhs cmtTbl in
+          match Parens.expr rhs with
+          | Parens.Parenthesized -> addParens doc
+          | Braced braces  -> printBraces doc rhs braces
+          | Nothing -> doc
+        in
         (* TODO: unify indentation of "=" *)
-        let shouldIndent = ParsetreeViewer.isBinaryExpression rhs in
+        let shouldIndent = not (ParsetreeViewer.isBracedExpr rhs) && ParsetreeViewer.isBinaryExpression rhs in
         let doc = Doc.group(
           Doc.concat [
             printExpressionWithComments lhs cmtTbl;
@@ -7311,7 +7512,13 @@ module Printer = struct
         [Nolabel, parentExpr; Nolabel, memberExpr]
       ) ->
         let member =
-          let memberDoc = printExpressionWithComments memberExpr cmtTbl in
+          let memberDoc =
+            let doc = printExpressionWithComments memberExpr cmtTbl in
+            match Parens.expr memberExpr with
+            | Parens.Parenthesized -> addParens doc
+            | Braced braces  -> printBraces doc memberExpr braces
+            | Nothing -> doc
+          in
           let shouldInline = match memberExpr.pexp_desc with
           | Pexp_constant _ | Pexp_ident _ -> true
           | _ -> false
@@ -7328,9 +7535,16 @@ module Printer = struct
             ]
           )
         in
+        let parentDoc =
+          let doc = printExpressionWithComments parentExpr cmtTbl in
+          match Parens.expr parentExpr with
+          | Parens.Parenthesized -> addParens doc
+          | Braced braces  -> printBraces doc parentExpr braces
+          | Nothing -> doc
+        in
         Doc.group (Doc.concat [
           printAttributes expr.pexp_attributes;
-          printExpressionWithComments parentExpr cmtTbl;
+          parentDoc;
           Doc.lbracket;
           member;
           Doc.rbracket;
@@ -7340,7 +7554,13 @@ module Printer = struct
         [Nolabel, parentExpr; Nolabel, memberExpr; Nolabel, targetExpr]
       ) ->
         let member =
-          let memberDoc = printExpressionWithComments memberExpr cmtTbl in
+          let memberDoc =
+            let doc = printExpressionWithComments memberExpr cmtTbl in
+            match Parens.expr memberExpr with
+            | Parens.Parenthesized -> addParens doc
+            | Braced braces  -> printBraces doc memberExpr braces
+            | Nothing -> doc
+          in
           let shouldInline = match memberExpr.pexp_desc with
           | Pexp_constant _ | Pexp_ident _ -> true
           | _ -> false
@@ -7358,6 +7578,9 @@ module Printer = struct
           )
         in
         let shouldIndentTargetExpr =
+          if ParsetreeViewer.isBracedExpr targetExpr then
+            false
+          else
           ParsetreeViewer.isBinaryExpression targetExpr ||
           (match targetExpr with
           | {
@@ -7372,21 +7595,23 @@ module Printer = struct
           )
         in
         let targetExpr =
-          let exprDoc = printExpressionWithComments targetExpr cmtTbl in
-          let needsParens = match targetExpr.pexp_desc with
-          | Pexp_constraint(
-              {pexp_desc = Pexp_pack _},
-              {ptyp_desc = Ptyp_package _}
-            ) -> false
-          | Pexp_constraint _ -> true
-          | _ -> false
-          in
-          if needsParens then addParens exprDoc else exprDoc
+          let doc = printExpressionWithComments targetExpr cmtTbl in
+          match Parens.expr targetExpr with
+          | Parens.Parenthesized -> addParens doc
+          | Braced braces  -> printBraces doc targetExpr braces
+          | Nothing -> doc
+        in
+        let parentDoc =
+          let doc = printExpressionWithComments parentExpr cmtTbl in
+          match Parens.expr parentExpr with
+          | Parens.Parenthesized -> addParens doc
+          | Braced braces  -> printBraces doc parentExpr braces
+          | Nothing -> doc
         in
         Doc.group (
           Doc.concat [
           printAttributes expr.pexp_attributes;
-          printExpressionWithComments parentExpr cmtTbl;
+          parentDoc;
           Doc.lbracket;
           member;
           Doc.rbracket;
@@ -7415,7 +7640,13 @@ module Printer = struct
       let (uncurried, attrs) =
         ParsetreeViewer.processUncurriedAttribute expr.pexp_attributes
       in
-      let callExprDoc = printExpressionWithComments callExpr cmtTbl in
+      let callExprDoc =
+        let doc = printExpressionWithComments callExpr cmtTbl in
+        match Parens.expr callExpr with
+        | Parens.Parenthesized -> addParens doc
+        | Braced braces  -> printBraces doc callExpr braces
+        | Nothing -> doc
+      in
       if ParsetreeViewer.requiresSpecialCallbackPrinting args then
         let argsDoc = printArgumentsWithCallback ~uncurried args cmtTbl in
         Doc.concat [
@@ -7434,7 +7665,7 @@ module Printer = struct
 
   and printJsxExpression lident args cmtTbl =
     let name = printJsxName lident cmtTbl in
-    let (formattedProps, children) = formatJsxProps args cmtTbl in
+    let (formattedProps, children) = printJsxProps args cmtTbl in
     (* <div className="test" /> *)
     let isSelfClosing = match children with | [] -> true | _ -> false in
     Doc.group (
@@ -7492,12 +7723,15 @@ module Printer = struct
       Doc.join ~sep:Doc.line (
         List.map (fun expr ->
           let exprDoc = printExpressionWithComments expr cmtTbl in
-          if Parens.jsxChildExpr expr then addBraces exprDoc else exprDoc
+          match Parens.jsxChildExpr expr with
+          | Parenthesized
+          | Braced _ -> addBraces exprDoc
+          | Nothing -> exprDoc
         ) children
       )
     )
 
-  and formatJsxProps args cmtTbl =
+  and printJsxProps args cmtTbl =
     let rec loop props args =
       match args with
       | [] -> (Doc.nil, [])
@@ -7522,12 +7756,12 @@ module Printer = struct
         let (children, _) = ParsetreeViewer.collectListExpressions children in
         (formattedProps, children)
       | arg::args ->
-        let propDoc = formatJsxProp arg cmtTbl in
+        let propDoc = printJsxProp arg cmtTbl in
         loop (propDoc::props) args
     in
     loop [] args
 
-  and formatJsxProp arg cmtTbl =
+  and printJsxProp arg cmtTbl =
     match arg with
     | (
         (Asttypes.Labelled lblTxt | Optional lblTxt) as lbl,
@@ -7559,12 +7793,17 @@ module Printer = struct
         Doc.concat [lbl; Doc.text "=?"]
       | Nolabel -> Doc.nil
       in
-      let exprDoc = printExpression expr cmtTbl in
+      let exprDoc =
+        let doc = printExpression expr cmtTbl in
+        match Parens.jsxPropExpr expr with
+        | Parenthesized | Braced(_) -> addBraces doc
+        | _ -> doc
+      in
       let fullLoc = {argLoc with loc_end = expr.pexp_loc.loc_end} in
       printComments
         (Doc.concat [
           lblDoc;
-          if Parens.jsxPropExpr expr then addBraces exprDoc else exprDoc;
+          exprDoc;
         ])
         cmtTbl
         fullLoc
@@ -7646,9 +7885,16 @@ module Printer = struct
 		| [Nolabel, {pexp_desc = Pexp_construct ({txt = Longident.Lident "()"}, _)}] ->
       if uncurried then Doc.text "(.)" else Doc.text "()"
     | [(Nolabel, arg)] when ParsetreeViewer.isHuggableExpression arg ->
+      let argDoc =
+        let doc = printExpressionWithComments arg cmtTbl in
+        match Parens.expr arg with
+        | Parens.Parenthesized -> addParens doc
+        | Braced braces  -> printBraces doc arg braces
+        | Nothing -> doc
+      in
       Doc.concat [
         if uncurried then Doc.text "(." else Doc.lparen;
-        printExpressionWithComments arg cmtTbl;
+        argDoc;
         Doc.rparen;
       ]
 		| args -> Doc.group (
@@ -7687,8 +7933,8 @@ module Printer = struct
 		(* ~a (punned)*)
 		| (
 				(Asttypes.Labelled lbl),
-				{pexp_desc=Pexp_ident {txt = Longident.Lident name}}
-			) when lbl = name ->
+				({pexp_desc=Pexp_ident {txt = Longident.Lident name}} as argExpr)
+			) when lbl = name && not (ParsetreeViewer.isBracedExpr argExpr) ->
 			Doc.text ("~" ^ lbl)
 		(* ~a? (optional lbl punned)*)
 		| (
@@ -7702,7 +7948,13 @@ module Printer = struct
 			| Asttypes.Labelled lbl -> Doc.text ("~" ^ lbl ^ "=")
 			| Asttypes.Optional lbl -> Doc.text ("~" ^ lbl ^ "=?")
 			in
-			let printedExpr = printExpressionWithComments expr cmtTbl in
+			let printedExpr =
+        let doc = printExpressionWithComments expr cmtTbl in
+        match Parens.expr expr with
+        | Parens.Parenthesized -> addParens doc
+        | Braced braces  -> printBraces doc expr braces
+        | Nothing -> doc
+      in
 			Doc.concat [
 				printedLbl;
 				printedExpr;
@@ -7911,7 +8163,10 @@ module Printer = struct
     | Pexp_sequence (expr1, expr2) ->
       let exprDoc =
         let doc = printExpression expr1 cmtTbl in
-        if Parens.blockExpr expr1 then addParens doc else doc
+        match Parens.expr expr1 with
+        | Parens.Parenthesized -> addParens doc
+        | Braced braces  -> printBraces doc expr1 braces
+        | Nothing -> doc
       in
       let loc = expr1.pexp_loc in
       collectRows ((loc, exprDoc)::acc) expr2
@@ -7947,7 +8202,10 @@ module Printer = struct
     | _ ->
       let exprDoc =
         let doc = printExpression expr cmtTbl in
-        if Parens.blockExpr expr then addParens doc else doc
+        match Parens.expr expr with
+        | Parens.Parenthesized -> addParens doc
+        | Braced braces  -> printBraces doc expr braces
+        | Nothing -> doc
       in
       List.rev ((expr.pexp_loc, exprDoc)::acc)
     in
@@ -7993,31 +8251,30 @@ module Printer = struct
    *   a + b
    * }
    *)
-  and printBracedExpr ~parens expr ({Location.loc = bracesLoc}, _) cmtTbl =
+  and printBraces doc expr bracesLoc =
     let overMultipleLines =
       let open Location in
       bracesLoc.loc_end.pos_lnum > bracesLoc.loc_start.pos_lnum
     in
     match expr.Parsetree.pexp_desc with
-    | _ when overMultipleLines -> printExpressionBlock ~braces:true expr cmtTbl
     | Pexp_letmodule _
     | Pexp_letexception _
     | Pexp_let _
     | Pexp_open _
     | Pexp_sequence _ ->
-      printExpressionBlock ~braces:true expr cmtTbl
+      (* already has braces *)
+      doc
     | _ ->
-      let exprDoc = printExpressionWithComments expr cmtTbl in
-      Doc.group (
+      Doc.breakableGroup ~forceBreak:overMultipleLines (
         Doc.concat [
           Doc.lbrace;
           Doc.indent (
             Doc.concat [
-              Doc.line;
-              if parens then addParens exprDoc else exprDoc;
+              Doc.softLine;
+              if Parens.bracedExpr expr then addParens doc else doc;
             ]
           );
-          Doc.line;
+          Doc.softLine;
           Doc.rbrace;
         ]
       )
@@ -8035,7 +8292,11 @@ module Printer = struct
     let doc = Doc.concat [
       printLongidentLocation lbl cmtTbl;
       Doc.text ": ";
-      printExpressionWithComments expr cmtTbl;
+      (let doc = printExpressionWithComments expr cmtTbl in
+      match Parens.expr expr with
+      | Parens.Parenthesized -> addParens doc
+      | Braced braces -> printBraces doc expr braces
+      | Nothing -> doc);
     ] in
     printComments doc cmtTbl cmtLoc
 
@@ -8062,7 +8323,7 @@ module Printer = struct
    *   type t = string` -> attr is on prev line, print the attributes
    *   with a line break between, we respect the users' original layout *)
   and printAttributes ?loc (attrs: Parsetree.attributes) =
-    match attrs with
+    match ParsetreeViewer.filterParsingAttrs attrs with
     | [] -> Doc.nil
     | attrs ->
       let lineBreak = match loc with
@@ -10522,7 +10783,7 @@ Solution: directly use `concat`."
     in
     Parser.expect EqualGreater p;
     let body =
-      let (expr : Parsetree.expression) = parseExprAndRetainBraces p in
+      let expr = parseExpr p in
       match returnType with
       | Some typ ->
         Ast_helper.Exp.constraint_
@@ -10789,7 +11050,7 @@ Solution: directly use `concat`."
       | Lbracket ->
         parseArrayExp p
       | Lbrace ->
-        parseBracedOrRecordExpr ~retainBraces:false p
+        parseBracedOrRecordExpr  p
       | LessThan ->
         parseJsx p
       | Percent ->
@@ -11228,30 +11489,18 @@ Solution: directly use `concat`."
           let loc = {pat.ppat_loc with loc_end = polyType.Parsetree.ptyp_loc.loc_end} in
           let pat = Ast_helper.Pat.constraint_ ~loc pat polyType in
           Parser.expect Token.Equal p;
-          let exp = overParseConstrainedOrArrowExpression p (parseExprAndRetainBraces p) in
+          let exp = overParseConstrainedOrArrowExpression p (parseExpr p) in
           (pat, exp)
         end
       | _ ->
         Parser.expect Token.Equal p;
-        let exp = overParseConstrainedOrArrowExpression p (parseExprAndRetainBraces p) in
+        let exp = overParseConstrainedOrArrowExpression p (parseExpr p) in
         (pat, exp)
     in
     let loc = mkLoc startPos p.prevEndPos in
     let vb = Ast_helper.Vb.mk ~loc ~attrs pat exp in
     Parser.eatBreadcrumb p;
     vb
-
-  (* parses an expr and retains braces when user typed them *)
-  and parseExprAndRetainBraces p =
-    match p.Parser.token with
-    | Lbrace ->
-      Parser.leaveBreadcrumb p Grammar.ExprOperand;
-      let expr = parseBracedOrRecordExpr ~retainBraces:true p in
-      Parser.eatBreadcrumb p;
-      let a = parsePrimaryExpr ~operand:expr p in
-      let e = parseBinaryExpr ~a p 1 in
-      parseTernaryExpr e p
-    | _ -> parseExpr p
 
   (* TODO: find a better way? Is it possible?
    * let a = 1
@@ -11557,23 +11806,25 @@ Solution: directly use `concat`."
       (true, [parsePrimaryExpr ~operand:(parseAtomicExpr p) ~noCall:true p])
     | _ -> (false, loop p [])
 
-  and parseBracedOrRecordExpr ~retainBraces p =
+  and parseBracedOrRecordExpr  p =
     let startPos = p.Parser.startPos in
-    let retainBraces = ref retainBraces in
     Parser.expect Lbrace p;
-    let expr = match p.Parser.token with
+    match p.Parser.token with
     | Rbrace ->
       Parser.err p (Diagnostics.unexpected Rbrace p.breadcrumbs);
-      let loc = mkLoc p.prevEndPos p.endPos in
-      Ast_helper.Exp.construct
-        ~loc (Location.mkloc (Longident.Lident "()") loc) None
+      Parser.next p;
+      let loc = mkLoc startPos p.prevEndPos in
+      let braces = makeBracesAttr loc in
+      Ast_helper.Exp.construct ~attrs:[braces] ~loc
+        (Location.mkloc (Longident.Lident "()") loc) None
     | DotDotDot ->
-      retainBraces := false;
       (* beginning of record spread, parse record *)
       Parser.next p;
       let spreadExpr = parseConstrainedExpr p in
       Parser.expect Comma p;
-      parseRecordExpr ~startPos ~spread:(Some spreadExpr) [] p
+      let expr = parseRecordExpr ~startPos ~spread:(Some spreadExpr) [] p in
+      Parser.expect Rbrace p;
+      expr
     | String s ->
       let field =
         let loc = mkLoc p.startPos p.endPos in
@@ -11582,11 +11833,12 @@ Solution: directly use `concat`."
       in
       begin match p.Parser.token with
       | Colon ->
-        retainBraces := false;
         Parser.next p;
         let fieldExpr = parseExpr p in
         Parser.optional p Comma |> ignore;
-        parseRecordExprWithStringKeys ~startPos (field, fieldExpr) p
+        let expr = parseRecordExprWithStringKeys ~startPos (field, fieldExpr) p in
+        Parser.expect Rbrace p;
+        expr
       | _ ->
         let constant = Ast_helper.Exp.constant ~loc:field.loc (Parsetree.Pconst_string(s, None)) in
         let a = parsePrimaryExpr ~operand:constant p in
@@ -11595,9 +11847,22 @@ Solution: directly use `concat`."
         begin match p.Parser.token with
         | Semicolon ->
           Parser.next p;
-          parseExprBlock ~first:e p
-        | Rbrace -> e
-        | _ -> parseExprBlock ~first:e p
+          let expr = parseExprBlock ~first:e p in
+          Parser.expect Rbrace p;
+          let loc = mkLoc startPos p.prevEndPos in
+          let braces = makeBracesAttr loc in
+          {expr with pexp_attributes = braces::expr.pexp_attributes}
+        | Rbrace ->
+          Parser.next p;
+          let loc = mkLoc startPos p.prevEndPos in
+          let braces = makeBracesAttr loc in
+          {e with pexp_attributes = braces::e.pexp_attributes}
+        | _ ->
+          let expr = parseExprBlock ~first:e p in
+          Parser.expect Rbrace p;
+          let loc = mkLoc startPos p.prevEndPos in
+          let braces = makeBracesAttr loc in
+          {expr with pexp_attributes = braces::expr.pexp_attributes}
         end
       end
     | Uident _ | Lident _ ->
@@ -11608,53 +11873,80 @@ Solution: directly use `concat`."
         begin match p.Parser.token with
         | Comma ->
           Parser.next p;
-          retainBraces := false;
-          parseRecordExpr ~startPos [(pathIdent, valueOrConstructor)] p
+          let expr = parseRecordExpr ~startPos [(pathIdent, valueOrConstructor)] p in
+          Parser.expect Rbrace p;
+          expr
         | Colon ->
           Parser.next p;
-          retainBraces := false;
           let fieldExpr = parseExpr p in
           begin match p.token with
           | Rbrace ->
-            let loc = mkLoc startPos p.endPos in
+            Parser.next p;
+            let loc = mkLoc startPos p.prevEndPos in
             Ast_helper.Exp.record ~loc [(pathIdent, fieldExpr)] None
           | _ ->
             Parser.expect Comma p;
-            parseRecordExpr ~startPos [(pathIdent, fieldExpr)] p
+            let expr = parseRecordExpr ~startPos [(pathIdent, fieldExpr)] p in
+            Parser.expect Rbrace p;
+            expr
           end
         (* error case *)
         | Lident _ ->
-          retainBraces := false;
           if p.prevEndPos.pos_lnum < p.startPos.pos_lnum then (
             Parser.expect Comma p;
-            parseRecordExpr ~startPos [(pathIdent, valueOrConstructor)] p
+            let expr = parseRecordExpr ~startPos [(pathIdent, valueOrConstructor)] p in
+            Parser.expect Rbrace p;
+            expr
           ) else (
             Parser.expect Colon p;
-            parseRecordExpr ~startPos [(pathIdent, valueOrConstructor)] p
+            let expr = parseRecordExpr ~startPos [(pathIdent, valueOrConstructor)] p in
+            Parser.expect Rbrace p;
+            expr
           )
         | Semicolon ->
           Parser.next p;
-          parseExprBlock ~first:(Ast_helper.Exp.ident pathIdent) p
+          let expr = parseExprBlock ~first:(Ast_helper.Exp.ident pathIdent) p in
+          Parser.expect Rbrace p;
+          let loc = mkLoc startPos p.prevEndPos in
+          let braces = makeBracesAttr loc in
+          {expr with pexp_attributes = braces::expr.pexp_attributes}
         | Rbrace ->
-          Ast_helper.Exp.ident ~loc:pathIdent.loc pathIdent
+          Parser.next p;
+          let expr = Ast_helper.Exp.ident ~loc:pathIdent.loc pathIdent in
+          let loc = mkLoc startPos p.prevEndPos in
+          let braces = makeBracesAttr loc in
+          {expr with pexp_attributes = braces::expr.pexp_attributes}
         | EqualGreater ->
-            let loc = mkLoc startPos identEndPos in
-            let ident = Location.mkloc (Longident.last pathIdent.txt) loc in
-            let a = parseEs6ArrowExpression
-              ~parameters:[
-                TermParameter (false, [], Asttypes.Nolabel, None, Ast_helper.Pat.var ident, startPos)
-                ]
-               p
-            in
-            let e = parseBinaryExpr ~a p 1 in
-            let e = parseTernaryExpr e p in
-            begin match p.Parser.token with
-            | Semicolon ->
-              Parser.next p;
-              parseExprBlock ~first:e p
-            | Rbrace -> e
-            | _ -> parseExprBlock ~first:e p
-            end
+          let loc = mkLoc startPos identEndPos in
+          let ident = Location.mkloc (Longident.last pathIdent.txt) loc in
+          let a = parseEs6ArrowExpression
+            ~parameters:[
+              TermParameter (false, [], Asttypes.Nolabel, None, Ast_helper.Pat.var ident, startPos)
+              ]
+             p
+          in
+          let e = parseBinaryExpr ~a p 1 in
+          let e = parseTernaryExpr e p in
+          begin match p.Parser.token with
+          | Semicolon ->
+            Parser.next p;
+            let expr = parseExprBlock ~first:e p in
+            Parser.expect Rbrace p;
+            let loc = mkLoc startPos p.prevEndPos in
+            let braces = makeBracesAttr loc in
+            {expr with pexp_attributes = braces::expr.pexp_attributes}
+          | Rbrace ->
+            Parser.next p;
+            let loc = mkLoc startPos p.prevEndPos in
+            let braces = makeBracesAttr loc in
+            {e with pexp_attributes = braces::e.pexp_attributes}
+          | _ ->
+            let expr = parseExprBlock ~first:e p in
+            Parser.expect Rbrace p;
+            let loc = mkLoc startPos p.prevEndPos in
+            let braces = makeBracesAttr loc in
+            {expr with pexp_attributes = braces::expr.pexp_attributes}
+          end
         | _ ->
           Parser.leaveBreadcrumb p Grammar.ExprBlock;
           let a = parsePrimaryExpr ~operand:(Ast_helper.Exp.ident ~loc:pathIdent.loc pathIdent) p in
@@ -11664,9 +11956,22 @@ Solution: directly use `concat`."
           begin match p.Parser.token with
           | Semicolon ->
             Parser.next p;
-            parseExprBlock ~first:e p
-          | Rbrace -> e
-          | _ -> parseExprBlock ~first:e p
+            let expr = parseExprBlock ~first:e p in
+            Parser.expect Rbrace p;
+            let loc = mkLoc startPos p.prevEndPos in
+            let braces = makeBracesAttr loc in
+            {expr with pexp_attributes = braces::expr.pexp_attributes}
+          | Rbrace ->
+            Parser.next p;
+            let loc = mkLoc startPos p.prevEndPos in
+            let braces = makeBracesAttr loc in
+            {e with pexp_attributes = braces::e.pexp_attributes}
+          | _ ->
+            let expr = parseExprBlock ~first:e p in
+            Parser.expect Rbrace p;
+            let loc = mkLoc startPos p.prevEndPos in
+            let braces = makeBracesAttr loc in
+            {expr with pexp_attributes = braces::expr.pexp_attributes}
           end
          end
       | _ ->
@@ -11678,28 +11983,30 @@ Solution: directly use `concat`."
         begin match p.Parser.token with
         | Semicolon ->
           Parser.next p;
-          parseExprBlock ~first:e p
-        | Rbrace -> e
-        | _ -> parseExprBlock ~first:e p
+          let expr = parseExprBlock ~first:e p in
+          Parser.expect Rbrace p;
+          let loc = mkLoc startPos p.prevEndPos in
+          let braces = makeBracesAttr loc in
+          {expr with pexp_attributes = braces::expr.pexp_attributes}
+        | Rbrace ->
+          Parser.next p;
+          let loc = mkLoc startPos p.prevEndPos in
+          let braces = makeBracesAttr loc in
+          {e with pexp_attributes = braces::e.pexp_attributes}
+        | _ ->
+          let expr = parseExprBlock ~first:e p in
+          Parser.expect Rbrace p;
+          let loc = mkLoc startPos p.prevEndPos in
+          let braces = makeBracesAttr loc in
+          {expr with pexp_attributes = braces::expr.pexp_attributes}
         end
          end
-    | Lbrace ->
-      parseExprBlock p
     | _ ->
       let expr = parseExprBlock p in
-      let () = match expr.pexp_desc with
-      | Pexp_record _ ->
-        retainBraces := false
-      | _ -> ()
-      in
-      expr
-    in
-    Parser.expect Rbrace p;
-    if !retainBraces then
-      let braces = makeBracesAttr (mkLoc startPos p.prevEndPos) in
+      Parser.expect Rbrace p;
+      let loc = mkLoc startPos p.prevEndPos in
+      let braces = makeBracesAttr loc in
       {expr with pexp_attributes = braces::expr.pexp_attributes}
-    else
-      expr
 
   and parseRecordRowWithStringKey p =
     match p.Parser.token with

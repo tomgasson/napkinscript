@@ -10,8 +10,9 @@ let rec _addLoop rbt currentNode =
       then ()
       else
         if
-          (let uncle = uncleOf currentNode in
-           (uncle != None) && ((uncle |. castNotOption).color == Red))
+          (((let uncle = uncleOf currentNode in
+             (uncle != None) && ((uncle |. castNotOption).color == Red)))
+          [@ns.braces ])
         then
           ((currentNode.parent |. castNotOption).color <- Black;
            ((uncleOf currentNode) |. castNotOption).color <- Black;

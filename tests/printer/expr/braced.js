@@ -41,9 +41,16 @@ let _ = { ({a}, {b}, {x + y})}
 
 let _ = { Rgb(r, g, b) }
 let _ = Rgb({r}, {g}, {b})
+let _ = Rgb({
+  r}, {
+    g}, {
+      b})
 
 let _ = { {name:  "steve", age: 30 } }
-let _ =  {name:  {"steve"}, age: 30 } 
+let _ =  {name:  {"steve"}, age: {30} } 
+let _ =  {name:  {
+"steve"}, age: {
+  30} } 
 
 let _ = { user.name }.toString()
 let _ = { { user.name }.toString() }
@@ -52,6 +59,19 @@ let _ = { { user.name }.first }
 
 let _ = { [a, b, c] }
 let _ =  [{a}, {b}, {c}] 
+let _ =  [{
+  a}, {
+    b}, {
+      c}] 
+
+let _ = { list[a, b, c] }
+let _ = { list[{a}, {b}, {c}] }
+let _ = { list[{
+  a}, {
+    b}, {
+      c}] }
+
+let _ = list[1, 2, ...{list2}]
 
 let _ = {true} ? {true} : {false}
 let _ = {{true} ? {true} : {false}}
@@ -59,11 +79,34 @@ let _ = {{true} ? {true} : {false}}
 let _ = { if true { () } else { () } }
 let _ = { if { true } { () } else { () } }
 
+if {
+  true
+} { ()} else if {
+  false
+}  { () } 
+
+if {
+  true
+} { ()} else if {
+  false
+}  { () } else { () }
+
+
 let _ = { while true { () } }
 let _ = while { true } { () }
+while { /* c0 */ true /* c1 */ } { () }
+while { 
+  true
+} { () }
+while { 
+  /* c0 */ true // c1
+} { () }
 
 
 let _ = { for _ in { 0 } to { 10 } { () } }
+for _ in {
+  0 } to {
+    10 } { () }
 
 let _ = {(foo: string)}
 let f = () => {(foo: string)} // equivalent to  (): string => ...
@@ -75,3 +118,85 @@ let _ = { lazy { true } }
 let _ = { %extension }
 let _ = { module(ME) }
 let _ = { module(ME: MyMod) }
+
+{myArray}[{0}]
+{
+  myArray}[{
+    0}]
+{myArray}[{0}] = {20}
+{
+  myArray}[{
+    0}] = {
+      20}
+
+myArray[20] = {
+  a + b
+}
+
+{jsObject}["foo"]
+{jsObject}["foo"] = { "bar" }
+{jsObject}["foo"] = {
+  a + b
+}
+
+{
+  jsObject}["foo"]
+{jsObject}["foo"] = { "bar" }
+
+apply({a}, {b}, {c})
+apply({
+  a}, {
+    b}, {
+      c})
+
+Thing.map(foo,(arg1, arg2) => {MyModuleBlah.toList(argument)})
+Thing.map({foo},(arg1, arg2) => {
+  MyModuleBlah.toList(argument)
+})
+
+Thing.map({fooSuperLongIdentifierName},{fooSuperLongIdentifierName}, {fooSuperLongIdentifierName},(arg1, arg2) => {
+  MyModuleBlah.toList(argument)
+})
+
+arr->Belt.Array.map(x => {
+  a
+})
+
+apply(~a={a})
+apply({
+  a
+})
+apply(.{
+  a
+})
+
+let x = { <div> child </div> }
+
+// not valid jsx
+let x = { @JSX child  }
+
+let x = {
+  // comment1
+  a + b
+}
+
+let x = {
+  // commment2
+  !truth
+}
+
+{
+  /* c0 */
+  x
+  /* c1 */
+}
+
+{
+  // comment
+  a + b
+}
+
+{a} + {b}
+{
+  a} + {
+    b}
