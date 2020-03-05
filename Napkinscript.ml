@@ -2055,8 +2055,7 @@ end = struct
     match expr.pexp_desc with
     | Pexp_array _
     | Pexp_tuple _
-    | Pexp_construct ({txt = Longident.Lident "::"}, _)
-    | Pexp_construct ({txt = Longident.Lident "[]"}, _)
+    | Pexp_construct ({txt = Longident.Lident ("::" | "[]")}, _)
     | Pexp_extension ({txt = "bs.obj"}, _)
     | Pexp_record _ -> true
     | _ when isBracedExpr expr -> true
@@ -6286,47 +6285,64 @@ module Printer = struct
       )
     | Ppat_construct(constrName, constructorArgs) ->
       let constrName = printLongident constrName.txt in
-      begin match constructorArgs with
-      | None -> constrName
+      let argsDoc = match constructorArgs with
+      | None -> Doc.nil
+      | Some({ppat_desc = Ppat_construct ({txt = Longident.Lident "()"}, _)}) ->
+        Doc.text "()"
       | Some({ppat_desc = Ppat_tuple []; ppat_loc = loc}) ->
-        Doc.group (
-          Doc.concat([
-            constrName;
-            Doc.lparen;
-            Doc.softLine;
-            printCommentsInside cmtTbl loc;
-            Doc.rparen;
-          ])
-        )
-      | Some(args) ->
-        let args = match args.ppat_desc with
-        | Ppat_construct({txt = Longident.Lident "()"}, None) ->
-            [Doc.nil]
-        | Ppat_tuple(patterns) ->
-          List.map (fun pat -> printPattern pat cmtTbl) patterns
-        | _ -> [printPattern args cmtTbl]
-        in
-        Doc.group(
-          Doc.concat([
-            constrName;
-            Doc.text "(";
+        Doc.concat [
+          Doc.lparen;
+          Doc.softLine;
+          printCommentsInside cmtTbl loc;
+          Doc.rparen;
+        ]
+      (* Some((1, 2) *)
+      | Some({ppat_desc = Ppat_tuple [{ppat_desc = Ppat_tuple _} as arg]}) ->
+        Doc.concat [
+          Doc.lparen;
+          printPattern arg cmtTbl;
+          Doc.rparen;
+        ]
+      | Some({ppat_desc = Ppat_tuple patterns}) ->
+        Doc.concat [
+          Doc.lparen;
+          Doc.indent (
+            Doc.concat [
+              Doc.softLine;
+              Doc.join ~sep:(Doc.concat [Doc.comma; Doc.line]) (
+                List.map (fun pat -> printPattern pat cmtTbl) patterns
+              );
+            ]
+          );
+          Doc.trailingComma;
+          Doc.softLine;
+          Doc.rparen;
+        ]
+      | Some(arg) ->
+        let argDoc = printPattern arg cmtTbl in
+        let shouldHug = ParsetreeViewer.isHuggablePattern arg in
+        Doc.concat [
+          Doc.lparen;
+          if shouldHug then argDoc
+          else Doc.concat [
             Doc.indent (
               Doc.concat [
                 Doc.softLine;
-                Doc.join ~sep:(Doc.concat [Doc.text ","; Doc.line])
-                  args
+                argDoc;
               ]
             );
-            Doc.ifBreaks (Doc.text ",") Doc.nil;
+            Doc.trailingComma;
             Doc.softLine;
-            Doc.text ")";
-          ])
-        )
-      end
+          ];
+          Doc.rparen;
+
+        ]
+      in
+      Doc.group(Doc.concat [constrName; argsDoc])
     | Ppat_record(rows, openFlag) ->
         Doc.group(
           Doc.concat([
-            Doc.text "{";
+            Doc.lbrace;
             Doc.indent (
               Doc.concat [
                 Doc.softLine;
@@ -6340,7 +6356,7 @@ module Printer = struct
             );
             Doc.ifBreaks (Doc.text ",") Doc.nil;
             Doc.softLine;
-            Doc.text "}";
+            Doc.rbrace;
           ])
         )
 
@@ -6437,7 +6453,7 @@ module Printer = struct
     | Ppat_open _ | Ppat_interval (_, _) | Ppat_variant (_, _)| Ppat_type _->
       Doc.nil
     in
-    let doc = begin match p.ppat_attributes with
+    let doc = match p.ppat_attributes with
     | [] -> patternWithoutAttributes
     | attrs ->
       Doc.group (
@@ -6446,7 +6462,6 @@ module Printer = struct
           patternWithoutAttributes;
         ]
       )
-    end
     in
     printComments doc cmtTbl p.ppat_loc
 
@@ -10733,6 +10748,7 @@ Solution: directly use `concat`."
       parseCommaDelimitedRegion
         p ~grammar:Grammar.PatternList ~closing:Rparen ~f:parseConstrainedPatternRegion
     with
+    (* Keep Some((1, 2)) as Some((1, 2)) *)
     | [{ppat_desc = Ppat_tuple _}] as patterns ->
       Some (Ast_helper.Pat.tuple ~loc:(mkLoc lparen p.endPos) patterns)
     | [pattern] -> Some pattern
