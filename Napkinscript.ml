@@ -12736,7 +12736,7 @@ Solution: directly use `concat`."
       end
     | Uident _ | Lident _ | List ->
       let constr = parseValuePath p in
-      let args =  parseTypeConstructorArgs p in
+      let args =  parseTypeConstructorArgs ~constrName:constr p in
       Ast_helper.Typ.constr ~loc:(mkLoc startPos p.prevEndPos) ~attrs constr args
     | Module ->
       Parser.next p;
@@ -13022,14 +13022,11 @@ Solution: directly use `concat`."
       None
 
   (* Js.Nullable.value<'a> *)
-  and parseTypeConstructorArgs p =
+  and parseTypeConstructorArgs ~constrName p =
     let opening = p.Parser.token in
+    let openingStartPos = p.startPos in
     match opening with
     | LessThan | Lparen ->
-      if p.token = Lparen then (
-        let msg = "Type parameters need to be wrapped in angle brackets, not parentheses, like so: \"Belt.Map.String.t<int>\"" in
-        Parser.err p (Diagnostics.message msg)
-      );
       Scanner.setDiamondMode p.scanner;
       Parser.next p;
       let typeArgs =
@@ -13042,6 +13039,21 @@ Solution: directly use `concat`."
       in
       let () = match p.token with
       | Rparen when opening = Token.Lparen ->
+        let typ = Ast_helper.Typ.constr constrName typeArgs in
+        let msg =
+          Doc.breakableGroup ~forceBreak:true (
+            Doc.concat [
+              Doc.text "Type parameters require angle brackets:";
+              Doc.indent (
+                Doc.concat [
+                  Doc.line;
+                  Printer.printTypExpr typ CommentTable.empty;
+                ]
+              )
+            ]
+          ) |> Doc.toString ~width:80
+        in
+        Parser.err ~startPos:openingStartPos p (Diagnostics.message msg);
         Parser.next p
       | _ ->
         Parser.expect GreaterThan p
@@ -13424,25 +13436,23 @@ Solution: directly use `concat`."
       in
       let () = match p.token with
       | Rparen when opening = Token.Lparen ->
-        if (opening = Lparen) then (
-          let msg =
-            Doc.breakableGroup ~forceBreak:true (
-              Doc.concat [
-                Doc.text "Type parameters require angle brackets:";
-                Doc.indent (
+        let msg =
+          Doc.breakableGroup ~forceBreak:true (
+            Doc.concat [
+              Doc.text "Type parameters require angle brackets:";
+              Doc.indent (
+                Doc.concat [
+                  Doc.line;
                   Doc.concat [
-                    Doc.line;
-                    Doc.concat [
-                      Printer.printLongident parent.Location.txt;
-                      Printer.printTypeParams params CommentTable.empty;
-                    ]
+                    Printer.printLongident parent.Location.txt;
+                    Printer.printTypeParams params CommentTable.empty;
                   ]
-                )
-              ]
-            ) |> Doc.toString ~width:80
-          in
-          Parser.err ~startPos:openingStartPos p (Diagnostics.message msg)
-        );
+                ]
+              )
+            ]
+          ) |> Doc.toString ~width:80
+        in
+        Parser.err ~startPos:openingStartPos p (Diagnostics.message msg);
         Parser.next p
       | _ ->
         Parser.expect GreaterThan p
@@ -13498,7 +13508,7 @@ Solution: directly use `concat`."
         in
         let loc = mkLoc uidentStartPos p.prevEndPos in
         let typ = parseTypeAlias p (
-          Ast_helper.Typ.constr ~loc typeConstr (parseTypeConstructorArgs p)
+          Ast_helper.Typ.constr ~loc typeConstr (parseTypeConstructorArgs ~constrName:typeConstr p)
         ) in
         begin match p.token with
         | Equal ->

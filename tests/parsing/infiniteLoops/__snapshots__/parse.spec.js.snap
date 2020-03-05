@@ -689,40 +689,34 @@ Type parameters require angle brackets:
 
 
 
-File \\"/napkinscript/tests/parsing/infiniteLoops/nonRecTypes.js\\", line 6, characters 44-45:
+File \\"/napkinscript/tests/parsing/infiniteLoops/nonRecTypes.js\\", line 6, characters 49-57:
 
 
 4 │                        type t('value) = {
 5 │                          mutable size: int,
-[31m6[0m │                          mutable root: option[31m([0mnode('value)),
+[31m6[0m │                          mutable root: option(node[31m('value)[0m),
 7 │                          compare:
 8 │                            Js.Internal.fn([ | \`Arity_2('value, 'value)], int),
 
-Type parameters need to be wrapped in angle brackets, not parentheses, like so: \\"Belt.Map.String.t<int>\\"
+Type parameters require angle brackets:
+  node<'value>
 
 
-File \\"/napkinscript/tests/parsing/infiniteLoops/nonRecTypes.js\\", line 6, characters 49-50:
+
+
+File \\"/napkinscript/tests/parsing/infiniteLoops/nonRecTypes.js\\", line 6, characters 44-58:
 
 
 4 │                        type t('value) = {
 5 │                          mutable size: int,
-[31m6[0m │                          mutable root: option(node[31m([0m'value)),
+[31m6[0m │                          mutable root: option[31m(node('value))[0m,
 7 │                          compare:
 8 │                            Js.Internal.fn([ | \`Arity_2('value, 'value)], int),
 
-Type parameters need to be wrapped in angle brackets, not parentheses, like so: \\"Belt.Map.String.t<int>\\"
+Type parameters require angle brackets:
+  option<node<'value>>
 
 
-File \\"/napkinscript/tests/parsing/infiniteLoops/nonRecTypes.js\\", line 8, characters 40-41:
-
-
-6 │                          mutable root: option(node('value)),
-7 │                          compare:
-[31m8[0m │                            Js.Internal.fn[31m([0m[ | \`Arity_2('value, 'value)], int),
-9 │                        };
-10 │                      }: {
-
-Type parameters need to be wrapped in angle brackets, not parentheses, like so: \\"Belt.Map.String.t<int>\\"
 
 
 File \\"/napkinscript/tests/parsing/infiniteLoops/nonRecTypes.js\\", line 8, characters 41-42:
@@ -859,172 +853,199 @@ File \\"/napkinscript/tests/parsing/infiniteLoops/nonRecTypes.js\\", line 21, ch
 Did you mean \`==\` here?
 
 
-File \\"/napkinscript/tests/parsing/infiniteLoops/nonRecTypes.js\\", line 24, characters 30-31:
+File \\"/napkinscript/tests/parsing/infiniteLoops/nonRecTypes.js\\", line 24, characters 30-38:
 
 
 22 │              \\"\\"
 23 │              \\"BS:6.0.1\\\\132\\\\149\\\\166\\\\190\\\\000\\\\000\\\\000#\\\\000\\\\000\\\\000\\\\r\\\\000\\\\000\\\\000&\\\\000\\\\000\\\\000#\\\\145\\\\160\\\\160A\\\\160$size@\\\\160\\\\160A\\\\160$root@\\\\160\\\\160A\\\\160'compare@@\\";
-[31m24[0m │            external sizeSet: (t[31m([0m'value), int) => unit =
+[31m24[0m │            external sizeSet: (t[31m('value)[0m, int) => unit =
 25 │              \\"size\\"
 26 │              \\"BS:6.0.1\\\\132\\\\149\\\\166\\\\190\\\\000\\\\000\\\\000\\\\021\\\\000\\\\000\\\\000\\\\t\\\\000\\\\000\\\\000\\\\026\\\\000\\\\000\\\\000\\\\025\\\\176\\\\160\\\\160A\\\\145@\\\\160\\\\160A\\\\004\\\\003@E\\\\151\\\\160$size@\\";
 
-Type parameters need to be wrapped in angle brackets, not parentheses, like so: \\"Belt.Map.String.t<int>\\"
+Type parameters require angle brackets:
+  t<'value>
 
 
-File \\"/napkinscript/tests/parsing/infiniteLoops/nonRecTypes.js\\", line 31, characters 26-27:
+
+
+File \\"/napkinscript/tests/parsing/infiniteLoops/nonRecTypes.js\\", line 31, characters 26-34:
 
 
 29 │            ]
 30 │            [@internal.arity 1]
-[31m31[0m │            external size: t[31m([0m'value) => int =
+[31m31[0m │            external size: t[31m('value)[0m => int =
 32 │              \\"\\"
 33 │              \\"BS:6.0.1\\\\132\\\\149\\\\166\\\\190\\\\000\\\\000\\\\000\\\\016\\\\000\\\\000\\\\000\\\\007\\\\000\\\\000\\\\000\\\\020\\\\000\\\\000\\\\000\\\\019\\\\176\\\\160\\\\160A\\\\145@@A\\\\152\\\\160$size@\\";
 
-Type parameters need to be wrapped in angle brackets, not parentheses, like so: \\"Belt.Map.String.t<int>\\"
+Type parameters require angle brackets:
+  t<'value>
 
 
-File \\"/napkinscript/tests/parsing/infiniteLoops/nonRecTypes.js\\", line 35, characters 29-30:
+
+
+File \\"/napkinscript/tests/parsing/infiniteLoops/nonRecTypes.js\\", line 35, characters 29-37:
 
 
 33 │              \\"BS:6.0.1\\\\132\\\\149\\\\166\\\\190\\\\000\\\\000\\\\000\\\\016\\\\000\\\\000\\\\000\\\\007\\\\000\\\\000\\\\000\\\\020\\\\000\\\\000\\\\000\\\\019\\\\176\\\\160\\\\160A\\\\145@@A\\\\152\\\\160$size@\\";
 34 │            [@internal.arity 1]
-[31m35[0m │            external sizeGet: t[31m([0m'value) => int =
+[31m35[0m │            external sizeGet: t[31m('value)[0m => int =
 36 │              \\"\\"
 37 │              \\"BS:6.0.1\\\\132\\\\149\\\\166\\\\190\\\\000\\\\000\\\\000\\\\016\\\\000\\\\000\\\\000\\\\007\\\\000\\\\000\\\\000\\\\020\\\\000\\\\000\\\\000\\\\019\\\\176\\\\160\\\\160A\\\\145@@A\\\\152\\\\160$size@\\";
 
-Type parameters need to be wrapped in angle brackets, not parentheses, like so: \\"Belt.Map.String.t<int>\\"
+Type parameters require angle brackets:
+  t<'value>
 
 
-File \\"/napkinscript/tests/parsing/infiniteLoops/nonRecTypes.js\\", line 38, characters 30-31:
+
+
+File \\"/napkinscript/tests/parsing/infiniteLoops/nonRecTypes.js\\", line 38, characters 30-38:
 
 
 36 │              \\"\\"
 37 │              \\"BS:6.0.1\\\\132\\\\149\\\\166\\\\190\\\\000\\\\000\\\\000\\\\016\\\\000\\\\000\\\\000\\\\007\\\\000\\\\000\\\\000\\\\020\\\\000\\\\000\\\\000\\\\019\\\\176\\\\160\\\\160A\\\\145@@A\\\\152\\\\160$size@\\";
-[31m38[0m │            external rootSet: (t[31m([0m'value), option(node('value))) => unit =
+[31m38[0m │            external rootSet: (t[31m('value)[0m, option(node('value))) => unit =
 39 │              \\"root\\"
 40 │              \\"BS:6.0.1\\\\132\\\\149\\\\166\\\\190\\\\000\\\\000\\\\000\\\\021\\\\000\\\\000\\\\000\\\\t\\\\000\\\\000\\\\000\\\\026\\\\000\\\\000\\\\000\\\\025\\\\176\\\\160\\\\160A\\\\145@\\\\160\\\\160A\\\\004\\\\003@E\\\\151\\\\160$root@\\";
 
-Type parameters need to be wrapped in angle brackets, not parentheses, like so: \\"Belt.Map.String.t<int>\\"
+Type parameters require angle brackets:
+  t<'value>
 
 
-File \\"/napkinscript/tests/parsing/infiniteLoops/nonRecTypes.js\\", line 38, characters 46-47:
 
 
-36 │              \\"\\"
-37 │              \\"BS:6.0.1\\\\132\\\\149\\\\166\\\\190\\\\000\\\\000\\\\000\\\\016\\\\000\\\\000\\\\000\\\\007\\\\000\\\\000\\\\000\\\\020\\\\000\\\\000\\\\000\\\\019\\\\176\\\\160\\\\160A\\\\145@@A\\\\152\\\\160$size@\\";
-[31m38[0m │            external rootSet: (t('value), option[31m([0mnode('value))) => unit =
-39 │              \\"root\\"
-40 │              \\"BS:6.0.1\\\\132\\\\149\\\\166\\\\190\\\\000\\\\000\\\\000\\\\021\\\\000\\\\000\\\\000\\\\t\\\\000\\\\000\\\\000\\\\026\\\\000\\\\000\\\\000\\\\025\\\\176\\\\160\\\\160A\\\\145@\\\\160\\\\160A\\\\004\\\\003@E\\\\151\\\\160$root@\\";
-
-Type parameters need to be wrapped in angle brackets, not parentheses, like so: \\"Belt.Map.String.t<int>\\"
-
-
-File \\"/napkinscript/tests/parsing/infiniteLoops/nonRecTypes.js\\", line 38, characters 51-52:
+File \\"/napkinscript/tests/parsing/infiniteLoops/nonRecTypes.js\\", line 38, characters 51-59:
 
 
 36 │              \\"\\"
 37 │              \\"BS:6.0.1\\\\132\\\\149\\\\166\\\\190\\\\000\\\\000\\\\000\\\\016\\\\000\\\\000\\\\000\\\\007\\\\000\\\\000\\\\000\\\\020\\\\000\\\\000\\\\000\\\\019\\\\176\\\\160\\\\160A\\\\145@@A\\\\152\\\\160$size@\\";
-[31m38[0m │            external rootSet: (t('value), option(node[31m([0m'value))) => unit =
+[31m38[0m │            external rootSet: (t('value), option(node[31m('value)[0m)) => unit =
 39 │              \\"root\\"
 40 │              \\"BS:6.0.1\\\\132\\\\149\\\\166\\\\190\\\\000\\\\000\\\\000\\\\021\\\\000\\\\000\\\\000\\\\t\\\\000\\\\000\\\\000\\\\026\\\\000\\\\000\\\\000\\\\025\\\\176\\\\160\\\\160A\\\\145@\\\\160\\\\160A\\\\004\\\\003@E\\\\151\\\\160$root@\\";
 
-Type parameters need to be wrapped in angle brackets, not parentheses, like so: \\"Belt.Map.String.t<int>\\"
+Type parameters require angle brackets:
+  node<'value>
 
 
-File \\"/napkinscript/tests/parsing/infiniteLoops/nonRecTypes.js\\", line 45, characters 26-27:
+
+
+File \\"/napkinscript/tests/parsing/infiniteLoops/nonRecTypes.js\\", line 38, characters 46-60:
+
+
+36 │              \\"\\"
+37 │              \\"BS:6.0.1\\\\132\\\\149\\\\166\\\\190\\\\000\\\\000\\\\000\\\\016\\\\000\\\\000\\\\000\\\\007\\\\000\\\\000\\\\000\\\\020\\\\000\\\\000\\\\000\\\\019\\\\176\\\\160\\\\160A\\\\145@@A\\\\152\\\\160$size@\\";
+[31m38[0m │            external rootSet: (t('value), option[31m(node('value))[0m) => unit =
+39 │              \\"root\\"
+40 │              \\"BS:6.0.1\\\\132\\\\149\\\\166\\\\190\\\\000\\\\000\\\\000\\\\021\\\\000\\\\000\\\\000\\\\t\\\\000\\\\000\\\\000\\\\026\\\\000\\\\000\\\\000\\\\025\\\\176\\\\160\\\\160A\\\\145@\\\\160\\\\160A\\\\004\\\\003@E\\\\151\\\\160$root@\\";
+
+Type parameters require angle brackets:
+  option<node<'value>>
+
+
+
+
+File \\"/napkinscript/tests/parsing/infiniteLoops/nonRecTypes.js\\", line 45, characters 26-34:
 
 
 43 │            ]
 44 │            [@internal.arity 1]
-[31m45[0m │            external root: t[31m([0m'value) => option(node('value)) =
+[31m45[0m │            external root: t[31m('value)[0m => option(node('value)) =
 46 │              \\"\\"
 47 │              \\"BS:6.0.1\\\\132\\\\149\\\\166\\\\190\\\\000\\\\000\\\\000\\\\016\\\\000\\\\000\\\\000\\\\007\\\\000\\\\000\\\\000\\\\020\\\\000\\\\000\\\\000\\\\019\\\\176\\\\160\\\\160A\\\\145@@A\\\\152\\\\160$root@\\";
 
-Type parameters need to be wrapped in angle brackets, not parentheses, like so: \\"Belt.Map.String.t<int>\\"
+Type parameters require angle brackets:
+  t<'value>
 
 
-File \\"/napkinscript/tests/parsing/infiniteLoops/nonRecTypes.js\\", line 45, characters 44-45:
+
+
+File \\"/napkinscript/tests/parsing/infiniteLoops/nonRecTypes.js\\", line 45, characters 49-57:
 
 
 43 │            ]
 44 │            [@internal.arity 1]
-[31m45[0m │            external root: t('value) => option[31m([0mnode('value)) =
+[31m45[0m │            external root: t('value) => option(node[31m('value)[0m) =
 46 │              \\"\\"
 47 │              \\"BS:6.0.1\\\\132\\\\149\\\\166\\\\190\\\\000\\\\000\\\\000\\\\016\\\\000\\\\000\\\\000\\\\007\\\\000\\\\000\\\\000\\\\020\\\\000\\\\000\\\\000\\\\019\\\\176\\\\160\\\\160A\\\\145@@A\\\\152\\\\160$root@\\";
 
-Type parameters need to be wrapped in angle brackets, not parentheses, like so: \\"Belt.Map.String.t<int>\\"
+Type parameters require angle brackets:
+  node<'value>
 
 
-File \\"/napkinscript/tests/parsing/infiniteLoops/nonRecTypes.js\\", line 45, characters 49-50:
+
+
+File \\"/napkinscript/tests/parsing/infiniteLoops/nonRecTypes.js\\", line 45, characters 44-58:
 
 
 43 │            ]
 44 │            [@internal.arity 1]
-[31m45[0m │            external root: t('value) => option(node[31m([0m'value)) =
+[31m45[0m │            external root: t('value) => option[31m(node('value))[0m =
 46 │              \\"\\"
 47 │              \\"BS:6.0.1\\\\132\\\\149\\\\166\\\\190\\\\000\\\\000\\\\000\\\\016\\\\000\\\\000\\\\000\\\\007\\\\000\\\\000\\\\000\\\\020\\\\000\\\\000\\\\000\\\\019\\\\176\\\\160\\\\160A\\\\145@@A\\\\152\\\\160$root@\\";
 
-Type parameters need to be wrapped in angle brackets, not parentheses, like so: \\"Belt.Map.String.t<int>\\"
+Type parameters require angle brackets:
+  option<node<'value>>
 
 
-File \\"/napkinscript/tests/parsing/infiniteLoops/nonRecTypes.js\\", line 49, characters 29-30:
 
 
-47 │              \\"BS:6.0.1\\\\132\\\\149\\\\166\\\\190\\\\000\\\\000\\\\000\\\\016\\\\000\\\\000\\\\000\\\\007\\\\000\\\\000\\\\000\\\\020\\\\000\\\\000\\\\000\\\\019\\\\176\\\\160\\\\160A\\\\145@@A\\\\152\\\\160$root@\\";
-48 │            [@internal.arity 1]
-[31m49[0m │            external rootGet: t[31m([0m'value) => option(node('value)) =
-50 │              \\"\\"
-51 │              \\"BS:6.0.1\\\\132\\\\149\\\\166\\\\190\\\\000\\\\000\\\\000\\\\016\\\\000\\\\000\\\\000\\\\007\\\\000\\\\000\\\\000\\\\020\\\\000\\\\000\\\\000\\\\019\\\\176\\\\160\\\\160A\\\\145@@A\\\\152\\\\160$root@\\";
-
-Type parameters need to be wrapped in angle brackets, not parentheses, like so: \\"Belt.Map.String.t<int>\\"
-
-
-File \\"/napkinscript/tests/parsing/infiniteLoops/nonRecTypes.js\\", line 49, characters 47-48:
+File \\"/napkinscript/tests/parsing/infiniteLoops/nonRecTypes.js\\", line 49, characters 29-37:
 
 
 47 │              \\"BS:6.0.1\\\\132\\\\149\\\\166\\\\190\\\\000\\\\000\\\\000\\\\016\\\\000\\\\000\\\\000\\\\007\\\\000\\\\000\\\\000\\\\020\\\\000\\\\000\\\\000\\\\019\\\\176\\\\160\\\\160A\\\\145@@A\\\\152\\\\160$root@\\";
 48 │            [@internal.arity 1]
-[31m49[0m │            external rootGet: t('value) => option[31m([0mnode('value)) =
+[31m49[0m │            external rootGet: t[31m('value)[0m => option(node('value)) =
 50 │              \\"\\"
 51 │              \\"BS:6.0.1\\\\132\\\\149\\\\166\\\\190\\\\000\\\\000\\\\000\\\\016\\\\000\\\\000\\\\000\\\\007\\\\000\\\\000\\\\000\\\\020\\\\000\\\\000\\\\000\\\\019\\\\176\\\\160\\\\160A\\\\145@@A\\\\152\\\\160$root@\\";
 
-Type parameters need to be wrapped in angle brackets, not parentheses, like so: \\"Belt.Map.String.t<int>\\"
+Type parameters require angle brackets:
+  t<'value>
 
 
-File \\"/napkinscript/tests/parsing/infiniteLoops/nonRecTypes.js\\", line 49, characters 52-53:
+
+
+File \\"/napkinscript/tests/parsing/infiniteLoops/nonRecTypes.js\\", line 49, characters 52-60:
 
 
 47 │              \\"BS:6.0.1\\\\132\\\\149\\\\166\\\\190\\\\000\\\\000\\\\000\\\\016\\\\000\\\\000\\\\000\\\\007\\\\000\\\\000\\\\000\\\\020\\\\000\\\\000\\\\000\\\\019\\\\176\\\\160\\\\160A\\\\145@@A\\\\152\\\\160$root@\\";
 48 │            [@internal.arity 1]
-[31m49[0m │            external rootGet: t('value) => option(node[31m([0m'value)) =
+[31m49[0m │            external rootGet: t('value) => option(node[31m('value)[0m) =
 50 │              \\"\\"
 51 │              \\"BS:6.0.1\\\\132\\\\149\\\\166\\\\190\\\\000\\\\000\\\\000\\\\016\\\\000\\\\000\\\\000\\\\007\\\\000\\\\000\\\\000\\\\020\\\\000\\\\000\\\\000\\\\019\\\\176\\\\160\\\\160A\\\\145@@A\\\\152\\\\160$root@\\";
 
-Type parameters need to be wrapped in angle brackets, not parentheses, like so: \\"Belt.Map.String.t<int>\\"
+Type parameters require angle brackets:
+  node<'value>
 
 
-File \\"/napkinscript/tests/parsing/infiniteLoops/nonRecTypes.js\\", line 57, characters 13-14:
+
+
+File \\"/napkinscript/tests/parsing/infiniteLoops/nonRecTypes.js\\", line 49, characters 47-61:
+
+
+47 │              \\"BS:6.0.1\\\\132\\\\149\\\\166\\\\190\\\\000\\\\000\\\\000\\\\016\\\\000\\\\000\\\\000\\\\007\\\\000\\\\000\\\\000\\\\020\\\\000\\\\000\\\\000\\\\019\\\\176\\\\160\\\\160A\\\\145@@A\\\\152\\\\160$root@\\";
+48 │            [@internal.arity 1]
+[31m49[0m │            external rootGet: t('value) => option[31m(node('value))[0m =
+50 │              \\"\\"
+51 │              \\"BS:6.0.1\\\\132\\\\149\\\\166\\\\190\\\\000\\\\000\\\\000\\\\016\\\\000\\\\000\\\\000\\\\007\\\\000\\\\000\\\\000\\\\020\\\\000\\\\000\\\\000\\\\019\\\\176\\\\160\\\\160A\\\\145@@A\\\\152\\\\160$root@\\";
+
+Type parameters require angle brackets:
+  option<node<'value>>
+
+
+
+
+File \\"/napkinscript/tests/parsing/infiniteLoops/nonRecTypes.js\\", line 57, characters 13-21:
 
 
 55 │            [@internal.arity 1]
 56 │            external compare:
-[31m57[0m │              t[31m([0m'value) => Js.Internal.fn([ | \`Arity_2('value, 'value)], int) =
+[31m57[0m │              t[31m('value)[0m => Js.Internal.fn([ | \`Arity_2('value, 'value)], int) =
 58 │              \\"\\"
 59 │              \\"BS:6.0.1\\\\132\\\\149\\\\166\\\\190\\\\000\\\\000\\\\000\\\\019\\\\000\\\\000\\\\000\\\\007\\\\000\\\\000\\\\000\\\\020\\\\000\\\\000\\\\000\\\\019\\\\176\\\\160\\\\160A\\\\145@@A\\\\152\\\\160'compare@\\";
 
-Type parameters need to be wrapped in angle brackets, not parentheses, like so: \\"Belt.Map.String.t<int>\\"
+Type parameters require angle brackets:
+  t<'value>
 
 
-File \\"/napkinscript/tests/parsing/infiniteLoops/nonRecTypes.js\\", line 57, characters 39-40:
-
-
-55 │            [@internal.arity 1]
-56 │            external compare:
-[31m57[0m │              t('value) => Js.Internal.fn[31m([0m[ | \`Arity_2('value, 'value)], int) =
-58 │              \\"\\"
-59 │              \\"BS:6.0.1\\\\132\\\\149\\\\166\\\\190\\\\000\\\\000\\\\000\\\\019\\\\000\\\\000\\\\000\\\\007\\\\000\\\\000\\\\000\\\\020\\\\000\\\\000\\\\000\\\\019\\\\176\\\\160\\\\160A\\\\145@@A\\\\152\\\\160'compare@\\";
-
-Type parameters need to be wrapped in angle brackets, not parentheses, like so: \\"Belt.Map.String.t<int>\\"
 
 
 File \\"/napkinscript/tests/parsing/infiniteLoops/nonRecTypes.js\\", line 57, characters 40-41:
@@ -1189,27 +1210,33 @@ Type parameters require angle brackets:
 
 
 
-File \\"/napkinscript/tests/parsing/infiniteLoops/nonRecTypes.js\\", line 435, characters 20-21:
+File \\"/napkinscript/tests/parsing/infiniteLoops/nonRecTypes.js\\", line 435, characters 20-28:
 
 
 433 │    };
 434 │  type nonrec oldNewVisibleNodes('value) = {
-[31m435[0m │    mutable old: array[31m([0m'value),
+[31m435[0m │    mutable old: array[31m('value)[0m,
 436 │    mutable new_: array('value),
 437 │  };
 
-Type parameters need to be wrapped in angle brackets, not parentheses, like so: \\"Belt.Map.String.t<int>\\"
+Type parameters require angle brackets:
+  array<'value>
 
 
-File \\"/napkinscript/tests/parsing/infiniteLoops/nonRecTypes.js\\", line 436, characters 21-22:
+
+
+File \\"/napkinscript/tests/parsing/infiniteLoops/nonRecTypes.js\\", line 436, characters 21-29:
 
 
 434 │  type nonrec oldNewVisibleNodes('value) = {
 435 │    mutable old: array('value),
-[31m436[0m │    mutable new_: array[31m([0m'value),
+[31m436[0m │    mutable new_: array[31m('value)[0m,
 437 │  };
 
-Type parameters need to be wrapped in angle brackets, not parentheses, like so: \\"Belt.Map.String.t<int>\\"
+Type parameters require angle brackets:
+  array<'value>
+
+
 
 
 File \\"/napkinscript/tests/parsing/infiniteLoops/nonRecTypes.js\\", line 437, characters 2-3:

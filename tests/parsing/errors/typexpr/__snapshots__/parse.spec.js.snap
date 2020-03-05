@@ -301,49 +301,48 @@ type nonrec t = int node option
 type nonrec t = int node option
 =====Errors=============================================
 
-File \\"/napkinscript/tests/parsing/errors/typexpr/typeConstructorArgs.js\\", line 2, characters 27-28:
+File \\"/napkinscript/tests/parsing/errors/typexpr/typeConstructorArgs.js\\", line 2, characters 27-31:
 
 
 1 │  type node<'a> = {
-[31m2[0m │    _value: Js.Nullable.value[31m([0m'a)
+[31m2[0m │    _value: Js.Nullable.value[31m('a)[0m
 3 │  }
 4 │  
 
-Type parameters need to be wrapped in angle brackets, not parentheses, like so: \\"Belt.Map.String.t<int>\\"
+Type parameters require angle brackets:
+  Js.Nullable.value<'a>
 
 
-File \\"/napkinscript/tests/parsing/errors/typexpr/typeConstructorArgs.js\\", line 5, characters 23-24:
+
+
+File \\"/napkinscript/tests/parsing/errors/typexpr/typeConstructorArgs.js\\", line 5, characters 23-27:
 
 
 3 │  }
 4 │  
-[31m5[0m │  type t<'a> = Belt.Map.t[31m([0m'a)
+[31m5[0m │  type t<'a> = Belt.Map.t[31m('a)[0m
 6 │  type t<'a> = private Belt.Map.t('a)
 7 │  
 
-Type parameters need to be wrapped in angle brackets, not parentheses, like so: \\"Belt.Map.String.t<int>\\"
+Type parameters require angle brackets:
+  Belt.Map.t<'a>
 
 
-File \\"/napkinscript/tests/parsing/errors/typexpr/typeConstructorArgs.js\\", line 6, characters 31-32:
+
+
+File \\"/napkinscript/tests/parsing/errors/typexpr/typeConstructorArgs.js\\", line 6, characters 31-35:
 
 
 4 │  
 5 │  type t<'a> = Belt.Map.t('a)
-[31m6[0m │  type t<'a> = private Belt.Map.t[31m([0m'a)
+[31m6[0m │  type t<'a> = private Belt.Map.t[31m('a)[0m
 7 │  
 8 │  type t = option<<node<int>>
 
-Type parameters need to be wrapped in angle brackets, not parentheses, like so: \\"Belt.Map.String.t<int>\\"
+Type parameters require angle brackets:
+  Belt.Map.t<'a>
 
 
-File \\"/napkinscript/tests/parsing/errors/typexpr/typeConstructorArgs.js\\", line 9, characters 15-16:
-
-
-7 │  
-8 │  type t = option<<node<int>>
-[31m9[0m │  type t = option[31m([0m<node<int>>)
-
-Type parameters need to be wrapped in angle brackets, not parentheses, like so: \\"Belt.Map.String.t<int>\\"
 
 
 File \\"/napkinscript/tests/parsing/errors/typexpr/typeConstructorArgs.js\\", line 9, characters 27-28:
