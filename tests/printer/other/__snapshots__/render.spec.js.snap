@@ -157,8 +157,9 @@ let isHuggableExpression = expr =>
   }
 
 switch colour {
-| (Red | Blue)
-| ((Green | Purple) | Rosa)
+| Red
+| Blue
+| (Green | Purple | Rosa)
 | (Black | White)
 | AnotherColoooooour => x
 }

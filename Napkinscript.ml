@@ -2317,13 +2317,12 @@ end = struct
     | Pexp_constant (Pconst_string (_, Some _)) -> true
     | _ -> false
 
+  (* Blue | Red | Green -> [Blue; Red; Green] *)
   let collectOrPatternChain pat =
     let rec loop pattern chain =
       match pattern.ppat_desc with
-      | Ppat_or (left, right) ->
-        loop right (left::chain)
-      | _ ->
-        List.rev (pattern::chain)
+      | Ppat_or (left, right) -> loop left (right::chain)
+      | _ -> pattern::chain
     in
     loop pat []
 end
@@ -10511,18 +10510,21 @@ Solution: directly use `concat`."
          name
     | _ -> pattern
 
-  (* or ::= pattern | pattern *)
-  and parseOrPattern pattern1  p =
-    match p.Parser.token with
-    | Bar ->
-      Parser.next p;
-      let pattern2 = parsePattern p in
-      let loc = {
-        pattern1.Parsetree.ppat_loc with loc_end = pattern2.ppat_loc.loc_end
-      } in
-      Ast_helper.Pat.or_ ~loc pattern1 pattern2
-    | _ -> pattern1
-
+  (* or ::= pattern | pattern
+   * precedence: Red | Blue | Green is interpreted as (Red | Blue) | Green *)
+  and parseOrPattern pattern1 p =
+    let rec loop pattern1 =
+      match p.Parser.token with
+      | Bar ->
+        Parser.next p;
+        let pattern2 = parsePattern ~or_:false p in
+        let loc = { pattern1.Parsetree.ppat_loc with
+          loc_end = pattern2.ppat_loc.loc_end
+        } in
+        loop (Ast_helper.Pat.or_ ~loc pattern1 pattern2)
+      | _ -> pattern1
+    in
+    loop pattern1
 
   and parseNonSpreadPattern ~msg p =
     let () = match p.Parser.token with
