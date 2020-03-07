@@ -8107,11 +8107,22 @@ module Printer = struct
         (Asttypes.Labelled lbl | Optional lbl),
         {ppat_desc = Ppat_var stringLoc}
       ) when lbl = stringLoc.txt ->
+        (* ~d *)
         Doc.concat [
           Doc.text "~";
           Doc.text lbl;
         ]
+    | (
+        (Asttypes.Labelled lbl | Optional lbl),
+        ({ppat_desc = Ppat_constraint ({ ppat_desc = Ppat_var { txt } }, _) } as pat)
+      ) when lbl = txt ->
+        (* ~d: e *)
+        Doc.concat [
+          Doc.text "~";
+          printPattern pat cmtTbl;
+        ]
     | ((Asttypes.Labelled lbl | Optional lbl), pattern) ->
+        (* ~b as c *)
       Doc.concat [
         Doc.text "~";
         Doc.text lbl;

@@ -257,3 +257,6 @@ let equals4 = (c1, c2) => {
   c1.blue->equals(c2.blue) &&
   c1.green->equals(c2.green)
 }
+
+// ~d: e should stay ~d: e
+let a = (~b as c, ~d: e) => 1
