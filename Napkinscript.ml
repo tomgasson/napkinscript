@@ -6975,7 +6975,10 @@ module Printer = struct
       in
       let (returnExpr, typConstraint) = match returnExpr.pexp_desc with
       | Pexp_constraint (expr, typ) -> (
-          {expr with pexp_attributes = returnExpr.pexp_attributes},
+          {expr with pexp_attributes = List.concat [
+            expr.pexp_attributes;
+            returnExpr.pexp_attributes;
+          ]},
           Some typ
         )
       | _ -> (returnExpr, None)

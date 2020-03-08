@@ -111,6 +111,19 @@ for _ in {
 let _ = {(foo: string)}
 let f = () => {(foo: string)} // equivalent to  (): string => ...
 
+let localToGlobalX = (
+  x: coordinate<localCoordinates>,
+  ~centering: coordinate<localCoordinates>,
+): coordinate<globalCoordinates> => {
+  x +. (Environment.width /. 2. -. centering.x)
+}
+map((
+  arr,
+  i,
+): coordinate<globalCoordinates> => {
+  x +. (Environment.width /. 2. -. centering.x)
+})
+
 let _ = assert { true }
 let _ = { assert { true } }
 let _ = { lazy { true } }
