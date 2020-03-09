@@ -7061,19 +7061,158 @@ module Printer = struct
         printCases cases cmtTbl;
       ]
     | Pexp_match (expr, cases) ->
-      let exprDoc =
-        let doc = printExpressionWithComments expr cmtTbl in
-        match Parens.expr expr with
-        | Parens.Parenthesized -> addParens doc
-        | Braced braces  -> printBraces doc expr braces
-        | Nothing -> doc
+      let rec tailCasesAreAllAny n = match n with
+        | [] -> true
+        | {
+            Parsetree.pc_lhs = {
+              ppat_desc = Ppat_any
+            };
+          }::tl -> tailCasesAreAllAny tl
+        | _ -> false
       in
-      Doc.concat [
-        Doc.text "switch ";
-        exprDoc;
-        Doc.space;
-        printCases cases cmtTbl;
-      ]
+      begin match cases with
+        | {
+            pc_lhs = {
+              ppat_desc = Ppat_construct({txt = Longident.Lident "true"}, _)
+            };
+            pc_guard = None;
+            pc_rhs;
+          } :: tl when tailCasesAreAllAny tl ->
+          print_endline("print tailallany");
+          let ifExpr = expr in
+          let condition =
+            if ParsetreeViewer.isBlockExpr ifExpr then
+              printExpressionBlock ~braces:true ifExpr cmtTbl
+            else
+              let doc = printExpressionWithComments ifExpr cmtTbl in
+              match Parens.expr ifExpr with
+              | Parens.Parenthesized -> addParens doc
+              | Braced braces -> printBraces doc ifExpr braces
+              | Nothing -> Doc.group (
+                  Doc.ifBreaks (addParens doc) doc
+                )
+          in
+          let ifDocs = Doc.concat [
+            Doc.text "if ";
+            condition;
+            Doc.space;
+            printExpressionBlock ~braces:true pc_rhs cmtTbl;
+          ] in
+          let elseDocs = Doc.join ~sep:Doc.space (List.map
+            (fun item -> match item with
+              (* No else block *)
+              | {
+                Parsetree.pc_lhs = {
+                  ppat_desc = Ppat_any
+                };
+                pc_guard = None;
+                pc_rhs = {Parsetree.pexp_desc = Pexp_construct ({txt = Longident.Lident "()"}, _)};
+              } -> Doc.nil
+
+              (* else (must be last) *)
+              | {
+                Parsetree.pc_lhs = {
+                  ppat_desc = Ppat_any
+                };
+                pc_guard = None;
+                pc_rhs;
+              } -> Doc.concat [
+                Doc.text " else ";
+                printExpressionBlock ~braces:true pc_rhs cmtTbl;
+              ]
+              (* else if *)
+              | {
+                Parsetree.pc_lhs = {
+                  ppat_desc = Ppat_any
+                };
+                pc_guard = Some(ifExpr);
+                pc_rhs = thenExpr;
+              } -> 
+              let condition =
+                if ParsetreeViewer.isBlockExpr ifExpr then
+                  printExpressionBlock ~braces:true ifExpr cmtTbl
+                else
+                  let doc = printExpressionWithComments ifExpr cmtTbl in
+                  match Parens.expr ifExpr with
+                  | Parens.Parenthesized -> addParens doc
+                  | Braced braces -> printBraces doc ifExpr braces
+                  | Nothing -> Doc.group (
+                      Doc.ifBreaks (addParens doc) doc
+                    )
+                in
+                Doc.concat [
+                  Doc.text " else if ";
+                  condition;
+                  Doc.space;
+                  printExpressionBlock ~braces:true thenExpr cmtTbl;
+                ]
+              | _ -> failwith("Not supported")
+            )
+            tl)
+          in
+          print_endline("okay, printing");
+          Doc.concat [
+            printAttributes e.pexp_attributes;
+            ifDocs;
+            elseDocs;
+          ]
+
+          (* !!!!!!!!!!!!!!!1 *)
+          (* 
+          let (ifs, elseExpr) = ParsetreeViewer.collectIfExpressions e in
+          let ifDocs = Doc.join ~sep:Doc.space (
+            List.mapi (fun i (ifExpr, thenExpr) ->
+              let ifTxt = if i > 0 then Doc.text "else if " else  Doc.text "if " in
+              let condition =
+                if ParsetreeViewer.isBlockExpr ifExpr then
+                  printExpressionBlock ~braces:true ifExpr cmtTbl
+                else
+                  let doc = printExpressionWithComments ifExpr cmtTbl in
+                  match Parens.expr ifExpr with
+                  | Parens.Parenthesized -> addParens doc
+                  | Braced braces -> printBraces doc ifExpr braces
+                  | Nothing -> Doc.group (
+                      Doc.ifBreaks (addParens doc) doc
+                    )
+              in
+              Doc.concat [
+                ifTxt;
+                condition;
+                Doc.space;
+                printExpressionBlock ~braces:true thenExpr cmtTbl;
+              ]
+            ) ifs
+          ) in
+          let elseDoc = match elseExpr with
+          | None -> Doc.nil
+          | Some expr -> Doc.concat [
+              Doc.text " else ";
+              printExpressionBlock ~braces:true expr cmtTbl;
+            ]
+          in
+          Doc.concat [
+            printAttributes e.pexp_attributes;
+            ifDocs;
+            elseDoc;
+          ] *)
+
+          (* !!!!!!!!!!!!!!!1 *)
+
+        | _ -> 
+          let exprDoc =
+            let doc = printExpressionWithComments expr cmtTbl in
+            match Parens.expr expr with
+            | Parens.Parenthesized -> addParens doc
+            | Braced braces  -> printBraces doc expr braces
+            | Nothing -> doc
+          in
+          Doc.concat [
+            Doc.text "switch ";
+            exprDoc;
+            Doc.space;
+            printCases cases cmtTbl;
+          ]
+      end
     | Pexp_function cases ->
       Doc.concat [
         Doc.text "x => switch x ";
@@ -11268,7 +11407,7 @@ Solution: directly use `concat`."
     | Try ->
       parseTryExpression p
     | If ->
-      parseIfExpression p
+      parseIfExpressionAsMatch p
     | For ->
       parseForExpression p
     | While ->
@@ -12215,6 +12354,63 @@ Solution: directly use `concat`."
     Parser.expect Rbrace p;
     let loc = mkLoc startPos p.prevEndPos in
     Ast_helper.Exp.try_ ~loc expr cases
+
+  and parseIfExpressionAsMatch p =
+    Parser.expect If p;
+    let rec collect acc p =
+      print_endline "collect";
+      Parser.leaveBreadcrumb p Grammar.IfCondition;
+      (* doesn't make sense to try es6 arrow here? *)
+      let conditionExpr = parseExpr ~context:WhenExpr p in
+      Parser.eatBreadcrumb p;
+      Parser.leaveBreadcrumb p IfBranch;
+      Parser.expect Lbrace p;
+      let thenExpr = parseExprBlock p in
+      Parser.expect Rbrace p;
+      Parser.eatBreadcrumb p;
+      match p.Parser.token with
+        | Else -> 
+          Parser.next p;
+          begin match p.Parser.token with
+            | If ->
+              Parser.next p;
+              let acc = (conditionExpr, thenExpr)::acc in
+              collect acc p
+            | _ -> 
+              Parser.expect Lbrace p;
+              let blockExpr = parseExprBlock p in
+              Parser.expect Rbrace p;
+              (List.rev ((conditionExpr, thenExpr)::acc), Some(blockExpr))
+          end
+        | _ ->
+          (List.rev ((conditionExpr, thenExpr)::acc), None)
+    in
+    let (ifs, els) = collect [] p in
+    match ifs with
+    | [] -> failwith("Needs cases in ifs")
+    | hd::tl -> 
+      let (hd_cond, hd_blk) = hd in
+      
+      let _true = Ast_helper.Pat.construct (Location.mknoloc (Longident.Lident "true")) None in
+      
+      let _unit = Ast_helper.Exp.construct (Location.mknoloc (Longident.Lident "()")) None in
+
+      let any = Ast_helper.Pat.any () in
+
+      let els = match els with
+      | Some(els) -> els
+      | None -> _unit
+      in
+
+      let cases = List.fold_right
+        (fun item acc ->
+          let (cond, blk) = item in
+          (Ast_helper.Exp.case any ~guard:cond blk)::acc
+        )
+        tl
+        [Ast_helper.Exp.case any els]
+      in
+      Ast_helper.Exp.match_ hd_cond ((Ast_helper.Exp.case _true hd_blk)::cases)
 
   and parseIfExpression p =
     Parser.leaveBreadcrumb p Grammar.ExprIf;
