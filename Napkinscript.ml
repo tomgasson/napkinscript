@@ -804,6 +804,7 @@ module Token = struct
     | Tilde
     | Question
     | If | Else | For | In | To | Downto | While | Switch
+    | Guard
     | When
     | EqualGreater | MinusGreater
     | External
@@ -887,6 +888,7 @@ module Token = struct
     | Question -> "?"
     | If -> "if"
     | Else -> "else"
+    | Guard -> "guard"
     | For -> "for"
     | In -> "in"
     | To -> "to"
@@ -935,6 +937,7 @@ module Token = struct
       "lazy", Lazy;
       "if", If;
       "else", Else;
+      "guard", Guard;
       "for", For;
       "in", In;
       "to", To;
@@ -965,7 +968,7 @@ module Token = struct
 
   let isKeyword = function
     | True | False | Open | Let | Rec | And | As
-    | Exception | Assert | Lazy | If | Else | For | In | To
+    | Exception | Assert | Lazy | If | Else | Guard | For | In | To
     | Downto | While | Switch | When | External | Typ | Private
     | Mutable | Constraint | Include | Module | Of
     | Land | Lor | List | With
@@ -999,7 +1002,8 @@ module Grammar = struct
     | ExprArrayAccess
     | ExprArrayMutation
     | ExprIf
-    | IfCondition | IfBranch | ElseBranch
+    | ExprGuard
+    | IfCondition | IfBranch | ElseBranch | GuardBranch | GuardBody
     | TypeExpression
     | External
     | PatternMatching
@@ -1051,8 +1055,11 @@ module Grammar = struct
     | ExprUnary -> "a unary expression"
     | ExprBinaryAfterOp op -> "an expression after the operator \"" ^ Token.toString op  ^ "\""
     | ExprIf -> "an if expression"
+    | ExprGuard -> "a guard expression"
     | IfCondition -> "the condition of an if expression"
     | IfBranch -> "the true-branch of an if expression"
+    | GuardBranch -> "the return-branch of a guard expression"
+    | GuardBody -> "the return-branch of a guard expression"
     | ElseBranch -> "the else-branch of an if expression"
     | TypeExpression -> "a type"
     | External -> "an external"
@@ -1149,7 +1156,7 @@ module Grammar = struct
     | LessThan
     | Minus | MinusDot | Plus | PlusDot | Bang | Band
     | Percent | At
-    | If | Switch | While | For | Assert | Lazy | Try -> true
+    | If | Guard | Switch | While | For | Assert | Lazy | Try -> true
     | _ -> false
 
   let isJsxAttributeStart = function
@@ -1279,7 +1286,7 @@ module Grammar = struct
     | Token.At | Percent | Minus | MinusDot | Plus | PlusDot | Bang | Band
     | True | False | Int _ | String _ | Character _ | Lident _ | Uident _
     | Lparen | List | Lbracket | Lbrace | Forwardslash | Assert
-    | Lazy | If | For | While | Switch | Open | Module | Exception | Let
+    | Lazy | If | Guard | For | While | Switch | Open | Module | Exception | Let
     | LessThan | Backtick | Try | Underscore -> true
     | _ -> false
 
@@ -1735,8 +1742,12 @@ end = struct
           end
       | (ExprOperand, _)::breadcrumbs ->
           begin match breadcrumbs, t with
+          | (ExprBlock, _) :: (GuardBody, _) :: _, (Rbrace | Eof) ->
+            "It seems that this guard block is missing a body"
           | (ExprBlock, _) :: _, Rbrace ->
             "It seems that this expression block is empty"
+          | (ExprBlock, _) :: _, Eof ->
+            "It seems that this expression block is incomplete"
           | (ExprBlock, _) :: _, Bar -> (* Pattern matching *)
             "Looks like there might be an expression missing here"
           | (ExprSetField, _) :: _, _ ->
@@ -1820,12 +1831,16 @@ module ParsetreeViewer : sig
   (* filters @bs out of the provided attributes *)
   val processUncurriedAttribute: Parsetree.attributes -> bool * Parsetree.attributes
 
+  type ifCondition = 
+    | IfCondition of Parsetree.expression
+    | IfPattern of Parsetree.pattern * Parsetree.expression * Parsetree.expression option
+
   (* if ... else if ... else ... is represented as nested expressions: if ... else { if ... }
    * The purpose of this function is to flatten nested ifs into one sequence.
    * Basically compute: ([if, else if, else if, else if], else) *)
   val collectIfExpressions:
     Parsetree.expression ->
-      (Parsetree.expression * Parsetree.expression) list * Parsetree.expression option
+      (ifCondition * Parsetree.expression) list * Parsetree.expression option
 
   val collectListExpressions:
     Parsetree.expression -> (Parsetree.expression list * Parsetree.expression option)
@@ -1865,6 +1880,9 @@ module ParsetreeViewer : sig
 
   val isArrayAccess: Parsetree.expression -> bool
   val isTernaryExpr: Parsetree.expression -> bool
+  val isGuardExpr: Parsetree.expression -> bool
+  val isIfLetExpr: Parsetree.expression -> bool
+  val isGuardLetExpr: Parsetree.expression -> bool
 
   val collectTernaryParts: Parsetree.expression -> ((Parsetree.expression * Parsetree.expression) list * Parsetree.expression)
 
@@ -1955,13 +1973,50 @@ end = struct
     in
     process false [] attrs
 
+  (* FIXME: move to a better place - currently not sure where this belongs *)
+  type ifCondition = 
+    | IfCondition of Parsetree.expression
+    | IfPattern of Parsetree.pattern * Parsetree.expression * Parsetree.expression option
+
+  (* FIXME: move to a better place - currently duplicated *)
+  let rec hasIfLetAttribute attrs =
+    match attrs with
+    | [] -> false
+    | ({Location.txt="ns.iflet"},_)::_ -> true
+    | _::attrs -> hasIfLetAttribute attrs
+  
+  (* FIXME: move to a better place - currently duplicated *)
+  let isIfLetExpr expr = match expr with
+    | {
+        pexp_attributes = attrs;
+        pexp_desc = Pexp_match _
+      } when hasIfLetAttribute attrs -> true
+    | _ -> false
+
   let collectIfExpressions expr =
     let rec collect acc expr = match expr.pexp_desc with
     | Pexp_ifthenelse (ifExpr, thenExpr, Some elseExpr) ->
-      collect ((ifExpr, thenExpr)::acc) elseExpr
+      collect ((IfCondition(ifExpr), thenExpr)::acc) elseExpr
     | Pexp_ifthenelse (ifExpr, thenExpr, (None as elseExpr)) ->
-      let ifs = List.rev ((ifExpr, thenExpr)::acc) in
+      let ifs = List.rev ((IfCondition(ifExpr), thenExpr)::acc) in
       (ifs, elseExpr)
+    | Pexp_match (condition, [{
+      pc_lhs = pattern;
+      pc_guard = guard;
+      pc_rhs = thenExpr;
+    }; {
+      pc_rhs = {pexp_desc = Pexp_construct ({txt = Longident.Lident "()"}, _)}
+    }]) when isIfLetExpr expr ->
+      let ifs = List.rev ((IfPattern(pattern, condition, guard), thenExpr)::acc) in
+      (ifs, None)
+    | Pexp_match (condition, [{
+      pc_lhs = pattern;
+      pc_guard = guard;
+      pc_rhs = thenExpr;
+    }; {
+      pc_rhs = elseExpr;
+    }]) when isIfLetExpr expr ->
+      collect ((IfPattern(pattern, condition, guard), thenExpr)::acc) elseExpr
     | _ ->
       (List.rev acc, Some expr)
     in
@@ -2042,7 +2097,7 @@ end = struct
   let filterParsingAttrs attrs =
     List.filter (fun attr ->
       match attr with
-      | ({Location.txt = ("ns.ternary" | "ns.braces" | "bs")}, _) -> false
+      | ({Location.txt = ("ns.ternary" | "ns.guard" | "ns.iflet" | "ns.guardlet" | "ns.braces" | "bs")}, _) -> false
       | _ -> true
     ) attrs
 
@@ -2143,7 +2198,7 @@ end = struct
 
   let hasAttributes attrs =
     let attrs = List.filter (fun attr -> match attr with
-      | ({Location.txt = "bs" | "ns.ternary" | "ns.braces"}, _) -> false
+      | ({Location.txt = "bs" | "ns.ternary" | "ns.guard" | "ns.iflet" | "ns.guardlet" | "ns.braces"}, _) -> false
       | _ -> true
     ) attrs in
     match attrs with
@@ -2163,11 +2218,50 @@ end = struct
     | ({Location.txt="ns.ternary"},_)::_ -> true
     | _::attrs -> hasTernaryAttribute attrs
 
+  let rec hasGuardAttribute attrs =
+    match attrs with
+    | [] -> false
+    | ({Location.txt="ns.guard"},_)::_ -> true
+    | _::attrs -> hasGuardAttribute attrs
+    
+  let rec hasIfLetAttribute attrs =
+    match attrs with
+    | [] -> false
+    | ({Location.txt="ns.iflet"},_)::_ -> true
+    | _::attrs -> hasIfLetAttribute attrs
+    
+  let rec hasGuardLetAttribute attrs =
+    match attrs with
+    | [] -> false
+    | ({Location.txt="ns.guardlet"},_)::_ -> true
+    | _::attrs -> hasGuardLetAttribute attrs
+
   let isTernaryExpr expr = match expr with
     | {
         pexp_attributes = attrs;
         pexp_desc = Pexp_ifthenelse _
       } when hasTernaryAttribute attrs -> true
+    | _ -> false
+  
+  let isGuardExpr expr = match expr with
+    | {
+        pexp_attributes = attrs;
+        pexp_desc = Pexp_ifthenelse _
+      } when hasGuardAttribute attrs -> true
+    | _ -> false
+  
+  let isIfLetExpr expr = match expr with
+    | {
+        pexp_attributes = attrs;
+        pexp_desc = Pexp_match _
+      } when hasIfLetAttribute attrs -> true
+    | _ -> false
+    
+  let isGuardLetExpr expr = match expr with
+    | {
+        pexp_attributes = attrs;
+        pexp_desc = Pexp_match _
+      } when hasGuardLetAttribute attrs -> true
     | _ -> false
 
   let collectTernaryParts expr =
@@ -2242,13 +2336,13 @@ end = struct
 
   let filterPrinteableAttributes attrs =
     List.filter (fun attr -> match attr with
-      | ({Location.txt="bs" | "ns.ternary"}, _) -> false
+      | ({Location.txt="bs" | "ns.ternary" | "ns.guard" | "ns.iflet" | "ns.guardlet"}, _) -> false
       | _ -> true
     ) attrs
 
   let partitionPrinteableAttributes attrs =
     List.partition (fun attr -> match attr with
-      | ({Location.txt="bs" | "ns.ternary"}, _) -> false
+      | ({Location.txt="bs" | "ns.ternary" | "ns.guard" | "ns.iflet" | "ns.guardlet"}, _) -> false
       | _ -> true
     ) attrs
 
@@ -6493,6 +6587,66 @@ module Printer = struct
     let doc = printExpression expr cmtTbl in
     printComments doc cmtTbl expr.Parsetree.pexp_loc
 
+  and printIfChain pexp_attributes ifs elseExpr cmtTbl = 
+    let ifDocs = Doc.join ~sep:Doc.space (
+      List.mapi (fun i (ifExpr, thenExpr) ->
+        let ifTxt = if i > 0 then Doc.text "else if " else  Doc.text "if " in
+        match ifExpr with
+          | ParsetreeViewer.IfCondition ifExpr -> 
+            let condition =
+              if ParsetreeViewer.isBlockExpr ifExpr then
+                printExpressionBlock ~braces:true ifExpr cmtTbl
+              else
+                let doc = printExpressionWithComments ifExpr cmtTbl in
+                match Parens.expr ifExpr with
+                | Parens.Parenthesized -> addParens doc
+                | Braced braces -> printBraces doc ifExpr braces
+                | Nothing -> Doc.group (
+                    Doc.ifBreaks (addParens doc) doc
+                  )
+            in
+            Doc.concat [
+              ifTxt;
+              condition;
+              Doc.space;
+              printExpressionBlock ~braces:true thenExpr cmtTbl;
+            ]
+          | ParsetreeViewer.IfPattern (pattern, conditionExpr, guard) -> 
+            let patternDoc = printPattern pattern cmtTbl in
+            let conditionDoc = printExpressionWithComments conditionExpr cmtTbl in
+            let guardDocs = match guard with
+            | Some expr -> Doc.concat [
+              Doc.text "when ";
+              printExpressionWithComments expr cmtTbl;
+            ]
+            | None -> Doc.nil
+            in
+            Doc.concat [
+              ifTxt;
+              Doc.text "let ";
+              patternDoc;
+              Doc.text " = ";
+              conditionDoc;
+              Doc.space;
+              guardDocs;
+              Doc.space;
+              printExpressionBlock ~braces:true thenExpr cmtTbl;
+            ]
+      ) ifs
+    ) in
+    let elseDoc = match elseExpr with
+    | None -> Doc.nil
+    | Some expr -> Doc.concat [
+        Doc.text " else ";
+        printExpressionBlock ~braces:true expr cmtTbl;
+      ]
+    in
+    Doc.concat [
+      printAttributes pexp_attributes;
+      ifDocs;
+      elseDoc;
+    ]
+
   and printExpression (e : Parsetree.expression) cmtTbl =
     let printedExpression = match e.pexp_desc with
     | Parsetree.Pexp_constant c -> printConstant c
@@ -6761,87 +6915,82 @@ module Printer = struct
       ]
     | Pexp_setfield (expr1, longidentLoc, expr2) ->
       printSetFieldExpr e.pexp_attributes expr1 longidentLoc expr2 e.pexp_loc cmtTbl
-    | Pexp_ifthenelse (ifExpr, thenExpr, elseExpr) ->
-      if ParsetreeViewer.isTernaryExpr e then
-        let (parts, alternate) = ParsetreeViewer.collectTernaryParts e in
-        let ternaryDoc = match parts with
-        | (condition1, consequent1)::rest ->
-          Doc.group (Doc.concat [
-            printTernaryOperand condition1 cmtTbl;
-            Doc.indent (
-              Doc.concat [
-                Doc.line;
-                Doc.indent (
-                  Doc.concat [
-                    Doc.text "? ";
-                    printTernaryOperand consequent1 cmtTbl
-                  ]
-                );
-                Doc.concat (
-                  List.map (fun (condition, consequent) ->
-                    Doc.concat [
-                      Doc.line;
-                      Doc.text ": ";
-                      printTernaryOperand condition cmtTbl;
-                      Doc.line;
-                      Doc.text "? ";
-                      printTernaryOperand consequent cmtTbl;
-                    ]
-                  ) rest
-                );
-                Doc.line;
-                Doc.text ": ";
-                Doc.indent (printTernaryOperand alternate cmtTbl);
-              ]
-            )
-          ])
-        | _ -> Doc.nil
-        in
-        let attrs = ParsetreeViewer.filterTernaryAttributes e.pexp_attributes in
-        let needsParens = match ParsetreeViewer.filterParsingAttrs attrs with
-        | [] -> false | _ -> true
-        in
-        Doc.concat [
-          printAttributes attrs;
-          if needsParens then addParens ternaryDoc else ternaryDoc;
-        ]
-      else
-      let (ifs, elseExpr) = ParsetreeViewer.collectIfExpressions e in
-      let ifDocs = Doc.join ~sep:Doc.space (
-        List.mapi (fun i (ifExpr, thenExpr) ->
-          let ifTxt = if i > 0 then Doc.text "else if " else  Doc.text "if " in
-          let condition =
-            if ParsetreeViewer.isBlockExpr ifExpr then
-              printExpressionBlock ~braces:true ifExpr cmtTbl
-            else
-              let doc = printExpressionWithComments ifExpr cmtTbl in
-              match Parens.expr ifExpr with
-              | Parens.Parenthesized -> addParens doc
-              | Braced braces -> printBraces doc ifExpr braces
-              | Nothing -> Doc.group (
-                  Doc.ifBreaks (addParens doc) doc
-                )
-          in
-          Doc.concat [
-            ifTxt;
-            condition;
-            Doc.space;
-            printExpressionBlock ~braces:true thenExpr cmtTbl;
-          ]
-        ) ifs
-      ) in
+    | Pexp_ifthenelse (ifExpr, thenExpr, elseExpr) when ParsetreeViewer.isGuardExpr e ->
+      let condition =
+        if ParsetreeViewer.isBlockExpr ifExpr then
+          printExpressionBlock ~braces:true ifExpr cmtTbl
+        else
+          let doc = printExpressionWithComments ifExpr cmtTbl in
+          match Parens.expr ifExpr with
+          | Parens.Parenthesized -> addParens doc
+          | Braced braces -> printBraces doc ifExpr braces
+          | Nothing -> Doc.group (
+            Doc.ifBreaks (addParens doc) doc
+          )
+      in
       let elseDoc = match elseExpr with
       | None -> Doc.nil
       | Some expr -> Doc.concat [
-          Doc.text " else ";
+          Doc.text "else ";
           printExpressionBlock ~braces:true expr cmtTbl;
         ]
       in
+      let attrs = ParsetreeViewer.filterTernaryAttributes e.pexp_attributes in
       Doc.concat [
-        printAttributes e.pexp_attributes;
-        ifDocs;
+        printAttributes attrs;
+        Doc.text "guard ";
+        condition;
+        Doc.space;
         elseDoc;
+        Doc.line;
+        printExpressionBlock ~braces:false thenExpr cmtTbl;
       ]
+    | Pexp_ifthenelse (ifExpr, thenExpr, elseExpr) when ParsetreeViewer.isTernaryExpr e ->
+      let (parts, alternate) = ParsetreeViewer.collectTernaryParts e in
+      let ternaryDoc = match parts with
+      | (condition1, consequent1)::rest ->
+        Doc.group (Doc.concat [
+          printTernaryOperand condition1 cmtTbl;
+          Doc.indent (
+            Doc.concat [
+              Doc.line;
+              Doc.indent (
+                Doc.concat [
+                  Doc.text "? ";
+                  printTernaryOperand consequent1 cmtTbl
+                ]
+              );
+              Doc.concat (
+                List.map (fun (condition, consequent) ->
+                  Doc.concat [
+                    Doc.line;
+                    Doc.text ": ";
+                    printTernaryOperand condition cmtTbl;
+                    Doc.line;
+                    Doc.text "? ";
+                    printTernaryOperand consequent cmtTbl;
+                  ]
+                ) rest
+              );
+              Doc.line;
+              Doc.text ": ";
+              Doc.indent (printTernaryOperand alternate cmtTbl);
+            ]
+          )
+        ])
+      | _ -> Doc.nil
+      in
+      let attrs = ParsetreeViewer.filterTernaryAttributes e.pexp_attributes in
+      let needsParens = match ParsetreeViewer.filterParsingAttrs attrs with
+      | [] -> false | _ -> true
+      in
+      Doc.concat [
+        printAttributes attrs;
+        if needsParens then addParens ternaryDoc else ternaryDoc;
+      ]
+    | Pexp_ifthenelse (ifExpr, thenExpr, elseExpr) ->
+      let (ifs, elseExpr) = ParsetreeViewer.collectIfExpressions e in
+      printIfChain e.pexp_attributes ifs elseExpr cmtTbl
     | Pexp_while (expr1, expr2) ->
       let condition =
         let doc = printExpressionWithComments expr1 cmtTbl in
@@ -7060,6 +7209,42 @@ module Printer = struct
         Doc.text " catch ";
         printCases cases cmtTbl;
       ]
+    | Pexp_match (conditionExpr, [_; _]) when ParsetreeViewer.isIfLetExpr e ->
+      let (ifs, elseExpr) = ParsetreeViewer.collectIfExpressions e in
+      printIfChain e.pexp_attributes ifs elseExpr cmtTbl
+    | Pexp_match (conditionExpr, [{
+      pc_lhs = pattern;
+      pc_guard = guard;
+      pc_rhs = thenExpr;
+    }; {
+      pc_rhs = elseExpr
+    }]) when ParsetreeViewer.isGuardLetExpr e ->
+      let patternDoc = printPattern pattern cmtTbl in
+      let conditionDoc = printExpressionWithComments conditionExpr cmtTbl in
+      let guardDocs = match guard with
+      | Some expr -> Doc.concat [
+        Doc.text " when ";
+        printExpressionWithComments expr cmtTbl;
+      ]
+      | None -> Doc.nil
+      in
+      let elseDocs = match elseExpr with 
+      | {pexp_desc = Pexp_construct ({txt = Longident.Lident "()"}, _)} -> Doc.nil
+      | _ -> Doc.concat [
+        Doc.text " else ";
+        printExpressionBlock ~braces:true elseExpr cmtTbl
+      ] in
+      Doc.concat [
+        printAttributes e.pexp_attributes;
+        Doc.text "guard let ";
+        patternDoc;
+        Doc.text " = ";
+        conditionDoc;
+        guardDocs;
+        elseDocs;
+        Doc.line;
+        printExpressionBlock ~braces:false thenExpr cmtTbl;
+      ]
     | Pexp_match (expr, cases) ->
       let exprDoc =
         let doc = printExpressionWithComments expr cmtTbl in
@@ -7100,7 +7285,6 @@ module Printer = struct
         ]
       )
     | _ -> printedExpression
-
 
 
   and printPexpFun ~inCallback e cmtTbl =
@@ -9782,6 +9966,9 @@ Solution: directly use `concat`."
   let jsxAttr = (Location.mknoloc "JSX", Parsetree.PStr [])
   let uncurryAttr = (Location.mknoloc "bs", Parsetree.PStr [])
   let ternaryAttr = (Location.mknoloc "ns.ternary", Parsetree.PStr [])
+  let guardAttr = (Location.mknoloc "ns.guard", Parsetree.PStr [])
+  let ifletAttr = (Location.mknoloc "ns.iflet", Parsetree.PStr [])
+  let guardLetAttr = (Location.mknoloc "ns.guardlet", Parsetree.PStr [])
   let makeBracesAttr loc = (Location.mkloc "ns.braces" loc, Parsetree.PStr [])
 
   type typDefOrExt =
@@ -11269,6 +11456,8 @@ Solution: directly use `concat`."
       parseTryExpression p
     | If ->
       parseIfExpression p
+    | Guard ->
+      parseGuardExpression p
     | For ->
       parseForExpression p
     | While ->
@@ -12216,31 +12405,142 @@ Solution: directly use `concat`."
     let loc = mkLoc startPos p.prevEndPos in
     Ast_helper.Exp.try_ ~loc expr cases
 
-  and parseIfExpression p =
-    Parser.leaveBreadcrumb p Grammar.ExprIf;
+  and parseGuardLetExpressionCore startPos p =
+    let pattern = parsePattern p in
+    Parser.expect Equal p;
+    let conditionExpr = parseIfCondition p in
+    let guard = parsePatternGuard p in
+    let elseExpr = match p.Parser.token with
+    | Else ->
+      Parser.leaveBreadcrumb p Grammar.ElseBranch;
+      Parser.next p;
+      let elseExpr = parseElseBranch p in
+      Parser.eatBreadcrumb p;
+      elseExpr
+    | _ ->
+      let startPos = p.Parser.startPos in
+      let loc = mkLoc startPos p.prevEndPos in
+      Ast_helper.Exp.construct ~loc
+        (Location.mkloc (Longident.Lident "()") loc) None
+    in
+    Parser.leaveBreadcrumb p GuardBody;
+    let bodyExpr = parseExprBlock p in
+    Parser.eatBreadcrumb p;
+    let loc = mkLoc startPos p.prevEndPos in
+    Ast_helper.Exp.match_ ~attrs:[guardLetAttr] ~loc conditionExpr [
+      Ast_helper.Exp.case pattern ?guard bodyExpr;
+      Ast_helper.Exp.case (Ast_helper.Pat.any ()) elseExpr;
+    ]
+
+  and parseGuardExpressionCore startPos p =
+    let conditionExpr = parseIfCondition p in
+    let elseExpr = match p.Parser.token with
+    | Else ->
+      Parser.next p;
+      Parser.leaveBreadcrumb p GuardBranch;
+      let guardExpr = parseElseBranch p in
+      Parser.eatBreadcrumb p;
+      Some guardExpr
+    | _ ->
+      None
+    in
+    Parser.leaveBreadcrumb p GuardBody;
+    let bodyExpr = parseExprBlock p in
+    Parser.eatBreadcrumb p;
+    Parser.eatBreadcrumb p;
+    let loc = mkLoc startPos p.prevEndPos in
+    Ast_helper.Exp.ifthenelse ~attrs:[guardAttr] ~loc
+      conditionExpr bodyExpr elseExpr
+
+  and parseGuardExpressionRoot startPos p =
+    match p.Parser.token with
+    | Let ->
+      Parser.next p;
+      parseGuardLetExpressionCore startPos p
+    | _ ->
+      parseGuardExpressionCore startPos p
+
+  and parseGuardExpression p =
+    Parser.leaveBreadcrumb p Grammar.ExprGuard;
     let startPos = p.Parser.startPos in
-    Parser.expect If p;
+    Parser.expect Guard p;
+    parseGuardExpressionRoot startPos p;
+
+  and parseIfCondition p = 
     Parser.leaveBreadcrumb p Grammar.IfCondition;
     (* doesn't make sense to try es6 arrow here? *)
     let conditionExpr = parseExpr ~context:WhenExpr p in
     Parser.eatBreadcrumb p;
+    conditionExpr;
+
+  and parseElseBranch p =
+    Parser.expect Lbrace p;
+    let blockExpr = parseExprBlock p in
+    Parser.expect Rbrace p;
+    blockExpr
+
+  and parseIfBranch p = 
     Parser.leaveBreadcrumb p IfBranch;
     Parser.expect Lbrace p;
     let thenExpr = parseExprBlock p in
     Parser.expect Rbrace p;
     Parser.eatBreadcrumb p;
+    thenExpr
+
+  and parseIfLetExpressionCore startPos p =
+    let pattern = parsePattern p in
+    Parser.expect Equal p;
+    let conditionExpr = parseIfCondition p in
+    let guard = parsePatternGuard p in
+    let thenExpr = parseIfBranch p in
     let elseExpr = match p.Parser.token with
     | Else ->
       Parser.leaveBreadcrumb p Grammar.ElseBranch;
       Parser.next p;
+      let startPos = p.Parser.startPos in
       let elseExpr = match p.token with
       | If ->
-        parseIfExpression p
+        Parser.next p;
+        parseIfExpressionRoot startPos p
       | _ ->
-        Parser.expect  Lbrace p;
-        let blockExpr = parseExprBlock p in
-        Parser.expect Rbrace p;
-        blockExpr
+        parseElseBranch p
+      in
+      Parser.eatBreadcrumb p;
+      elseExpr
+    | _ ->
+      let startPos = p.Parser.startPos in
+      let loc = mkLoc startPos p.prevEndPos in
+      Ast_helper.Exp.construct ~loc
+        (Location.mkloc (Longident.Lident "()") loc) None
+    in
+    let loc = mkLoc startPos p.prevEndPos in
+    Ast_helper.Exp.match_ ~attrs:[ifletAttr] ~loc conditionExpr [
+      Ast_helper.Exp.case pattern ?guard thenExpr;
+      Ast_helper.Exp.case (Ast_helper.Pat.any ()) elseExpr;
+    ]
+
+  and parseIfExpressionRoot startPos p =
+    match p.Parser.token with
+    | Let ->
+      Parser.next p;
+      parseIfLetExpressionCore startPos p
+    | _ ->
+      parseIfExpressionCore startPos p
+  
+  and parseIfExpressionCore startPos p =
+    let conditionExpr = parseIfCondition p in
+    let thenExpr = parseIfBranch p in
+    let elseExpr = match p.Parser.token with
+    | Else ->
+      Parser.leaveBreadcrumb p Grammar.ElseBranch;
+      Parser.next p;
+      let startPos = p.Parser.startPos in
+      let elseExpr = match p.token with
+      | If ->
+        Parser.next p;
+        parseIfExpressionRoot startPos p
+      | _ ->
+        parseElseBranch p
       in
       Parser.eatBreadcrumb p;
       Some elseExpr
@@ -12248,8 +12548,15 @@ Solution: directly use `concat`."
       None
     in
     let loc = mkLoc startPos p.prevEndPos in
-    Parser.eatBreadcrumb p;
     Ast_helper.Exp.ifthenelse ~loc conditionExpr thenExpr elseExpr
+  
+  and parseIfExpression p =
+    Parser.leaveBreadcrumb p Grammar.ExprIf;
+    let startPos = p.Parser.startPos in
+    Parser.expect If p;
+    let ifExpr = parseIfExpressionRoot startPos p in
+    Parser.eatBreadcrumb p;
+    ifExpr;
 
   and parseForRest hasOpeningParen pattern startPos p =
     Parser.expect In p;
@@ -12312,6 +12619,14 @@ Solution: directly use `concat`."
     Parser.expect Rbrace p;
     let loc = mkLoc startPos p.prevEndPos in
     Ast_helper.Exp.while_ ~loc expr1 expr2
+  
+  and parsePatternGuard p = 
+    match p.Parser.token with
+    | When ->
+      Parser.next p;
+      Some (parseExpr ~context:WhenExpr p)
+    | _ ->
+      None
 
   and parsePatternMatchCase p =
     Parser.leaveBreadcrumb p Grammar.PatternMatchCase;
@@ -12319,13 +12634,7 @@ Solution: directly use `concat`."
     | Token.Bar ->
       Parser.next p;
       let lhs = parsePattern p in
-      let guard = match p.Parser.token with
-      | When ->
-        Parser.next p;
-        Some (parseExpr ~context:WhenExpr p)
-      | _ ->
-        None
-      in
+      let guard = parsePatternGuard p in
       let () = match p.token with
       | EqualGreater -> Parser.next p
       | _ -> Recover.recoverEqualGreater p

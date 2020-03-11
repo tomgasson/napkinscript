@@ -13,5 +13,9 @@ test: build-native
 	./node_modules/.bin/jest
 	./node_modules/.bin/gentype -termination-cmt ./Napkinscript.cmt
 
+update-snapshots: build-native
+	./node_modules/.bin/jest -u
+	./node_modules/.bin/gentype -termination-cmt ./Napkinscript.cmt
+
 termination:
 	./node_modules/.bin/gentype -termination-cmt ./Napkinscript.cmt
