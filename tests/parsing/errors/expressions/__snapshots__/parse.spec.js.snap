@@ -226,7 +226,8 @@ I'm not sure what to parse here when looking at \\"}\\".
 
 exports[`if.js 1`] = `
 "=====Parsetree==========================================
-;;if match then let a = 1 in a + 1
+collect
+;;match match with | true -> let a = 1 in a + 1 | _ -> ()
 =====Errors=============================================
 
 File \\"/napkinscript/tests/parsing/errors/expressions/if.js\\", line 2, characters 10-16:
@@ -299,10 +300,11 @@ Did you forget a \`:\` here?
 
 exports[`setField.js 1`] = `
 "=====Parsetree==========================================
-;;if match
-  then
-    let a = 1 in (m.left).compatibleTypeArgs <- ([%napkinscript.exprhole ])
-  else sideEffect ()
+collect
+;;match match with
+  | true ->
+      let a = 1 in (m.left).compatibleTypeArgs <- ([%napkinscript.exprhole ])
+  | _ -> sideEffect ()
 =====Errors=============================================
 
 File \\"/napkinscript/tests/parsing/errors/expressions/setField.js\\", line 4, characters 29-31:

@@ -37,7 +37,10 @@ exports[`extension.js 1`] = `
 `;
 
 exports[`functor.js 1`] = `
-"module F = (A: X, B: Y) => A
+"collect
+print tailallany
+okay, printing
+module F = (A: X, B: Y) => A
 module F = (@attr1 A: X, @attr2 B: Y) => A
 include (X: Map, Y: Set) => Z
 

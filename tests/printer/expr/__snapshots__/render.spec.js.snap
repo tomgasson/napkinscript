@@ -126,7 +126,10 @@ streetsAddressBookThisIsALongName[
 `;
 
 exports[`assert.js 1`] = `
-"assert false
+"collect
+print tailallany
+okay, printing
+assert false
 
 assert truth
 
@@ -200,7 +203,41 @@ assert (true ? 0 : 1)
 `;
 
 exports[`binary.js 1`] = `
-"let x = a + b
+"collect
+collect
+collect
+collect
+collect
+collect
+collect
+collect
+collect
+collect
+collect
+collect
+print tailallany
+okay, printing
+print tailallany
+okay, printing
+print tailallany
+print tailallany
+okay, printing
+okay, printing
+print tailallany
+okay, printing
+print tailallany
+print tailallany
+okay, printing
+print tailallany
+okay, printing
+okay, printing
+print tailallany
+okay, printing
+print tailallany
+okay, printing
+print tailallany
+okay, printing
+let x = a + b
 let x = @attr (a + b)
 let x = @attr (@attr a + @attr b)
 let x = a && b + c
@@ -258,7 +295,8 @@ let x =
     1
   } else {
     2
-  } + if false {
+  } +
+  if false {
     2
   } else {
     3
@@ -334,6 +372,7 @@ if (
   if sibling !== None {
     siblingNN.color = Red
   }
+  
   successorRef.contents = successorParent
 }
 
@@ -383,7 +422,8 @@ let () = {
       sibling.color = Red
       sibling.right->castNotOption.color = Black
       rotateLeft(rbt, sibling)
-    }
+    } 
+    
     break.contents = true
   } else {
     let sibling = siblingOf(successor)
@@ -498,7 +538,8 @@ let x = a && [a, b]
 let x = a && [a, b] && [c, d]
 
 let x =
-  a && if true {
+  a &&
+  if true {
     true
   } else {
     false
@@ -509,7 +550,8 @@ let x =
     true
   } else {
     false
-  } && if false {
+  } &&
+  if false {
     false
   } else {
     true
@@ -673,7 +715,21 @@ let () = {
 `;
 
 exports[`braced.js 1`] = `
-"let f = (a, b) => {a + b}
+"collect
+collect
+collect
+collect
+collect
+collect
+print tailallany
+okay, printing
+print tailallany
+okay, printing
+print tailallany
+okay, printing
+print tailallany
+okay, printing
+let f = (a, b) => {a + b}
 let f = (a, b) => {a}
 
 let f = (a, b) => {
@@ -795,15 +851,11 @@ let _ = {{true} ? {true} : {false}}
 let _ = {
   if true {
     ()
-  } else {
-    ()
   }
 }
 let _ = {
   if {true} {
     ()
-  } else {
-    ()
   }
 }
 
@@ -815,7 +867,7 @@ if {
   false
 } {
   ()
-}
+} 
 
 if {
   true
@@ -825,9 +877,7 @@ if {
   false
 } {
   ()
-} else {
-  ()
-}
+} 
 
 let _ = {
   while true {
@@ -1089,7 +1139,16 @@ let x = (true ? 1 : 0: int)
 `;
 
 exports[`constructor.js 1`] = `
-"let x = true
+"collect
+collect
+collect
+print tailallany
+okay, printing
+print tailallany
+okay, printing
+print tailallany
+okay, printing
+let x = true
 let y = false
 
 let r = Reducer()
@@ -1146,11 +1205,11 @@ let rec peekMinNode = node =>
   | None => None
   | Some(node) =>
     if node.left === None {
-      // this shouldn't break over multiple lines
       Some(node)
     } else {
       node.left->peekMinNode
     }
+  // this shouldn't break over multiple lines
   }
 
 let rec peekMinNode = node =>
@@ -1158,7 +1217,6 @@ let rec peekMinNode = node =>
   | None => None
   | Some(node) =>
     if node.left === None {
-      // this shouldn't break over multiple lines
       MyConstructor(
         node,
         nodeLongIdentifiiiiieeeeeeer1,
@@ -1167,6 +1225,7 @@ let rec peekMinNode = node =>
     } else {
       node.left->peekMinNode
     }
+  // this shouldn't break over multiple lines
   }
 
 let constructor = @attr Blue
@@ -1232,7 +1291,10 @@ let node = @attr %bs.raw(\\"0\\")
 `;
 
 exports[`field.js 1`] = `
-"let n = user.name
+"collect
+print tailallany
+okay, printing
+let n = user.name
 
 (currentNode.parent->castNotOption).color
 (&myRef).color
@@ -1710,7 +1772,23 @@ let x =
 `;
 
 exports[`if.js 1`] = `
-"let name = if true {
+"collect
+collect
+collect
+collect
+collect
+collect
+print tailallany
+okay, printing
+print tailallany
+okay, printing
+print tailallany
+okay, printing
+print tailallany
+okay, printing
+print tailallany
+okay, printing
+let name = if true {
   user.name
 }
 
@@ -1724,7 +1802,7 @@ let name = if true {
   user.name
 } else if false {
   user.lastName
-} else {
+}  else {
   defaultName
 }
 
@@ -1743,6 +1821,7 @@ let () = if true {
 }
 
 let x =
+  @attr
   @attr
   if truth {
     sideEffect()
@@ -1776,7 +1855,13 @@ let () = (node[\\"left\\"] = value |> process) |> node[\\"right\\"] = value |> p
 `;
 
 exports[`jsx.js 1`] = `
-"let x =
+"collect
+collect
+print tailallany
+okay, printing
+print tailallany
+okay, printing
+let x =
   <div
     className=\\"container\\"
     className2=\\"container2\\"
@@ -1930,8 +2015,6 @@ let x =
     setField={user.name = \\"Steve\\"}
     ifThenElse={if true {
       ()
-    } else {
-      ()
     }}
     seq={
       sideEffect1()
@@ -2011,8 +2094,6 @@ let x =
     {user.name = \\"Steve\\"}
     {if true {
       ()
-    } else {
-      ()
     }}
     {
       sideEffect1()
@@ -2054,7 +2135,10 @@ let x = <MyComponent sidebar={<div> test </div>} nav={<Navbar />} />
 `;
 
 exports[`lazy.js 1`] = `
-"let x = lazy sideEffect
+"collect
+print tailallany
+okay, printing
+let x = lazy sideEffect
 
 // parens
 let x = lazy true
@@ -2437,7 +2521,13 @@ let s = \`$dollar without $braces $interpolation\`
 `;
 
 exports[`ternary.js 1`] = `
-"condition1 ? value1 : value2
+"collect
+collect
+print tailallany
+okay, printing
+print tailallany
+okay, printing
+condition1 ? value1 : value2
 
 let x = condition1 ? value1 : value2
 
@@ -2627,12 +2717,8 @@ let x = condition1
 let x = condition1
   ? if true {
       ()
-    } else {
-      ()
     }
   : if true {
-      ()
-    } else {
       ()
     }
 let () = condition1
@@ -2782,7 +2868,10 @@ let x =
 `;
 
 exports[`unary.js 1`] = `
-"let x = -a
+"collect
+print tailallany
+okay, printing
+let x = -a
 let x = -.a
 let x = !a
 let x = &a

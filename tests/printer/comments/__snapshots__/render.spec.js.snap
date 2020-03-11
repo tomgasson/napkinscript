@@ -1,7 +1,10 @@
 // Jest Snapshot v1, https://goo.gl/fbAQLP
 
 exports[`binaryExpr.ns 1`] = `
-"/* with comments */
+"collect
+print tailallany
+okay, printing
+/* with comments */
 compilation->Plugin.buildAssets // after
 /* below compilation */ // trailing
 
@@ -42,7 +45,14 @@ let truth =
 `;
 
 exports[`blockExpr.ns 1`] = `
-"let () = /* c0 */ sideEffect1() /* c1 */
+"collect
+collect
+collect
+print tailallany
+okay, printing
+print tailallany
+okay, printing
+let () = /* c0 */ sideEffect1() /* c1 */
 
 let () = {
   /* c0 */ sideEffect1() /* c1 */
@@ -344,14 +354,8 @@ if {
   
   // there
   let /* inside */ b = false
-  false // here
+  false
 } else {
-  // here
-  
-  // okok
-  
-  // there
-  /* inside */
   // here
   
   // here
@@ -383,8 +387,10 @@ if {
   
   // there
   let /* inside */ b = false
-  false // here
+  false
 } else if {
+  // here
+  
   let u = universe() // c0
   // c1
   
@@ -404,7 +410,7 @@ if {
   // there
   let b = false
   true
-} // trailing
+}  // trailing
 
 assert {
   // here
@@ -571,9 +577,15 @@ switch x {
 `;
 
 exports[`expr.ns 1`] = `
-"[192:31 - 192:32]
+"collect
+collect
+[192:31 - 192:32]
 [193:31 - 193:32]
 [193:80 - 193:81]
+print tailallany
+okay, printing
+print tailallany
+okay, printing
 // Pexp_ident
 let pi = /* before */ Math.pi // after
 
@@ -712,14 +724,17 @@ let x = /* before */ user /* c0 */./* c1 */ name /* c2 */
 
 // Pexp_ifthenelse
 if /* c0 */ user.name === \\"Steve\\" /* c1 */ {
-  /* c2 */ Js.log(\\"It's Steve\\") /* c3 */
-} // trailing
+  /* c2 */ Js.log(\\"It's Steve\\")
+}
+/* c3 */ // trailing
 
 if /* c0 */ user.name === \\"John\\" /* c1 */ {
-  /* c2 */ Js.log(\\"It's John…\\") /* c3 */
+  /* c2 */ Js.log(\\"It's John…\\")
 } else {
+  /* c3 */
+  
   // c4
-  /* c5 */ Js.log(\\"we need John\\") /* c6 */
+  /* c5 */ Js.log(\\"we need John\\")
 } // trailing
 
 // Pexp_while
@@ -939,7 +954,14 @@ module type Functor = /* before */ (
 `;
 
 exports[`multiline.ns 1`] = `
-"/* first line
+"collect
+collect
+collect
+print tailallany
+print tailallany
+okay, printing
+okay, printing
+/* first line
  * the leading stars
  * should align here.
  */
@@ -986,7 +1008,7 @@ let equals = (matrix1, matrix2) => {
         false
       } else if j < 3 {
         loop(i, j + 1)
-      } else {
+      }  else {
         loop(i + 1, 0)
       }
     }

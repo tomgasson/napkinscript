@@ -90,7 +90,19 @@ and subreplacer<'sub> = (subtree<'sub> => subtree<'sub>) => unit
 `;
 
 exports[`case.js 1`] = `
-"let printExprFunParameters = (~uncurried, parameters) =>
+"collect
+collect
+collect
+collect
+print tailallany
+okay, printing
+print tailallany
+okay, printing
+print tailallany
+okay, printing
+print tailallany
+okay, printing
+let printExprFunParameters = (~uncurried, parameters) =>
   switch parameters {
   | list[([], Asttypes.Nolabel, None, {Parsetree.ppat_desc: Ppat_any})]
     when !uncurried =>

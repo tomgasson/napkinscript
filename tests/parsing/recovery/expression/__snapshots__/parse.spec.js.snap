@@ -5,7 +5,12 @@ exports[`emptyBlock.js 1`] = `
 let f a b = ((())[@ns.braces ])"
 `;
 
-exports[`if.js 1`] = `";;if foo = bar then Js.log \\"if-branch\\" else Js.log \\"else-branch\\""`;
+exports[`if.js 1`] = `
+"collect
+;;match foo = bar with
+  | true -> Js.log \\"if-branch\\"
+  | _ -> Js.log \\"else-branch\\""
+`;
 
 exports[`infinite.js 1`] = `"let smallest = ((heap.compare ())[@bs ]) < (a |. (f b))"`;
 

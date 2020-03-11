@@ -78,8 +78,16 @@ let f =
 `;
 
 exports[`binary.js 1`] = `
-";;node := (if newBalance == 2 then avl |. (rotateRight node) else node)
-;;node := ((if newBalance == 2 then avl |. (rotateRight node) else node)
+"collect
+collect
+;;node :=
+    (match newBalance == 2 with
+     | true -> avl |. (rotateRight node)
+     | _ -> node)
+;;node :=
+    ((match newBalance == 2 with
+      | true -> avl |. (rotateRight node)
+      | _ -> node)
     [@attr ])
 let x = z |> (match z with | _ -> false)
 let x = z |> ((match z with | _ -> false)[@attr ])
@@ -100,11 +108,16 @@ let x = a -. b"
 `;
 
 exports[`binaryNoEs6Arrow.js 1`] = `
-";;if (color == Black) && ((sibling == None) || (parent == None)) then ()
-;;if
-    ((color == Black) && (color != Red)) &&
-      ((sibling == None) || (parent == None))
-  then ()
+"collect
+collect
+;;match (color == Black) && ((sibling == None) || (parent == None)) with
+  | true -> ()
+  | _ -> ()
+;;match ((color == Black) && (color != Red)) &&
+          ((sibling == None) || (parent == None))
+  with
+  | true -> ()
+  | _ -> ()
 ;;match (color == Black) && ((sibling == None) || (parent == None)) with
   | _ -> ()
 ;;match ((color == Black) && (color != Red)) &&
@@ -402,15 +415,31 @@ let x = __ident__"
 `;
 
 exports[`if.js 1`] = `
-";;if foo then true else false
-;;if foo = 2 then let bar = 1 in let foo = 2 in bar + foo
-let ifThenElse = if foo then lala else doStuff x y z
+"collect
+collect
+collect
+collect
+collect
+collect
+collect
+collect
+;;match foo with | true -> true | _ -> false
+;;match foo = 2 with
+  | true -> let bar = 1 in let foo = 2 in bar + foo
+  | _ -> ()
+let ifThenElse = match foo with | true -> lala | _ -> doStuff x y z
 let ifElseIfThen =
-  if foo = bar
-  then f ()
-  else if foo = bar2 then f1 () else if foo = bar3 then f2 () else f3 ()
-let x = (if true then 1 else 2) + (if false then 2 else 3)"
+  match foo = bar with
+  | true -> f ()
+  | _ when foo = bar2 -> f1 ()
+  | _ when foo = bar3 -> f2 ()
+  | _ -> f3 ()
+let x =
+  (match true with | true -> 1 | _ -> 2) +
+    (match false with | true -> 2 | _ -> 3)"
 `;
+
+exports[`iflet.js 1`] = `""`;
 
 exports[`infix.js 1`] = `
 ";;a |. (f b)
@@ -913,7 +942,8 @@ let f = ((fun (type t) -> ((fun (type s) ->
 `;
 
 exports[`parenthesized.js 1`] = `
-"let x = 1
+"collect
+let x = 1
 let f = 1.3
 let truth = true
 let truth = false
@@ -931,7 +961,7 @@ let assertSmthing = assert true
 let lazyThing = lazy true
 let jsx = ((div ~className:((\\"cx\\")[@ns.jsxPropLoc ]) ~children:[foo] ())
   [@JSX ])
-let ifExpr = if true then Js.log true else Js.log false
+let ifExpr = match true with | true -> Js.log true | _ -> Js.log false
 let forExpr = for p = 0 to 10 do () done
 let whileExpr = while true do doSomeImperativeThing () done
 let switchExpr = match myVar with | Blue -> \\"blue\\" | Red -> \\"red\\"

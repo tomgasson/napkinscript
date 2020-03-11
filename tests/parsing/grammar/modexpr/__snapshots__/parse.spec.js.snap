@@ -36,7 +36,8 @@ let to_int m = ((let module M = (val (m : (module X_int))) in M.x)
 `;
 
 exports[`functor.js 1`] = `
-"module F(A:X)(B:Y) = A
+"collect
+module F(A:X)(B:Y) = A
 module F(A:X)(B:Y) = A
 module F = ((functor (A : X) -> ((functor (B : Y) -> A)[@attr2 ]))[@attr1 ])
 include functor (X : Map) -> functor (Y : Set) -> Z
@@ -65,7 +66,7 @@ module Make(Cmp:sig type nonrec t val eq : t -> t -> bool end) :
     type nonrec coll = key list
     let empty = []
     let add (y : coll) (e : key) =
-      if List.exists (fun x -> eq x e) y then y else e :: y
+      match List.exists (fun x -> eq x e) y with | true -> y | _ -> e :: y
   end "
 `;
 
